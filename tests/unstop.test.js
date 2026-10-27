@@ -202,4 +202,29 @@ test('engagement model: engaged sessions YoY, opportunity shares, return weeks, 
   assert.equal(E.blog.toProduct, 20); assert.equal(E.blog.rate, 10);
   assert.equal(E.pages.find(p => p.path === '/blog/a').scrollRate, 50);
 });
+
+test('channels: CRM and analytics names map to one channel list', () => {
+  const c = U.channelOf;
+  assert.equal(c('Organic Search'), 'Organic search'); assert.equal(c('google', 'organic'), 'Organic search'); assert.equal(c('google', 'cpc'), 'Paid search');
+  assert.equal(c('Direct Traffic'), 'Direct'); assert.equal(c('Email Marketing'), 'Email'); assert.equal(c('Offline Sources'), 'Sales & offline'); assert.equal(c(''), '(not set)');
+});
+test('CRM: organic first touch vs organic in the journey, rates vs other channels, coverage', () => {
+  const rows = [['Record ID', 'Create Date', 'Original Source', 'All touches', 'First page seen', 'Lifecycle Stage', 'Deal amount', 'Deal stage'],
+    ['1', '2026-09-02', 'Organic Search', 'Organic Search > Email', 'https://unstop.com/employers/ats-software', 'Marketing Qualified Lead', '5,00,000', 'Closed Won'],
+    ['2', '2026-09-05', 'Paid Search', 'Paid Search > Organic Search > Direct', '', 'Opportunity', '300000', 'Proposal'],
+    ['3', '2026-10-07', 'Direct Traffic', 'Direct Traffic', '', 'Lead', '', ''],
+    ['4', '2026-10-09', 'Organic Search', 'Organic Search', 'https://unstop.com/employers', 'Lead', '', '']];
+  const m = U.crmModel(rows);
+  assert.equal(m.ok, true); assert.equal(m.ft.leads, 2); assert.equal(m.ft.mqls, 1); assert.equal(m.ft.pipeline, 500000); assert.equal(m.ft.revenue, 500000);
+  assert.equal(m.assisted.leads, 1); assert.equal(m.assisted.pipeline, 300000); assert.equal(m.assisted.revenue, 0);
+  assert.equal(m.ft.toOpp, 50); assert.equal(m.other.toOpp, 50); assert.equal(m.ft.toClose, 50);
+  assert.equal(m.coverage.source, 100); assert.equal(m.monthly.length, 2); assert.equal(m.landing[0].path, '/employers/ats-software');
+  assert.equal(U.crmModel([['Name', 'Email'], ['a', 'b']]).ok, false);
+});
+test('GA4 assisted: organic first visit converting in another channel', () => {
+  const mk = (dims, mets, rows) => ({ dimensionHeaders: dims.map(name => ({ name })), metricHeaders: mets.map(name => ({ name })), rows: rows.map(r => ({ dimensionValues: r[0].map(value => ({ value })), metricValues: r[1].map(v => ({ value: String(v) })) })) });
+  const raw = { assisted: mk(['firstUserDefaultChannelGroup', 'sessionDefaultChannelGroup', 'eventName'], ['eventCount'], [[['Organic Search', 'Organic Search', 'book_demo'], [10]], [['Organic Search', 'Email', 'book_demo'], [4]], [['Organic Search', 'Direct', 'contact_form_submit'], [3]], [['Paid Search', 'Organic Search', 'book_demo'], [2]]]) };
+  const a = U.assistedModel(raw, { demoRequest: ['book_demo'], contactSubmit: ['contact_form_submit'], employerSignup: [] });
+  assert.equal(a.cur.lastOrganic.total, 12); assert.equal(a.cur.assisted.total, 7); assert.equal(a.cur.organicAll.total, 17); assert.equal(a.cur.byCloser[0].channel, 'Email'); assert.equal(a.cur.toOrganic.total, 2);
+});
 report('unstop');

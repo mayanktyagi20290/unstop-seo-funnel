@@ -403,6 +403,7 @@
     const aiRx = (o.aiSources || []).map(esc).join('|') || 'chatgpt';
     const pricing = (o.pricingPaths || []).map(esc).join('|') || 'pricing';
     const scrollEv = ((o.events && o.events.scroll) || ['scroll']).slice(0, 20);
+    const leadEv = [...new Set(['demoRequest', 'contactSubmit', 'employerSignup'].flatMap(k => (o.events && o.events[k]) || []))].slice(0, 60);
     const blogRx = '/(blog|blog-series|category|bites|resources|prep-zone)(/|$)';
     const R = {
       landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, limit: 100000 },
@@ -427,6 +428,8 @@
       totals: { dateRanges: both, metrics: ['totalUsers', 'activeUsers', 'sessions', 'engagedSessions', 'screenPageViews'].map(name => ({ name })), dimensionFilter: org, limit: 10 },
       blogNext: { dateRanges: both, dimensions: [{ name: 'pagePath' }, { name: 'pageReferrer' }], metrics: [{ name: 'screenPageViews' }], dimensionFilter: GA.and(org, GA.regex('pageReferrer', blogRx)), limit: 100000 },
       cohorts: cohortReq(o.end, 0), cohortsYoy: cohortReq(o.end, 1),
+      // assisted conversions: employer conversions by the channel that first brought the user and the channel of the converting session
+      assisted: { dateRanges: both, dimensions: [{ name: 'firstUserDefaultChannelGroup' }, { name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.inList('eventName', leadEv.length ? leadEv : ['generate_lead']), limit: 10000 },
       ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 }
     };
     return R;
@@ -766,6 +769,103 @@
     const worse = rows.filter(r => r.state === 'worse'), better = rows.filter(r => r.state === 'better');
     return { rows, worse: worse.length, better: better.length, ok: !worse.length, label: worse.length ? 'Organic is worse' : better.length === rows.length ? 'Organic is better' : 'Organic is level or better' };
   }
+
+  // ── leads & business ──
+  // One channel name from whatever a CRM or analytics tool calls it.
+  function channelOf(source, medium) {
+    const s = (String(source || '') + ' ' + String(medium || '')).toLowerCase().trim();
+    if (!s) return '(not set)';
+    if (/\b(cpc|ppc|paid|adwords|google ads|gads|sem|display|cpm|retarget|paid search|paid social|linkedin ads|meta ads)\b/.test(s)) return /social|facebook|instagram|linkedin|meta/.test(s) ? 'Paid social' : 'Paid search';
+    if (/organic search|\borganic\b|\bseo\b/.test(s)) return 'Organic search';
+    if (/chatgpt|perplexity|gemini|copilot|claude|\bai\b/.test(s)) return 'AI assistants';
+    if (/e-?mail|newsletter|mailchimp|hubspot email|sequence|nurture/.test(s)) return 'Email';
+    if (/\bdirect\b|\(none\)|typed|bookmark/.test(s)) return 'Direct';
+    if (/social|facebook|instagram|linkedin|twitter|\bx\.com|youtube|whatsapp/.test(s)) return 'Organic social';
+    if (/referr|partner|affiliate/.test(s)) return 'Referral';
+    if (/event|offline|webinar|conference|trade|outbound|sales|cold|call|import/.test(s)) return 'Sales & offline';
+    if (/google|bing|yahoo|duckduckgo/.test(s)) return 'Organic search';
+    return 'Other';
+  }
+  const CRM_FIELDS = {
+    id: ['lead id', 'record id', 'contact id', 'deal id', 'id', 'lead_id'],
+    created: ['create date', 'created date', 'created at', 'lead created', 'lead created date', 'created', 'date created', 'created_on'],
+    source: ['original source', 'first touch source', 'first touch channel', 'lead source', 'source', 'utm source', 'utm_source', 'channel', 'first source', 'original traffic source'],
+    medium: ['utm medium', 'utm_medium', 'medium', 'original source drill-down 1', 'first touch medium'],
+    touches: ['all touches', 'touchpoints', 'touch points', 'journey', 'channels in journey', 'attribution path', 'conversion path', 'sources', 'all sources'],
+    latest: ['latest source', 'last touch source', 'last touch channel', 'latest traffic source', 'recent source'],
+    landing: ['first page seen', 'landing page', 'first url', 'first landing page', 'first page'],
+    mql: ['mql', 'is mql', 'became mql', 'became a marketing qualified lead date', 'mql date', 'lifecycle stage', 'lead status', 'lifecycle'],
+    opp: ['opportunity', 'opportunity created', 'opportunity created date', 'deal created', 'deal create date', 'is opportunity', 'opportunity id'],
+    amount: ['amount', 'deal amount', 'opportunity amount', 'pipeline', 'pipeline amount', 'deal value', 'value'],
+    stage: ['deal stage', 'stage', 'opportunity stage', 'status', 'deal status'],
+    won: ['closed won date', 'close date', 'won date', 'closed date'],
+    revenue: ['revenue', 'closed revenue', 'won amount', 'closed won amount', 'booked revenue']
+  };
+  function crmHeaderMap(header) {
+    const h = header.map(x => String(x || '').trim().toLowerCase().replace(/\s+/g, ' '));
+    const map = {};
+    Object.entries(CRM_FIELDS).forEach(([k, names]) => {
+      let i = h.findIndex((x, j) => names.includes(x) && !Object.values(map).includes(j));
+      if (i < 0) i = h.findIndex((x, j) => !Object.values(map).includes(j) && names.some(n => n.length > 4 && x.includes(n)));
+      if (i >= 0) map[k] = i;
+    });
+    return map;
+  }
+  const money = v => { if (v == null || v === '') return 0; const n = parseFloat(String(v).replace(/[₹$,\s]|inr|rs\.?/gi, '')); return isFinite(n) ? n : 0; };
+  // CRM export → leads by first-touch channel, organic first touch vs organic in the journey, rates, coverage.
+  function crmModel(rows, opt = {}) {
+    if (!rows || rows.length < 2) return { ok: false, error: 'The file has no rows.' };
+    const header = rows[0], map = crmHeaderMap(header);
+    if (map.source == null && map.touches == null) return { ok: false, error: 'No source or channel column found. Expected a column such as “Original Source”, “Lead Source” or “First touch channel”.', header, map };
+    const leads = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i]; if (!r || !r.some(c => c !== '' && c != null)) continue;
+      const get = k => map[k] != null ? r[map[k]] : null;
+      const first = map.source != null ? channelOf(get('source'), get('medium')) : null;
+      const touches = map.touches != null ? String(get('touches') || '').split(/\s*(?:>|→|,|;|\|)\s*/).filter(Boolean).map(x => channelOf(x)) : [];
+      const latest = map.latest != null ? channelOf(get('latest')) : null;
+      const ft = first || touches[0] || '(not set)';
+      const journey = new Set(touches.concat(latest ? [latest] : []).concat([ft]));
+      const mqlV = get('mql'), oppV = get('opp'), stage = String(get('stage') || '').toLowerCase();
+      const isMql = mqlV == null ? null : (/^(yes|y|true|1)$/i.test(String(mqlV).trim()) || /\d{4}|\d\/\d/.test(String(mqlV)) || /marketing ?qualified|mql|sql|sales ?qualified|opportunity|customer|won/i.test(String(mqlV)));
+      const amount = money(get('amount'));
+      const isOpp = oppV != null ? (/^(yes|y|true|1)$/i.test(String(oppV).trim()) || /\d{4}|\d\/\d|[a-z0-9]{5,}/i.test(String(oppV)) && !/^(no|n|false|0)$/i.test(String(oppV).trim())) : (amount > 0 || /won|lost|proposal|negotiat|demo|qualified|contract/.test(stage));
+      const isWon = /closed ?won|\bwon\b|signed|customer/.test(stage) || (map.won != null && !!String(get('won') || '').trim() && !/lost/.test(stage) && map.stage == null);
+      const revenue = map.revenue != null ? money(get('revenue')) : isWon ? amount : 0;
+      const cd = toDate(get('created'));
+      leads.push({ ft, journey, organicFT: ft === 'Organic search', organicAny: journey.has('Organic search'), mql: isMql, opp: isOpp, won: isWon, pipeline: isOpp ? amount : 0, revenue: isWon ? (revenue || amount) : 0, landing: map.landing != null ? String(get('landing') || '') : '', month: cd ? cd.toISOString().slice(0, 7) : null, hasSource: ft !== '(not set)' });
+    }
+    if (!leads.length) return { ok: false, error: 'No lead rows found.', header, map };
+    const agg = list => { const n = list.length, mq = list.filter(l => l.mql).length, op = list.filter(l => l.opp).length, wn = list.filter(l => l.won).length; return { leads: n, mqls: map.mql != null ? mq : null, opps: op, won: wn, pipeline: list.reduce((a, l) => a + l.pipeline, 0), revenue: list.reduce((a, l) => a + l.revenue, 0), toMql: n && map.mql != null ? mq / n * 100 : null, toOpp: n ? op / n * 100 : null, toClose: n ? wn / n * 100 : null, winRate: op ? wn / op * 100 : null }; };
+    const chm = new Map(); leads.forEach(l => { if (!chm.has(l.ft)) chm.set(l.ft, []); chm.get(l.ft).push(l); });
+    const channels = [...chm.entries()].map(([c, list]) => ({ channel: c, ...agg(list) })).sort((a, b) => b.leads - a.leads);
+    const ft = agg(leads.filter(l => l.organicFT)), assisted = agg(leads.filter(l => l.organicAny && !l.organicFT)), anyOrg = agg(leads.filter(l => l.organicAny)), other = agg(leads.filter(l => !l.organicFT && l.hasSource)), all = agg(leads);
+    const months = new Map(); leads.filter(l => l.month).forEach(l => { const o = months.get(l.month) || []; o.push(l); months.set(l.month, o); });
+    const monthly = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([m, list]) => ({ month: m, ft: agg(list.filter(l => l.organicFT)), assisted: agg(list.filter(l => l.organicAny && !l.organicFT)), all: agg(list) }));
+    const lp = new Map(); leads.filter(l => l.organicFT && l.landing).forEach(l => { const k = pathOnly(l.landing); const o = lp.get(k) || []; o.push(l); lp.set(k, o); });
+    const landing = [...lp.entries()].map(([path, list]) => ({ path, ...agg(list) })).sort((a, b) => b.pipeline - a.pipeline || b.leads - a.leads);
+    const coverage = { source: leads.filter(l => l.hasSource).length / leads.length * 100, journey: map.touches != null || map.latest != null ? 100 : 0, landing: map.landing != null ? leads.filter(l => l.landing).length / leads.length * 100 : 0, amount: map.amount != null, stage: map.stage != null || map.won != null };
+    return { ok: true, header, map, total: leads.length, channels, ft, assisted, anyOrg, other, all, monthly, landing, coverage, hasJourney: map.touches != null || map.latest != null, hasMql: map.mql != null };
+  }
+  // GA4: employer conversions where organic first brought the user but another channel's session converted (and the reverse).
+  function assistedModel(raw, ev) {
+    const rows = gaRows(raw && raw.assisted);
+    const is = {}; ['demoRequest', 'contactSubmit', 'employerSignup'].forEach(k => { is[k] = inSet((ev || {})[k]); });
+    const kind = n => is.demoRequest(n) ? 'demo' : is.contactSubmit(n) ? 'contact' : is.employerSignup(n) ? 'empSignup' : null;
+    const z = () => ({ demo: 0, contact: 0, empSignup: 0, total: 0 });
+    const put = (o, k, c) => { if (!k) return; o[k] += c; o.total += c; };
+    const R = { cur: { lastOrganic: z(), assisted: z(), organicAll: z(), byCloser: new Map(), toOrganic: z(), all: z() }, yoy: { lastOrganic: z(), assisted: z(), organicAll: z(), byCloser: new Map(), toOrganic: z(), all: z() } };
+    rows.forEach(r => {
+      const x = R[r.range === 'yoy' ? 'yoy' : 'cur'], k = kind(r.eventName), c = r.eventCount, f = r.firstUserDefaultChannelGroup, sc = r.sessionDefaultChannelGroup;
+      put(x.all, k, c);
+      if (sc === 'Organic Search') put(x.lastOrganic, k, c);
+      if (f === 'Organic Search') put(x.organicAll, k, c);
+      if (f === 'Organic Search' && sc !== 'Organic Search') { put(x.assisted, k, c); const b = x.byCloser.get(sc) || z(); put(b, k, c); x.byCloser.set(sc, b); }
+      if (f !== 'Organic Search' && sc === 'Organic Search') put(x.toOrganic, k, c);
+    });
+    const fin = x => ({ ...x, byCloser: [...x.byCloser.entries()].map(([channel, v]) => ({ channel, ...v })).sort((a, b) => b.total - a.total) });
+    return { ok: rows.length > 0, cur: fin(R.cur), yoy: fin(R.yoy) };
+  }
   // ── metric registry for the funnel dashboard (owner, source, definition, cadence) ──
   const METRICS = [
     { stage: 'Visibility', id: 'impr', label: 'Impressions', src: 'GSC', owner: 'SEO', cadence: 'Weekly', def: 'Times a unstop.com URL appeared in Google results (web search), whole property.' },
@@ -802,11 +902,18 @@
     { stage: 'Leads', id: 'contact', label: 'Organic contact submissions', src: 'GA4', owner: 'B2B SEO + Demand Gen + Analytics', cadence: 'Monthly', def: 'Contact-form events in organic sessions.' },
     { stage: 'Leads', id: 'pricing', label: 'Organic pricing-page sessions', src: 'GA4', owner: 'B2B SEO + Demand Gen', cadence: 'Monthly', def: 'Organic sessions that viewed a pricing path.' },
     { stage: 'Leads', id: 'aiSessions', label: 'AI assistant referral sessions', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'Sessions referred by ChatGPT, Perplexity, Gemini, Copilot, Claude and similar.' },
-    { stage: 'Pipeline & revenue', id: 'mql', label: 'MQLs, pipeline, closed revenue', src: 'CRM', owner: 'CRM Ops + Finance + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Next phase: needs the CRM export joined on lead ID.', later: true }
+    { stage: 'Leads', id: 'assistedGa', label: 'Assisted employer conversions (organic first, closed elsewhere)', src: 'GA4', owner: 'Analytics + Demand Gen', cadence: 'Monthly', def: 'Demo requests, contact submissions and employer signups by users whose first visit came from organic search but whose converting session came from another channel (email, direct, paid…).' },
+    { stage: 'Leads', id: 'mqls', label: 'MQLs with organic first touch', src: 'CRM', owner: 'Demand Gen + CRM Ops', cadence: 'Monthly', def: 'Marketing qualified leads whose original source is organic search (CRM export).' },
+    { stage: 'Pipeline & revenue', id: 'pipeFT', label: 'Pipeline: organic first touch', src: 'CRM', owner: 'CRM Ops + Finance + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Opportunity amount on leads whose original source is organic search.' },
+    { stage: 'Pipeline & revenue', id: 'pipeAssist', label: 'Pipeline: organic in the journey', src: 'CRM', owner: 'CRM Ops + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Opportunity amount on leads that touched organic search but came first from another channel.' },
+    { stage: 'Pipeline & revenue', id: 'revFT', label: 'Revenue closed: organic first touch', src: 'CRM', owner: 'Finance + CRM Ops', cadence: 'Monthly / Quarterly', def: 'Closed-won amount on leads whose original source is organic search.' },
+    { stage: 'Pipeline & revenue', id: 'revAssist', label: 'Revenue closed: organic in the journey', src: 'CRM', owner: 'Finance + CRM Ops', cadence: 'Monthly / Quarterly', def: 'Closed-won amount on leads that touched organic search but came first from another channel.' },
+    { stage: 'Pipeline & revenue', id: 'l2o', label: 'Lead → opportunity rate (organic)', src: 'CRM', owner: 'Demand Gen + CRM Ops', cadence: 'Monthly', def: 'Organic first-touch leads that became opportunities ÷ organic first-touch leads, against all other channels.' },
+    { stage: 'Pipeline & revenue', id: 'l2c', label: 'Lead → close rate (organic)', src: 'CRM', owner: 'Demand Gen + Finance', cadence: 'Monthly', def: 'Organic first-touch leads closed won ÷ organic first-touch leads, against all other channels.' },
   ];
 
   const api = { cohortWeeks, engagementModel, DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
-    moeHeaderMap, moeQuality, qualityVerdict, organicTest, toDate, METRICS, chg };
+    moeHeaderMap, moeQuality, qualityVerdict, channelOf, crmHeaderMap, crmModel, assistedModel, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -33,7 +33,7 @@
   const MOE = new Map();  // site → { res, rows, name, at, sample }
   const WEEK = new Map(); // site|start|end → { status, series, error }
   const MAPS = new Map(); // site → { status, rows, error }
-  let MSG = { ga: '', moe: '' };
+  let MSG = { ga: '', moe: '', crm: '' };
 
   // ── formatting ──
   const pct1 = v => v == null || isNaN(v) ? '—' : v.toFixed(1) + '%';
@@ -766,7 +766,8 @@
       totals: mk([], ['totalUsers', 'activeUsers', 'sessions', 'engagedSessions', 'screenPageViews'], [{ d: ['cur'], m: [users, users * .97, sessions, sum(cur, 2), sum(cur, 3)] }, { d: ['yoy'], m: [yUsers, yUsers * .97, ySessions, sum(yoy, 2), sum(yoy, 3)] }], true),
       blogNext: mk(['pagePath', 'pageReferrer'], ['screenPageViews'], bn, true),
       cohorts: mk(['cohort', 'cohortNthWeek'], ['cohortActiveUsers', 'cohortTotalUsers'], coh(1), false),
-      cohortsYoy: mk(['cohort', 'cohortNthWeek'], ['cohortActiveUsers', 'cohortTotalUsers'], coh(.9), false)
+      cohortsYoy: mk(['cohort', 'cohortNthWeek'], ['cohortActiveUsers', 'cohortTotalUsers'], coh(.9), false),
+      assisted: mk(['firstUserDefaultChannelGroup', 'sessionDefaultChannelGroup', 'eventName'], ['eventCount'], [ev.demoRequest[0], ev.contactSubmit[0], ev.employerSignup[0]].filter(Boolean).flatMap((n, i) => { const base = evTot(n) || 20; return [['Organic Search', 'Organic Search', 1], ['Organic Search', 'Email', .22], ['Organic Search', 'Direct', .31], ['Organic Search', 'Paid Search', .08], ['Paid Search', 'Organic Search', .1], ['Direct', 'Direct', .6], ['Email', 'Email', .3], ['Paid Search', 'Paid Search', .7]].flatMap(([f, sc, k]) => [{ d: [f, sc, n, 'cur'], m: [base * k * (.85 + R() * .3)] }, { d: [f, sc, n, 'yoy'], m: [base * k * .75] }]); }), true)
     };
   }
   function sampleGa(D) {
@@ -1088,6 +1089,7 @@
     if (!GA.has(D.site)) GA.set(D.site, { raw: sampleGa(D), property: 'sample', propertyName: 'Sample numbers', start: D.start, end: D.end, at: Date.now(), sample: true, failed: [] });
     if (!MOE.has(D.site)) { const rows = sampleMoe(D); MOE.set(D.site, { rows, res: U.moeQuality(rows, moeOpt(settings(D.site))), name: 'Sample users', at: Date.now(), sample: true }); }
     if (!MOELIVE.has(D.site)) MOELIVE.set(D.site, sampleMoeLive());
+    if (!CRM.has(D.site)) { const rows = sampleCrm(); CRM.set(D.site, { rows, res: U.crmModel(rows), name: 'Sample leads', at: Date.now(), sample: true }); }
   }
 
   // ════════════════════════════ USER ACQUISITION ════════════════════════════
@@ -1263,6 +1265,110 @@
     return { html, mount };
   };
 
+  // ════════════════════════════ LEADS & REVENUE ════════════════════════════
+  // GA4: employer demo / contact / pricing and assisted conversions. CRM export (tab memory only):
+  // MQLs, pipeline and revenue with organic first touch and organic in the journey, rates vs other channels.
+  const CRM = new Map(); // site → { rows, res, name, at, sample }
+  const inr = v => v == null || !isFinite(v) ? '—' : v >= 1e7 ? '₹' + (v / 1e7).toFixed(2) + ' Cr' : v >= 1e5 ? '₹' + (v / 1e5).toFixed(1) + ' L' : '₹' + fmtN(Math.round(v));
+  function assistedOf(D) { const g = GA.get(D.site); if (!g || !g.raw || !g.raw.assisted) return null; const s = settings(D.site); const sig = JSON.stringify(s.events) + g.at; if (!g.asst || g.asstSig !== sig) { g.asst = U.assistedModel(g.raw, s.events); g.asstSig = sig; } return g.asst.ok ? g.asst : null; }
+  function sampleCrm() {
+    let seed = 23; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const rows = [['Record ID', 'Create Date', 'Original Source', 'All touches', 'First page seen', 'Lifecycle Stage', 'Deal amount', 'Deal stage']];
+    const src = [['Organic Search', .3], ['Paid Search', .24], ['Direct Traffic', .14], ['Email Marketing', .1], ['Referrals', .08], ['Social Media', .06], ['Offline Sources', .08]];
+    const pages = ['/employers', '/employers/ats-software', '/employers/online-assessment-platform', '/employers/hackathon-hiring', '/employers/campus-hiring', '/saas-pricing', '/employers/hire-interns', '/employers/ai-interview'];
+    const end = Date.now() - 3 * 864e5;
+    for (let i = 0; i < 900; i++) {
+      let x = R(), k = 0; while (k < src.length - 1 && x > src[k][1]) { x -= src[k][1]; k++; }
+      const s = src[k][0], org = s === 'Organic Search';
+      const touches = [s]; if (R() < .45) touches.push(['Email Marketing', 'Direct Traffic', 'Organic Search', 'Paid Search'][Math.floor(R() * 4)]); if (!org && R() < .18) touches.splice(1, 0, 'Organic Search');
+      const mql = R() < (org ? .46 : s === 'Paid Search' ? .32 : .38), opp = mql && R() < (org ? .34 : .27), won = opp && R() < (org ? .45 : .36);
+      const amt = opp ? Math.round((150000 + R() * 900000) / 1000) * 1000 : '';
+      const d = new Date(end - Math.floor(R() * 180) * 864e5).toISOString().slice(0, 10);
+      rows.push(['L' + (10000 + i), d, s, touches.join(' > '), org || R() < .4 ? 'https://unstop.com' + pages[Math.floor(R() * pages.length)] : '', won ? 'Customer' : opp ? 'Opportunity' : mql ? 'Marketing Qualified Lead' : 'Lead', amt, won ? 'Closed Won' : opp ? (R() < .4 ? 'Closed Lost' : 'Proposal') : '']);
+    }
+    return rows;
+  }
+  function crmOf(D) { const c = CRM.get(D.site); return c && c.res && c.res.ok ? c : null; }
+  V.leads = (A, D) => {
+    demoFill(D);
+    window.CW_LAST_A = A;
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-ld')).forEach(k => delete TABLES[k]);
+    const g = GA.get(D.site), M = gaModel(D), AS = assistedOf(D), c = CRM.get(D.site), C = c && c.res && c.res.ok ? c.res : null, s = settings(D.site);
+    const intro = head('Leads & revenue', 'Employer side: organic demo requests, contact submissions, pricing-page visits and MQLs, then pipeline and revenue with organic as first touch and as part of the journey, lead → opportunity and lead → close against other channels, and assisted conversions where SEO started a journey that closed through email or direct.');
+    const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
+    const pts = (a, b) => a == null || b == null ? '' : `<span class="un-d ${a - b > 0 ? 'up' : a - b < 0 ? 'down' : 'flat'}">${a - b > 0 ? '+' : ''}${(a - b).toFixed(1)} pts</span>`;
+    let html = intro + scopePicker(A, D);
+    // ── GA4 ──
+    if (!M) html += '<div class="note"><a href="#ga4">Connect GA4</a> for demo requests, contact submissions, pricing visits and assisted conversions.</div>';
+    else {
+      const so = sectioner(D);
+      html += `<h2 class="un-sub">Employer actions from organic (GA4)${g.sample ? ' <span class="un-st sample">Sample</span>' : ''}</h2><div class="un-kpis">
+        ${kp('Demo requests', fmtN(Math.round(M.ev.demo)), dchip(U.chg(M.ev.demo, M.ev.yDemo)), 'vs last year')}
+        ${kp('Contact submissions', fmtN(Math.round(M.ev.contact)), dchip(U.chg(M.ev.contact, M.ev.yContact)), 'vs last year')}
+        ${kp('Pricing-page sessions', fmtN(Math.round(M.pricing.sessions)), dchip(U.chg(M.pricing.sessions, M.pricing.ySessions)), 'vs last year')}
+        ${kp('Employer signups', fmtN(Math.round(M.ev.emp)), dchip(U.chg(M.ev.emp, M.ev.yEmp)), 'vs last year')}
+      </div>`;
+      // assisted
+      if (AS) {
+        const a = AS.cur, y = AS.yoy;
+        html += `<section class="panel"><div class="panel-h"><h2>Assisted conversions: SEO starts, another channel closes</h2><p>Demo requests, contact submissions and employer signups split by the channel that first brought the user (GA4 first user channel) and the channel of the session where they converted.</p></div><div class="panel-b"><div class="un-kpis">
+          ${kp('Converted in an organic session', fmtN(Math.round(a.lastOrganic.total)), dchip(U.chg(a.lastOrganic.total, y.lastOrganic.total)), 'last touch organic')}
+          ${kp('Started by organic, closed elsewhere', fmtN(Math.round(a.assisted.total)), dchip(U.chg(a.assisted.total, y.assisted.total)), 'assisted by SEO')}
+          ${kp('All conversions first brought by organic', fmtN(Math.round(a.organicAll.total)), dchip(U.chg(a.organicAll.total, y.organicAll.total)), a.all.total ? pct1(a.organicAll.total / a.all.total * 100) + ' of all employer conversions' : '')}
+          ${kp('Organic-started, credited elsewhere', a.organicAll.total ? pct1(a.assisted.total / a.organicAll.total * 100) : '—', '', 'what last-click reporting hides from SEO')}
+        </div></div>
+        <div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Closing channel (first visit was organic)</th><th class="r">Demo requests</th><th class="r">Contact</th><th class="r">Employer signups</th><th class="r">Total</th></tr></thead><tbody>${a.byCloser.map(r => `<tr><td><b>${esc(r.channel)}</b></td><td class="r">${fmtN(Math.round(r.demo))}</td><td class="r">${fmtN(Math.round(r.contact))}</td><td class="r">${fmtN(Math.round(r.empSignup))}</td><td class="r">${fmtN(Math.round(r.total))}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">None in this period.</td></tr>'}</tbody></table></div></div></section>`;
+      } else html += '<div class="note">Assisted conversions need the GA4 “assisted” report. Reload GA4 on the GA4 screen.</div>';
+      // employer actions by cluster / folder / landing page
+      const grp = keyFn => { const m = new Map(); M.pages.forEach(p => { if (!(p.demo + p.contact + p.emp) && p.type !== 'emp') return; const k = keyFn(p); const o = m.get(k.id) || { ...k, sessions: 0, ySessions: 0, demo: 0, contact: 0, emp: 0 }; o.sessions += p.sessions; o.ySessions += p.ySessions; o.demo += p.demo; o.contact += p.contact; o.emp += p.emp; m.set(k.id, o); }); return [...m.values()].map(o => ({ ...o, leads: o.demo + o.contact, rate: o.sessions ? (o.demo + o.contact) / o.sessions * 100 : null, dSessions: U.chg(o.sessions, o.ySessions) })).filter(o => o.sessions > 0 || o.leads > 0); };
+      const cols = first => first.concat([{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSessions) }, { k: 'demo', l: 'Demo requests', r: 1, f: r => fmtN(Math.round(r.demo)) }, { k: 'contact', l: 'Contact', r: 1, f: r => fmtN(Math.round(r.contact)) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => fmtN(Math.round(r.emp)) }, { k: 'rate', l: 'Leads per 100 sessions', r: 1, f: r => r.rate == null ? '—' : r.rate.toFixed(2) }]);
+      const tab = fParams().get('by') || 'cluster';
+      const tbl = tab === 'page' ? table('t-un-ldp', cols([{ k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }]), withCluster(D, grp(p => ({ id: p.path, path: p.path })), r => r.path), { sort: 'leads', file: 'unstop-employer-leads-by-page', pageSize: 20, searchKeys: ['path'], placeholder: 'Filter URLs' })
+        : tab === 'folder' ? table('t-un-ldp', cols([{ k: 'cluster', l: 'Cluster', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder }]), grp(p => { const id = so(p.path), f = so.folderOf(p.path); return { id: id + '|' + f, cluster: so.label(id), folder: f }; }), { search: false, sort: 'leads', file: 'unstop-employer-leads-by-folder', pageSize: 30 })
+          : table('t-un-ldp', cols([{ k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>` }]), grp(p => { const id = so(p.path); return { id, name: so.label(id) }; }), { search: false, sort: 'leads', file: 'unstop-employer-leads-by-cluster', pageSize: 30 });
+      html += `<section class="panel"><div class="panel-h"><h2>Where organic employer leads land</h2><p>Organic sessions on employer pages and any page that produced a demo, contact or employer signup. Pricing pages: ${esc(s.pricingPaths.join(', '))}.</p></div><div class="panel-b"><div class="un-tabs" role="tablist">${[['cluster', 'By cluster'], ['folder', 'By folder'], ['page', 'By landing page']].map(([k, l]) => `<a role="tab" class="${k === tab ? 'on' : ''}" href="#leads?by=${k}">${l}</a>`).join('')}</div></div>${tbl}</section>`;
+    }
+    // ── CRM ──
+    html += `<h2 class="un-sub">MQLs, pipeline and revenue (CRM)${c ? ' ' + chip(c.sample ? 'sample' : 'file') : ''}</h2>
+      <section class="panel"><div class="panel-b"><div class="un-row">
+        <label class="btn-primary sm un-file">Upload CRM export<input type="file" id="un-crm-file" accept=".csv,.xlsx,.xls" hidden></label>
+        <button class="btn-quiet" type="button" id="un-crm-tpl">Download column template</button>
+        <button class="btn-quiet" type="button" id="un-crm-sample">Preview with sample leads</button>
+        ${c ? '<button class="btn-quiet" type="button" id="un-crm-clear">Remove file</button>' : ''}
+      </div>${MSG.crm ? `<p class="start-error" role="alert">${esc(MSG.crm)}</p>` : ''}
+      <p class="hint">Export employer leads (or contacts with their deals) from the CRM with: lead ID, create date, original source (first touch), all touches or latest source (the journey), first page seen, lifecycle stage or MQL flag, deal amount and deal stage. HubSpot, Salesforce, Zoho and LeadSquared column names are recognised. The file stays in this tab.</p></div></section>`;
+    if (c && !C) html += `<div class="note"><b>Could not read the file.</b> ${esc(c.res.error)}${c.res.header ? `<br>Columns found: ${esc(c.res.header.slice(0, 30).join(', '))}` : ''}</div>`;
+    if (C) {
+      const cov = C.coverage, low = cov.source < 80 || !cov.amount || !cov.stage;
+      const ft = C.ft, as = C.assisted, ot = C.other;
+      html += `<div class="note ${low ? 'un-warn' : ''}"><b>Attribution coverage.</b> ${pct1(cov.source)} of ${fmtN(C.total)} leads have an original source${C.hasJourney ? ', the journey (all touches / latest source) is present' : ', <b>no journey column</b> (organic-in-the-journey cannot be measured)'}${cov.landing ? `, ${pct1(cov.landing)} have a first page` : ''}${cov.amount ? '' : ', <b>no deal amount</b>'}${cov.stage ? '' : ', <b>no deal stage</b>'}. ${low ? '<b>Do not report pipeline or revenue as SEO impact until coverage is fixed.</b>' : 'Coverage is good enough to report, with first touch and assisted kept apart.'}</div>
+      <div class="un-kpis">
+        ${kp('Organic first-touch leads', fmtN(ft.leads), '', `${pct1(ft.leads / C.total * 100)} of all leads`)}
+        ${kp('MQLs (organic first touch)', ft.mqls == null ? '—' : fmtN(ft.mqls), '', ft.toMql == null ? 'no MQL column' : `lead → MQL ${pct1(ft.toMql)} · others ${pct1(ot.toMql)}`)}
+        ${kp('Pipeline: organic first touch', inr(ft.pipeline), '', `${fmtN(ft.opps)} opportunities`)}
+        ${kp('Revenue: organic first touch', inr(ft.revenue), '', `${fmtN(ft.won)} won`)}
+        ${kp('Pipeline: organic in the journey', C.hasJourney ? inr(as.pipeline) : '—', '', C.hasJourney ? `${fmtN(as.leads)} leads came first from another channel` : 'needs a journey column')}
+        ${kp('Revenue: organic in the journey', C.hasJourney ? inr(as.revenue) : '—', '', C.hasJourney ? `${fmtN(as.won)} won` : '')}
+        ${kp('Lead → opportunity', pct1(ft.toOpp), pts(ft.toOpp, ot.toOpp), 'organic vs other channels')}
+        ${kp('Lead → close', pct1(ft.toClose), pts(ft.toClose, ot.toClose), 'organic vs other channels')}
+      </div>
+      <section class="panel"><div class="panel-h"><h2>Channels compared (first touch)</h2><p>Every lead counted once, under its original source.</p></div>
+        ${table('t-un-ldc', [{ k: 'channel', l: 'First-touch channel', f: r => r.channel === 'Organic search' ? `<b>${esc(r.channel)}</b>` : esc(r.channel) }, { k: 'leads', l: 'Leads', r: 1, f: r => fmtN(r.leads) }, { k: 'mqls', l: 'MQLs', r: 1, f: r => r.mqls == null ? '—' : fmtN(r.mqls) }, { k: 'opps', l: 'Opportunities', r: 1, f: r => fmtN(r.opps) }, { k: 'pipeline', l: 'Pipeline', r: 1, f: r => inr(r.pipeline) }, { k: 'won', l: 'Won', r: 1, f: r => fmtN(r.won) }, { k: 'revenue', l: 'Revenue', r: 1, f: r => inr(r.revenue) }, { k: 'toMql', l: 'Lead → MQL', r: 1, f: r => pct1(r.toMql) }, { k: 'toOpp', l: 'Lead → opp.', r: 1, f: r => pct1(r.toOpp) }, { k: 'toClose', l: 'Lead → close', r: 1, f: r => pct1(r.toClose) }, { k: 'winRate', l: 'Win rate', r: 1, f: r => pct1(r.winRate) }], C.channels, { search: false, sort: 'pipeline', file: 'unstop-crm-channels', pageSize: 20 })}</section>
+      <section class="panel"><div class="panel-h"><h2>Organic first touch vs organic in the journey, by month</h2><p>Lead created month. “In the journey” = touched organic search but came first from another channel; reported apart from first touch, never added to it.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Month</th><th class="r">Organic FT leads</th><th class="r">FT MQLs</th><th class="r">FT pipeline</th><th class="r">FT revenue</th><th class="r">Assisted leads</th><th class="r">Assisted pipeline</th><th class="r">Assisted revenue</th><th class="r">All leads</th></tr></thead><tbody>${C.monthly.map(m => `<tr><td>${esc(m.month)}</td><td class="r">${fmtN(m.ft.leads)}</td><td class="r">${m.ft.mqls == null ? '—' : fmtN(m.ft.mqls)}</td><td class="r">${inr(m.ft.pipeline)}</td><td class="r">${inr(m.ft.revenue)}</td><td class="r">${C.hasJourney ? fmtN(m.assisted.leads) : '—'}</td><td class="r">${C.hasJourney ? inr(m.assisted.pipeline) : '—'}</td><td class="r">${C.hasJourney ? inr(m.assisted.revenue) : '—'}</td><td class="r">${fmtN(m.all.leads)}</td></tr>`).join('')}</tbody></table></div></div></section>` +
+      (C.landing.length ? `<section class="panel"><div class="panel-h"><h2>Organic first-touch pipeline by first page seen</h2></div>${table('t-un-ldl', [{ k: 'path', l: 'First page seen', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }, { k: 'leads', l: 'Leads', r: 1, f: r => fmtN(r.leads) }, { k: 'mqls', l: 'MQLs', r: 1, f: r => r.mqls == null ? '—' : fmtN(r.mqls) }, { k: 'pipeline', l: 'Pipeline', r: 1, f: r => inr(r.pipeline) }, { k: 'revenue', l: 'Revenue', r: 1, f: r => inr(r.revenue) }, { k: 'toOpp', l: 'Lead → opp.', r: 1, f: r => pct1(r.toOpp) }], withCluster(D, C.landing, r => r.path), { sort: 'pipeline', file: 'unstop-crm-organic-by-page', pageSize: 15, searchKeys: ['path', 'cluster'], placeholder: 'Filter pages' })}</section>` : '');
+    }
+    const mount = () => {
+      scopeMount(D); ['t-un-ldp', 't-un-ldc', 't-un-ldl'].forEach(drawTable);
+      const $ = id => document.getElementById(id);
+      const f = $('un-crm-file');
+      if (f) f.addEventListener('change', async () => { const file = f.files[0]; if (!file) return; MSG.crm = ''; try { const rows = await readSheet(file); CRM.set(D.site, { rows, res: U.crmModel(rows), name: file.name, at: Date.now() }); } catch (e) { MSG.crm = e.message; } rerender(); });
+      const t = $('un-crm-tpl'); if (t) t.addEventListener('click', () => download('crm-export-template.csv', 'Record ID,Create Date,Original Source,All touches,First page seen,Lifecycle Stage,Deal amount,Deal stage\nL1001,2026-09-02,Organic Search,Organic Search > Email Marketing,https://unstop.com/employers/ats-software,Marketing Qualified Lead,450000,Closed Won\nL1002,2026-09-04,Paid Search,Paid Search > Organic Search > Direct Traffic,,Opportunity,300000,Proposal\nL1003,2026-09-05,Direct Traffic,Direct Traffic,,Lead,,\n'));
+      const sm = $('un-crm-sample'); if (sm) sm.addEventListener('click', () => { const rows = sampleCrm(); CRM.set(D.site, { rows, res: U.crmModel(rows), name: 'Sample leads', at: Date.now(), sample: true }); MSG.crm = ''; rerender(); });
+      const cl = $('un-crm-clear'); if (cl) cl.addEventListener('click', () => { CRM.delete(D.site); rerender(); });
+    };
+    return { html, mount };
+  };
+
   // ════════════════════════════ FULL FUNNEL ════════════════════════════
   V.funnel = (A, D) => {
     demoFill(D);
@@ -1281,6 +1387,7 @@
     const AQ = acqModel(D);
     const pathCov = ga && ga.pathCov ? ga.pathCov.share : null;
     const EN = ga ? engModel(D) : null;
+    const ASt = ga ? assistedOf(D) : null, CR = crmOf(D), crmSt = CR ? (CR.sample ? 'sample' : 'file') : 'none';
     const aiS = ga ? ga.ai.reduce((a, r) => a + r.sessions, 0) : null, aiY = ga ? ga.ai.reduce((a, r) => a + r.ySessions, 0) : null;
     const V2 = {
       impr: [fmtN(site.impr), ps ? U.chg(site.impr, ps.impr) : null, gscSt, gscAt],
@@ -1316,15 +1423,23 @@
       demo: ga ? [fmtN(ga.ev.demo), U.chg(ga.ev.demo, ga.ev.yDemo), gaSt, g.at, null, 'vs last year'] : null,
       contact: ga ? [fmtN(ga.ev.contact), U.chg(ga.ev.contact, ga.ev.yContact), gaSt, g.at, null, 'vs last year'] : null,
       pricing: ga ? [fmtN(ga.pricing.sessions), U.chg(ga.pricing.sessions, ga.pricing.ySessions), gaSt, g.at, null, 'vs last year'] : null,
-      aiSessions: ga ? [fmtN(aiS), U.chg(aiS, aiY), gaSt, g.at, null, 'vs last year'] : null
+      aiSessions: ga ? [fmtN(aiS), U.chg(aiS, aiY), gaSt, g.at, null, 'vs last year'] : null,
+      assistedGa: ASt ? [fmtN(Math.round(ASt.cur.assisted.total)), U.chg(ASt.cur.assisted.total, ASt.yoy.assisted.total), gaSt, g.at, null, ASt.cur.organicAll.total ? pct1(ASt.cur.assisted.total / ASt.cur.organicAll.total * 100) + ' of organic-started' : ''] : null,
+      mqls: CR && CR.res.ft.mqls != null ? [fmtN(CR.res.ft.mqls), null, crmSt, CR.at, null, `lead → MQL ${pct1(CR.res.ft.toMql)} vs ${pct1(CR.res.other.toMql)} others`] : null,
+      pipeFT: CR ? [inr(CR.res.ft.pipeline), null, crmSt, CR.at, null, `${fmtN(CR.res.ft.opps)} opportunities`] : null,
+      pipeAssist: CR && CR.res.hasJourney ? [inr(CR.res.assisted.pipeline), null, crmSt, CR.at, null, 'reported apart from first touch'] : null,
+      revFT: CR ? [inr(CR.res.ft.revenue), null, crmSt, CR.at, null, `${fmtN(CR.res.ft.won)} won`] : null,
+      revAssist: CR && CR.res.hasJourney ? [inr(CR.res.assisted.revenue), null, crmSt, CR.at, null, ''] : null,
+      l2o: CR ? [pct1(CR.res.ft.toOpp), CR.res.ft.toOpp != null && CR.res.other.toOpp != null ? CR.res.ft.toOpp - CR.res.other.toOpp : null, crmSt, CR.at, 'pp', 'vs other channels'] : null,
+      l2c: CR ? [pct1(CR.res.ft.toClose), CR.res.ft.toClose != null && CR.res.other.toClose != null ? CR.res.ft.toClose - CR.res.other.toClose : null, crmSt, CR.at, 'pp', 'vs other channels'] : null
     };
     const owners = s.owners || {};
     const stages = ['Visibility', 'Traffic', 'Signups', 'Engagement', 'Leads', 'Pipeline & revenue'];
-    const link = { Visibility: '#visibility', Traffic: '#ga4', Signups: '#acquisition', Engagement: '#engagement', Leads: '#ga4', 'Pipeline & revenue': null };
+    const link = { Visibility: '#visibility', Traffic: '#ga4', Signups: '#acquisition', Engagement: '#engagement', Leads: '#leads', 'Pipeline & revenue': '#leads' };
     const card = mt => {
       const v = V2[mt.id];
       const st = mt.later ? 'later' : v ? v[2] : mt.src === 'MoEngage' ? 'none' : mt.src === 'Cost input' ? 'input' : 'none';
-      const need = mt.later ? 'CRM export (next phase)' : mt.src === 'GA4' ? '<a href="#ga4">Connect GA4</a>' : mt.src === 'MoEngage' ? '<a href="#quality">Connect MoEngage or upload an export</a>' : mt.src === 'Cost input' ? '<a href="#funnelsetup">Add monthly SEO cost</a>' : '';
+      const need = mt.later ? 'CRM export (next phase)' : mt.src === 'CRM' ? '<a href="#leads">Upload CRM export</a>' : mt.src === 'GA4' ? '<a href="#ga4">Connect GA4</a>' : mt.src === 'MoEngage' ? '<a href="#quality">Connect MoEngage or upload an export</a>' : mt.src === 'Cost input' ? '<a href="#funnelsetup">Add monthly SEO cost</a>' : '';
       const d = v ? (v[4] === 'pos' ? dchip(v[1], true, 'pos') : v[4] === 'pp' ? (v[1] == null ? '' : `<span class="un-d ${v[1] > 0 ? 'up' : v[1] < 0 ? 'down' : 'flat'}">${v[1] > 0 ? '+' : ''}${v[1].toFixed(1)} pts</span>`) : dchip(v[1])) : '';
       return `<div class="un-m${v ? '' : ' empty'}" title="${esc(mt.def)}"><div class="un-m-top"><span>${esc(mt.label)}</span>${chip(st)}</div>
         <b>${v ? v[0] : '—'}</b><div class="un-m-sub">${v ? d + ' ' + esc(v[5] || (v[1] != null && mt.src === 'GSC' ? 'vs previous period' : '')) : need}</div>
@@ -1337,7 +1452,7 @@
         <div><span>Search Console</span>${chip(gscSt)}<small>${esc(D.site)} · ${fmtD(D.start)} – ${fmtD(D.end)}${D.prevStart ? '' : ' · no comparison period'}</small></div>
         <div><span>GA4</span>${chip(gaSt)}<small>${g ? esc(g.propertyName) + ' · ' + fmtD(g.start) + ' – ' + fmtD(g.end) : '<a href="#ga4">Connect GA4</a>'}</small></div>
         <div><span>MoEngage</span>${chip(moeSt)}<small>${ml ? 'Live dashboard · ' + Object.keys(mlv).length + ' metric(s) mapped' + (m ? ' · plus export' : '') : mlL && mlL.status === 'loading' ? 'Loading live dashboard…' : m ? esc(m.name) + ' · ' + fmtN(m.res.total || 0) + ' users' : '<a href="#quality">Connect live or upload export</a>'}</small></div>
-        <div><span>CRM</span>${chip('later')}<small>MQLs, pipeline and revenue come next</small></div>
+        <div><span>CRM</span>${chip(crmSt)}<small>${CR ? esc(CR.name) + ' · ' + fmtN(CR.res.total) + ' leads' : '<a href="#leads">Upload CRM export</a>'}</small></div>
       </div>` +
       `<div class="un-stages">${stages.map(st => `<section class="un-stage"><h2>${link[st] ? `<a href="${link[st]}">${esc(st)}</a>` : esc(st)}</h2>${U.METRICS.filter(x => x.stage === st).map(card).join('')}</section>`).join('')}</div>` +
       `<section class="panel"><div class="panel-h"><h2>The chain by page type</h2><p>Search Console pages and GA4 landing pages classified with the same rules. Never read a single sitewide number in isolation.</p></div>
@@ -1358,7 +1473,7 @@
         <section class="panel"><div class="panel-h"><h2>1. Which pages drove the most signups?</h2><p>Organic landing pages ranked by signup events in the GA4 period.</p></div>${ga ? (q1.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Landing page</th><th>Cluster › folder</th><th class="r">Signups</th><th class="r">CVR</th></tr></thead><tbody>${withCluster(D, q1, p => p.path).map(p => `<tr><td class="u">${esc(p.path)}</td><td>${esc(p.cluster)} <code>${esc(p.folder)}</code></td><td class="r">${fmtN(p.signups)}</td><td class="r">${pct1(p.cvr)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No signup events found in organic sessions. Check the signup event names in Funnel setup against the GA4 event list.</p>') : '<p class="empty"><a href="#ga4">Connect GA4</a> to answer this.</p>'}</section>
         <section class="panel"><div class="panel-h"><h2>2. What share of organic signups comes from non-branded searches?</h2><p>Estimate: each landing page’s signups × the non-branded share of its Search Console clicks.</p></div><div class="panel-b">${q2 ? `<div class="un-big"><b>${pct1(q2.share)}</b><span>estimated non-branded share of organic signups</span></div><p class="hint">${fmtN(Math.round(q2.nb))} of ${fmtN(q2.matched)} signups on pages found in Search Console query × page rows (${pct1(q2.coverage)} of organic signups). ${fmtN(q2.unmatched)} signups landed on pages without query data and are left out. Search Console never ties a query to a signup, so treat this as a labelled proxy.</p>` : `<p class="empty">${!ga ? '<a href="#ga4">Connect GA4</a> and ' : ''}${!(D.QP && D.QP.length) ? 'connect Search Console (query × page rows are needed)' : 'load signup events'} to estimate this.</p>`}</div></section>
       </div>` +
-      `<section class="panel"><div class="panel-h"><h2>3. How much pipeline can we trace to organic?</h2></div><div class="panel-b"><p class="empty">Next phase: needs the CRM export (lead ID, first-touch and assisted channel, opportunity, amount, stage). Report organic first-touch and organic-assisted pipeline separately, and only after join coverage is validated.</p></div></section>` +
+      `<section class="panel"><div class="panel-h"><h2>3. How much pipeline can we trace to organic?</h2><p>First touch and organic-in-the-journey are reported separately, never added.</p></div><div class="panel-b">${CR ? `<div class="un-kpis"><div class="un-kpi"><span>Organic first touch</span><b>${inr(CR.res.ft.pipeline)}</b><small>${fmtN(CR.res.ft.opps)} opportunities · ${inr(CR.res.ft.revenue)} closed won</small></div><div class="un-kpi"><span>Organic in the journey (assisted)</span><b>${CR.res.hasJourney ? inr(CR.res.assisted.pipeline) : '—'}</b><small>${CR.res.hasJourney ? fmtN(CR.res.assisted.opps) + ' opportunities · ' + inr(CR.res.assisted.revenue) + ' closed won' : 'needs a journey column in the export'}</small></div><div class="un-kpi"><span>Attribution coverage</span><b>${pct1(CR.res.coverage.source)}</b><small>of leads have an original source${CR.res.coverage.source < 80 ? ' · too low to report yet' : ''}</small></div></div><p class="hint"><a href="#leads">Leads & revenue</a> has channels, months and first pages.</p>` : '<p class="empty"><a href="#leads">Upload the CRM export</a> (lead ID, original source, journey, lifecycle stage, deal amount and stage) to answer this. Validate attribution coverage before sharing.</p>'}</div></section>` +
       `<p class="un-row"><button class="btn-quiet" type="button" id="un-f-export">Download funnel metrics (CSV)</button><span class="hint">Metric, stage, value, change, status, source, owner, cadence, definition and last refresh.</span></p>`;
     const mount = () => {
       drawTable('t-un-fc');

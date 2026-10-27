@@ -94,3 +94,4 @@
 .un-st.bad{background:var(--risk-soft,#fde8e8);color:var(--risk-ink,var(--risk))}
 .un-verdict.ok{border-left:4px solid var(--good)}
 .un-verdict.bad{border-left:4px solid var(--risk)}
+.note.un-warn{border-left:4px solid var(--risk);background:var(--risk-soft)}
