@@ -228,9 +228,21 @@
   let FILTER = { type: 'web', device: '' };
   // Turn what the user typed ("/employers", "employers/", or a full URL) into a page filter.
   // The pattern is built here and fully escaped; users never write one.
+  // Unstop sections: "cluster:<id>" or "cluster:<id>|<folder rule>" → page regex (+ exclusion of narrower clusters)
+  function sectionsFor(site) { const name = String(site || '').replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').replace(/\/$/, ''); try { return (window.UN_VIEW && window.UN_VIEW.settings(name).sections) || null; } catch (e) { return null; } }
+  function clusterScope(v, site) {
+    const m = String(v || '').match(/^cluster:([a-z0-9-]+)(?:\|(.+))?$/i); if (!m || !window.UN) return null;
+    const secs = sectionsFor(site), so = window.UN.makeSectioner(secs), sec = so.sections.find(x => x.id === m[1]);
+    if (!sec || !sec.rules.length) return { error: 'That section no longer exists. Pick another one.' };
+    const folder = m[2] || null;
+    const rules = folder ? sec.rules.filter(r => String(r).trim().replace(/^=/, '').replace(/\*$/, '…') === folder) : sec.rules;
+    if (!rules.length) return { error: 'That folder is not part of the section any more.' };
+    return { regex: window.UN.sectionRegex({ id: folder ? 'x' : sec.id, rules }, null), exclude: window.UN.sectionExclude(sec, secs), label: sec.name + (folder ? ' › ' + folder : ''), test: u => so(u) === sec.id && (!folder || so.folderOf(u) === folder) };
+  }
   function scopeOf(input, site, exact) {
     let v = String(input || '').trim();
     if (!v) return { regex: null, label: null };
+    const cs = clusterScope(v, site); if (cs) return cs;
     const propHost = site.replace(/^sc-domain:/, '').replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '').toLowerCase();
     let host = null, path = v;
     if (/^https?:\/\//i.test(v)) {
@@ -260,6 +272,7 @@
       const filters = [];
       if (FILTER.device && !dims.includes('device')) filters.push({ dimension: 'device', operator: 'equals', expression: FILTER.device });
       if (FILTER.page) filters.push({ dimension: 'page', operator: 'includingRegex', expression: FILTER.page });
+      if (FILTER.page && FILTER.pageEx) filters.push({ dimension: 'page', operator: 'excludingRegex', expression: FILTER.pageEx });
       if (filters.length) body.dimensionFilterGroups = [{ groupType: 'and', filters }];
       const d = await api(`sites/${encodeURIComponent(site)}/searchAnalytics/query`, body);
       const rows = d.rows || [];
@@ -324,7 +337,7 @@
     // Optional scope: a folder ("/blog/") or one page, sent to Google as a page filter.
     const sc = scopeOf(o.scopeInput, site, o.exact);
     if (sc.error) { ui.error.textContent = sc.error; ui.error.hidden = false; return; }
-    FILTER.page = sc.regex; FILTER.scope = sc.label;
+    FILTER.page = sc.regex; FILTER.pageEx = sc.exclude || null; FILTER.scope = sc.label;
     if (!site || !start || !end || start > end) { ui.error.textContent = 'Choose a property and a valid date range.'; ui.error.hidden = false; return; }
     ui.error.hidden = true; ui.go.disabled = true;
     LAST = { ...o }; sess.set('src', 'api'); sess.set('last', LAST); sess.set('file', null);
@@ -368,17 +381,35 @@
   // ── change property, dates or folder from the top bar ──
   // Search Console analyses re-run with the new choice; uploads and sample data are fixed, so the
   // dialog explains that and offers a new analysis instead.
+  function fillSections(current) {
+    const sel = $('scope-sec'); if (!window.UN) { $('scope-sec-f').hidden = true; return; }
+    const full = DEMO_FULL || D, so = window.UN.makeSectioner(sectionsFor(full.siteUrl || full.site));
+    const seen = new Map(); (full.P || []).forEach(r => { const id = so(r.p); if (id === 'other') return; if (!seen.has(id)) seen.set(id, new Set()); seen.get(id).add(so.folderOf(r.p)); });
+    const opts = ['<option value="">Whole site (or type a folder / page below)</option>'];
+    so.sections.filter(x => seen.has(x.id) || !(full.P || []).length).forEach(x => {
+      opts.push(`<option value="cluster:${esc(x.id)}">${esc(x.name)}</option>`);
+      const fs = [...(seen.get(x.id) || [])]; if (fs.length > 1) fs.sort().forEach(f => opts.push(`<option value="cluster:${esc(x.id)}|${esc(f)}">\u00a0\u00a0\u00a0${esc(x.name)} › ${esc(f)}</option>`));
+    });
+    sel.innerHTML = opts.join('');
+    sel.value = /^cluster:/.test(current || '') ? current : '';
+    $('scope-sec-f').hidden = false;
+  }
   function openChange(focus, preset) {
     if (!D) return;
-    const live = D.source === 'api' && LAST;
-    $('scope-fields').hidden = !live; $('scope-fixed').hidden = !!live;
-    $('scope-go').hidden = !live; $('scope-whole').hidden = !live; $('scope-new').hidden = !!live;
+    const live = D.source === 'api' && LAST, demo = D.source === 'demo';
+    $('scope-fields').hidden = !(live || demo); $('scope-fixed').hidden = !!(live || demo);
+    $('scope-go').hidden = !(live || demo); $('scope-whole').hidden = !(live || demo); $('scope-new').hidden = !!(live || demo);
+    // sample data: only the section / folder / page can change (property, dates and device are fixed)
+    [$('scope-site').closest('.field'), $('scope-start').closest('.field-row'), $('scope-presets'), $('scope-device').closest('.field'), $('scope-compare').closest('.check')].forEach(el => { if (el) el.hidden = demo && !live; });
+    const curIn = live ? (LAST.scopeInput || '') : (D.scopeInput || '');
+    fillSections(curIn);
+    if (demo && !live) { $('scope-in').value = /^cluster:/.test(curIn) ? '' : curIn; $('scope-exact').checked = !!D.scopeExact; $('scope-start').value = D.start; $('scope-end').value = D.end; } // hidden but required
     $('scope-error').hidden = true; $('scope-progress').textContent = '';
     if (live) {
       const list = SITES.length ? SITES : [LAST.site];
       $('scope-site').innerHTML = list.map(u => `<option value="${esc(u)}"${u === LAST.site ? ' selected' : ''}>${esc(siteLabel(u))}</option>`).join('');
       $('scope-start').value = LAST.start; $('scope-end').value = LAST.end;
-      $('scope-in').value = LAST.scopeInput || ''; $('scope-exact').checked = !!LAST.exact; $('scope-compare').checked = !!LAST.compare;
+      $('scope-in').value = /^cluster:/.test(LAST.scopeInput || '') ? '' : (LAST.scopeInput || ''); $('scope-exact').checked = !!LAST.exact; $('scope-compare').checked = !!LAST.compare;
       $('scope-device').value = LAST.device || '';
       if (preset && preset.days) { $('scope-start').value = addDays(LATEST, -preset.days + 1); $('scope-end').value = LATEST; }
       if (preset && preset.device) $('scope-device').value = preset.device;
@@ -389,7 +420,7 @@
         : 'This analysis comes from an uploaded export, which already holds one property and one date range. To change them, export again from Search Console with the dates you want, or connect Search Console to switch freely.';
     }
     $('scope-dialog').showModal();
-    const f = live && { site: 'scope-site', dates: 'scope-start', scope: 'scope-in' }[focus];
+    const f = (live || demo) && { site: live ? 'scope-site' : 'scope-sec', dates: live ? 'scope-start' : 'scope-sec', scope: 'scope-sec' }[focus];
     (f ? $(f) : $('scope-cancel')).focus();
   }
   function markPreset() {
@@ -408,22 +439,26 @@
   $('top-scope').addEventListener('click', () => openChange('scope'));
   // the Goal builder asks for other dates or one device: open the same dialog with those values filled in
   document.addEventListener('un:change', e => openChange(e.detail && e.detail.days ? 'dates' : 'site', e.detail || {}));
-  $('scope-whole').addEventListener('click', () => { $('scope-in').value = ''; $('scope-exact').checked = false; });
+  $('scope-whole').addEventListener('click', () => { $('scope-in').value = ''; $('scope-exact').checked = false; $('scope-sec').value = ''; });
   $('scope-cancel').addEventListener('click', () => $('scope-dialog').close());
   $('scope-24').addEventListener('click', () => $('scope-dialog').close());
   $('scope-new').addEventListener('click', () => { $('scope-dialog').close(); $('btn-new').click(); });
   $('scope-form').addEventListener('submit', async e => {
     e.preventDefault();
+    const scopeVal = $('scope-sec').value || $('scope-in').value;
+    if (D && D.source === 'demo') { const err = demoScope(scopeVal, !$('scope-sec').value && $('scope-exact').checked); if (err) { $('scope-error').textContent = err; $('scope-error').hidden = false; } else $('scope-dialog').close(); return; }
     const site = $('scope-site').value || LAST.site;
     // The folder belongs to the old property; drop it when switching to a different site.
     const keepScope = site === LAST.site;
     const before = LOAD;
     await analyseProperty({ ...LAST, site, start: $('scope-start').value, end: $('scope-end').value, compare: $('scope-compare').checked,
-      scopeInput: keepScope ? $('scope-in').value : '', exact: keepScope && $('scope-exact').checked, device: $('scope-device').value }, { error: $('scope-error'), go: $('scope-go') });
+      scopeInput: keepScope ? scopeVal : '', exact: keepScope && !$('scope-sec').value && $('scope-exact').checked, device: $('scope-device').value }, { error: $('scope-error'), go: $('scope-go') });
     if (LOAD !== before && $('scope-error').hidden && $('scope-dialog').open) $('scope-dialog').close();
   });
   // A new site may need brand terms first; loaded() shows that screen, so close the dialog then too.
-  $('scope-site').addEventListener('change', () => { if ($('scope-site').value !== LAST.site) { $('scope-in').value = ''; $('scope-exact').checked = false; } });
+  $('scope-sec').addEventListener('change', () => { if ($('scope-sec').value) { $('scope-in').value = ''; $('scope-exact').checked = false; } });
+  $('scope-in').addEventListener('input', () => { if ($('scope-in').value.trim()) $('scope-sec').value = ''; });
+  $('scope-site').addEventListener('change', () => { $('scope-sec').value = ''; if ($('scope-site').value !== LAST.site) { $('scope-in').value = ''; $('scope-exact').checked = false; } });
 
   let LOAD = 0;
   function status(t) { const el = $('top-loading'); el.textContent = t; el.hidden = !t; }
@@ -451,8 +486,32 @@
 
   // ── after data is loaded ──
   let RESTORING = false;
+  // Sample data can be narrowed to a section, folder or page in the browser (property and dates stay fixed).
+  let DEMO_FULL = null;
+  function demoScope(input, exact) {
+    const full = DEMO_FULL || D;
+    if (!String(input || '').trim()) { DEMO_FULL = null; loaded(full); return null; }
+    const sc = scopeOf(input, full.siteUrl, exact);
+    if (sc.error) return sc.error;
+    if (!sc.regex && !sc.test) { DEMO_FULL = null; loaded(full); return null; }
+    const inc = sc.regex ? new RegExp(sc.regex, 'i') : null, exc = sc.exclude ? new RegExp(sc.exclude, 'i') : null;
+    const test = sc.test || (u => inc.test(u) && !(exc && exc.test(u)));
+    const P = full.P.filter(r => test(r.p));
+    if (!P.length) return 'No sample pages match that section, folder or page.';
+    const QP = (full.QP || []).filter(r => test(r.p));
+    const qm = new Map(); QP.forEach(r => { const o = qm.get(r.q) || { q: r.q, clicks: 0, impr: 0, posW: 0 }; o.clicks += r.clicks; o.impr += r.impr; o.posW += r.pos * r.impr; qm.set(r.q, o); });
+    const Q = [...qm.values()].map(o => ({ q: o.q, clicks: o.clicks, impr: o.impr, ctr: o.impr ? o.clicks / o.impr * 100 : 0, pos: o.impr ? o.posW / o.impr : 0 })).sort((a, b) => b.clicks - a.clicks);
+    const sum = (l, k) => l.reduce((a, r) => a + (+r[k] || 0), 0);
+    const fc = sum(P, 'clicks') / Math.max(1, sum(full.P, 'clicks')), fi = sum(P, 'impr') / Math.max(1, sum(full.P, 'impr'));
+    const scale = r => { const clicks = Math.round(r.clicks * fc), impr = Math.max(clicks, Math.round(r.impr * fi)); return { ...r, clicks, impr, ctr: impr ? clicks / impr * 100 : 0 }; };
+    const qs = new Set(Q.map(r => r.q));
+    DEMO_FULL = full;
+    loaded({ ...full, P, Q, QP, prevP: (full.prevP || []).filter(r => test(r.p)), prevQ: (full.prevQ || []).filter(r => qs.has(r.q)), C: full.C.map(scale), Dev: (full.Dev || []).map(scale), scope: sc.label, scopeInput: input, scopeExact: !!exact });
+    return null;
+  }
   function loaded(data) {
     D = data;
+    if (data.source !== 'demo') DEMO_FULL = null;
     // a fresh analysis starts a fresh Back history; a reload that restores the last one keeps it
     if (!RESTORING) { NAV.length = 0; sess.set('nav', []); }
     RESTORING = false;
@@ -554,7 +613,7 @@
     const filters = [];
     if (FILTER.device) filters.push({ dimension: 'device', operator: 'equals', expression: FILTER.device });
     if (pageUrl) filters.push({ dimension: 'page', operator: 'equals', expression: pageUrl });
-    else if (FILTER.page) filters.push({ dimension: 'page', operator: 'includingRegex', expression: FILTER.page });
+    else if (FILTER.page) { filters.push({ dimension: 'page', operator: 'includingRegex', expression: FILTER.page }); if (FILTER.pageEx) filters.push({ dimension: 'page', operator: 'excludingRegex', expression: FILTER.pageEx }); }
     const body = { startDate: start, endDate: end, dimensions: dims, type: FILTER.type || 'web', rowLimit: dims[0] === 'query' ? 500 : 1000 };
     if (filters.length) body.dimensionFilterGroups = [{ groupType: 'and', filters }];
     const d = await api(`sites/${encodeURIComponent(D.siteUrl)}/searchAnalytics/query`, body);
@@ -583,6 +642,7 @@
           // keep filters the caller sent (e.g. branded / non-branded searches) and add the analysis's page and device filters
           const b = { ...body }, filters = [...(((body.dimensionFilterGroups || [])[0] || {}).filters || [])];
           if (FILTER.page) filters.push({ dimension: 'page', operator: 'includingRegex', expression: FILTER.page });
+      if (FILTER.page && FILTER.pageEx) filters.push({ dimension: 'page', operator: 'excludingRegex', expression: FILTER.pageEx });
           if (FILTER.device && !['discover', 'googleNews'].includes(b.type) && !(b.dimensions || []).includes('device')) filters.push({ dimension: 'device', operator: 'equals', expression: FILTER.device });
           if (filters.length) b.dimensionFilterGroups = [{ groupType: 'and', filters }];
           return api(`sites/${encodeURIComponent(D.siteUrl)}/searchAnalytics/query`, b);
@@ -606,7 +666,7 @@
     const conn = D.source === 'api' ? ['live', 'GSC connected', `Loaded ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · read-only`] : D.source === 'demo' ? ['sample', 'Sample data', D.sampleOf === 'unstop' ? 'Unstop URLs, generated numbers' : 'Fictional site'] : ['file', 'Uploaded export', 'Not live: connect Search Console for fresh data'];
     $('top-conn').className = 'top-conn ' + conn[0]; $('top-conn-t').textContent = conn[1]; $('top-conn-s').textContent = conn[2]; $('top-conn').hidden = false;
     // API analyses can switch folder from the top bar; uploads only show the scope they came with
-    const canSwitch = D.source === 'api';
+    const canSwitch = D.source === 'api' || D.source === 'demo';
     $('top-scope').innerHTML = esc(D.scope || (canSwitch ? 'All pages' : '')) + (canSwitch ? ' <span class="scope-edit">Change</span>' : '');
     $('top-scope').hidden = !D.scope && !canSwitch; $('top-scope').disabled = !canSwitch;
     $('top-scope').title = canSwitch ? 'Analyse another folder or page' : 'Set by the Page filter in the export';

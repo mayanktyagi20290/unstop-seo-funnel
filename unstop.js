@@ -124,28 +124,28 @@
   // Built from the folders that get Search Console traffic on unstop.com. `type` is the page type the
   // cluster rolls up to. The /employers split (job board vs B2B) follows the team's own segmentation.
   const DEFAULT_SECTIONS = [
-    { id: 'hackathons', name: 'Hackathons', type: 'opp', rules: ['/hackathons', '/hackathon'] },
-    { id: 'competitions', name: 'Competitions', type: 'opp', rules: ['/competitions', '/competition', '/competitions-challenges', '/compete'] },
-    { id: 'internships', name: 'Internships', type: 'opp', rules: ['/internships', '/internship', '/internship-portal', '/internship-openings'] },
-    { id: 'jobs', name: 'Jobs', type: 'opp', rules: ['/jobs', '/job', '/job-portal', '/hiring-challenges', '/off-campus-hiring-drive-*'] },
-    { id: 'quizzes', name: 'Quizzes', type: 'opp', rules: ['/quiz', '/quizzes', '/online-quizzing-festival'] },
-    { id: 'fests', name: 'College fests & events', type: 'opp', rules: ['/college-fests', '/college-festivals', '/festival', '/events', '/cultural-events', '/creative-cultural-events', '/conferences'] },
-    { id: 'workshops', name: 'Workshops & webinars', type: 'opp', rules: ['/workshops-webinars', '/workshops'] },
-    { id: 'scholarships', name: 'Scholarships', type: 'opp', rules: ['/scholarships'] },
-    { id: 'awards', name: 'Awards', type: 'opp', rules: ['/awards'] },
-    { id: 'ambassador', name: 'Campus ambassador', type: 'opp', rules: ['/campus-ambassador-program'] },
-    { id: 'oppother', name: 'Other opportunity pages', type: 'opp', rules: ['/all-opportunities', '/p', '/o', '/voting-round', '/unstop-dream-companies-*'] },
-    { id: 'orgpages', name: 'Company & college pages', type: 'org', rules: ['/c', '/college', '/colleges', '/company', '/companies', '/institute', '/institutes'] },
-    { id: 'blog', name: 'Blog', type: 'blog', rules: ['/blog', '/blog-series', '/category', '/bites'] },
-    { id: 'resources', name: 'Resources & prep', type: 'blog', rules: ['/resources', '/prep-zone', '/top-*'] },
-    { id: 'empjobboard', name: 'Employers – job board', type: 'emp', rules: ['/employers/hire-*', '/employers/ai-sourcing-agent', '/employers/jobs-internships-listings-jobboard', '/employers/our-largest-early-talent-community'] },
-    { id: 'empb2b', name: 'Employers – B2B products', type: 'emp', rules: ['/employers', '/saas-pricing', '/online-assessment-platform', '/hire', '/recruiters', '/hiring-solutions'] },
-    { id: 'empreports', name: 'Employer reports & partners', type: 'emp', rules: ['/talent-report-*', '/unstop-talent-meet-*', '/our-partners', '/unstop-bridge-for-colleges', '/institutions', '/reports'] },
-    { id: 'practice', name: 'Practice & coding', type: 'prod', rules: ['/practice', '/code'] },
-    { id: 'courses', name: 'Courses & mentorship', type: 'prod', rules: ['/courses', '/mentor', '/find-a-mentor', '/become-a-mentor'] },
-    { id: 'tools', name: 'Tools & programs', type: 'prod', rules: ['/resume-builder', '/tools', '/business-simulation-games', '/pro', '/unstop-leaderboard', '/unstop-rewards-program', '/unstop-igniters-club'] },
-    { id: 'home', name: 'Home page', type: 'home', rules: ['=/'] },
-    { id: 'util', name: 'Login, account & utility', type: 'util', rules: ['/auth', '/user', '/organiser-panel', '/manage', '/app', '/api', '/submissions-round', '/post-now', '/legal', '/faq', '/contact-us', '/refer-and-earn', '/about', '/notifications', '/home', '/certificate-preview', '/f'] }
+    { id: 'hackathons', name: 'Opportunity › Hackathons', type: 'opp', rules: ['/hackathons', '/hackathon'] },
+    { id: 'competitions', name: 'Opportunity › Competitions', type: 'opp', rules: ['/competitions', '/competition', '/competitions-challenges', '/compete'] },
+    { id: 'internships', name: 'Opportunity › Internships', type: 'opp', rules: ['/internships', '/internship', '/internship-portal', '/internship-openings'] },
+    { id: 'jobs', name: 'Opportunity › Jobs', type: 'opp', rules: ['/jobs', '/job', '/job-portal', '/hiring-challenges', '/off-campus-hiring-drive-*'] },
+    { id: 'quizzes', name: 'Opportunity › Quizzes', type: 'opp', rules: ['/quiz', '/quizzes', '/online-quizzing-festival'] },
+    { id: 'fests', name: 'Opportunity › College fests & events', type: 'opp', rules: ['/college-fests', '/college-festivals', '/festival', '/events', '/cultural-events', '/creative-cultural-events', '/conferences'] },
+    { id: 'workshops', name: 'Opportunity › Workshops & webinars', type: 'opp', rules: ['/workshops-webinars', '/workshops'] },
+    { id: 'scholarships', name: 'Opportunity › Scholarships', type: 'opp', rules: ['/scholarships'] },
+    { id: 'awards', name: 'Opportunity › Awards', type: 'opp', rules: ['/awards'] },
+    { id: 'ambassador', name: 'Opportunity › Campus ambassador', type: 'opp', rules: ['/campus-ambassador-program'] },
+    { id: 'oppother', name: 'Opportunity › Other opportunity pages', type: 'opp', rules: ['/all-opportunities', '/p', '/o', '/voting-round', '/unstop-dream-companies-*'] },
+    { id: 'orgpages', name: 'College & company › Company & college pages', type: 'org', rules: ['/c', '/college', '/colleges', '/company', '/companies', '/institute', '/institutes'] },
+    { id: 'blog', name: 'Content › Blog', type: 'blog', rules: ['/blog', '/blog-series', '/category', '/bites'] },
+    { id: 'resources', name: 'Content › Resources & prep', type: 'blog', rules: ['/resources', '/prep-zone', '/top-*'] },
+    { id: 'empjobboard', name: 'Employer › Job board', type: 'emp', rules: ['/employers/hire-*', '/employers/ai-sourcing-agent', '/employers/jobs-internships-listings-jobboard', '/employers/our-largest-early-talent-community'] },
+    { id: 'empb2b', name: 'Employer › B2B products', type: 'emp', rules: ['/employers', '/saas-pricing', '/online-assessment-platform', '/hire', '/recruiters', '/hiring-solutions'] },
+    { id: 'empreports', name: 'Employer › Reports & partners', type: 'emp', rules: ['/talent-report-*', '/unstop-talent-meet-*', '/our-partners', '/unstop-bridge-for-colleges', '/institutions', '/reports'] },
+    { id: 'practice', name: 'Product › Practice & coding', type: 'prod', rules: ['/practice', '/code'] },
+    { id: 'courses', name: 'Product › Courses & mentorship', type: 'prod', rules: ['/courses', '/mentor', '/find-a-mentor', '/become-a-mentor'] },
+    { id: 'tools', name: 'Product › Tools & programs', type: 'prod', rules: ['/resume-builder', '/tools', '/business-simulation-games', '/pro', '/unstop-leaderboard', '/unstop-rewards-program', '/unstop-igniters-club'] },
+    { id: 'home', name: 'Home › Home page', type: 'home', rules: ['=/'] },
+    { id: 'util', name: 'Utility › Login & account', type: 'util', rules: ['/auth', '/user', '/organiser-panel', '/manage', '/app', '/api', '/submissions-round', '/post-now', '/legal', '/faq', '/contact-us', '/refer-and-earn', '/about', '/notifications', '/home', '/certificate-preview', '/f'] }
   ];
   // Clusters whose pages carry a clear conversion path (register, apply, post a job, book a demo) by default.
   const DEFAULT_PATH_SECTIONS = ['hackathons', 'competitions', 'internships', 'jobs', 'quizzes', 'fests', 'workshops', 'scholarships', 'awards', 'ambassador', 'oppother', 'empjobboard', 'empb2b', 'practice'];
@@ -154,19 +154,36 @@
     const list = (sections && sections.length ? sections : DEFAULT_SECTIONS).map(x => ({ ...x, tests: (x.rules || []).map(ruleTest).filter(Boolean) }));
     const blog = list.find(x => x.id === 'blog');
     const cache = new Map();
+    const rcache = new Map();
+    // the folder rule inside the cluster that matched, e.g. "/internship" vs "/internships"
+    const ruleOf = url => {
+      const path = pathOnly(url).toLowerCase();
+      if (rcache.has(path)) return rcache.get(path);
+      let rule = null;
+      for (const x of list) { const i = x.tests.findIndex(f => f(path)); if (i >= 0) { rule = { id: x.id, folder: String(x.rules[i]).trim().replace(/^=/, '').replace(/\*$/, '…') }; break; } }
+      if (!rule && opt.rootArticles !== false && blog) { const segs = path.split('/').filter(Boolean); if (segs.length === 1 && (segs[0].match(/-/g) || []).length >= ROOT_ARTICLE_HYPHENS) rule = { id: blog.id, folder: '/{article-slug} (root level)' }; }
+      if (!rule) { const seg = path.split('/').filter(Boolean)[0]; rule = { id: 'other', folder: seg ? '/' + seg : '/' }; }
+      if (rcache.size > 200000) rcache.clear();
+      rcache.set(path, rule); return rule;
+    };
     const fn = url => {
       const path = pathOnly(url).toLowerCase();
       if (cache.has(path)) return cache.get(path);
-      let hit = list.find(x => x.tests.some(f => f(path)));
-      if (!hit && opt.rootArticles !== false && blog) { const segs = path.split('/').filter(Boolean); if (segs.length === 1 && (segs[0].match(/-/g) || []).length >= ROOT_ARTICLE_HYPHENS) hit = blog; }
-      const id = hit ? hit.id : 'other';
+      const id = ruleOf(path).id;
       if (cache.size > 200000) cache.clear();
       cache.set(path, id); return id;
     };
-    fn.sections = list.map(x => ({ id: x.id, name: x.name, type: x.type || 'other', rules: x.rules || [] })).concat([{ id: 'other', name: 'Other (no cluster rule)', type: 'other', rules: [] }]);
+    fn.folderOf = url => ruleOf(url).folder;
+    fn.sections = list.map(x => ({ id: x.id, name: x.name, type: x.type || 'other', rules: x.rules || [] })).concat([{ id: 'other', name: 'Other › No cluster rule', type: 'other', rules: [] }]);
     fn.label = id => (fn.sections.find(x => x.id === id) || { name: id }).name;
     fn.typeOf = id => (fn.sections.find(x => x.id === id) || { type: 'other' }).type;
     return fn;
+  }
+  // Rows grouped by cluster and the folder rule inside it: [{ id, cluster, folder, rows: [...] }]
+  function byFolder(rows, keyOf, sectionOf) {
+    const m = new Map();
+    rows.forEach(r => { const u = keyOf(r), id = sectionOf(u), folder = sectionOf.folderOf(u), k = id + '|' + folder; if (!m.has(k)) m.set(k, { id, cluster: sectionOf.label(id), type: sectionOf.typeOf(id), folder, rows: [] }); m.get(k).rows.push(r); });
+    return [...m.values()];
   }
   // "Name | Page type: /a, /b" — the page type may be given by name or id; omitted = Other.
   function parseSections(text, types) {
@@ -230,7 +247,7 @@
       buckets: cur, prevBuckets: prev, prev: P,
       d: P ? { clicks: chg(tot.clicks, P.tot.clicks), impr: chg(tot.impr, P.tot.impr), nbClicks: chg(nb.clicks, P.nb.clicks), nbImpr: chg(nb.impr, P.nb.impr), bClicks: chg(b.clicks, P.b.clicks), nbPos: P.nb.pos && nb.pos ? nb.pos - P.nb.pos : null } : null,
       byQueryCluster: [...qc.values()].map(x => ({ name: x.name, nb: fin(x.nb), b: fin(x.b), n3: x.n3, n10: x.n10, n11: x.n11, nq: x.nq })).sort((a, c) => c.nb.clicks - a.nb.clicks),
-      quick, queryRows: (o.queries || []).length, capped: !!o.capped
+      quick, queryList: (o.queries || []).filter(r => +r.impr > 0).sort((a, c) => c.clicks - a.clicks || c.impr - a.impr).slice(0, 3000), queryRows: (o.queries || []).length, capped: !!o.capped
     };
   }
   // Fallback for uploads and sample data: page totals from the page report, the branded split from
@@ -693,7 +710,7 @@
     { stage: 'Pipeline & revenue', id: 'mql', label: 'MQLs, pipeline, closed revenue', src: 'CRM', owner: 'CRM Ops + Finance + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Next phase: needs the CRM export joined on lead ID.', later: true }
   ];
 
-  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
+  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
     moeHeaderMap, moeQuality, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;

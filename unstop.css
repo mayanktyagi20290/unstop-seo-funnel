@@ -80,3 +80,12 @@
 /* URL clusters */
 .un-bar{display:inline-block;width:90px;height:8px;border-radius:999px;background:var(--line);overflow:hidden;vertical-align:middle}
 .un-bar i{display:block;height:100%;background:var(--signal)}
+/* section / landing page picker */
+.un-scope{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin:0 0 14px}
+.un-scope .field{margin:0;min-width:200px}
+.un-scope .un-grow{flex:1;min-width:240px}
+.un-scope select,.un-scope input{width:100%}
+.un-scope-t{font:700 12px/1 var(--display);text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2);align-self:center}
+.un-scope-or{color:var(--muted);align-self:center;font-size:12px}
+.un-go{font-size:11px;font-weight:600;white-space:nowrap}
+@media print{.un-scope{display:none}}

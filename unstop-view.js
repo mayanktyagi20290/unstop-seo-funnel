@@ -64,7 +64,7 @@
     const live = src.kind === 'api' && src.gsc;
     const prevNote = D.prevStart ? `Changes compare with ${fmtD(D.prevStart)} – ${fmtD(D.prevEnd)}.` : 'Turn on “Compare with the previous period” to see changes.';
     const qpNote = vis.hasQP ? `Branded split from ${fmtN(vis.qpRows)} query × page rows (the first 25,000 Search Console returns), applied to each page type’s totals.` : (D.pending && D.pending.qp ? 'Loading query × page rows for the branded split…' : 'The branded split by page type needs query × page rows, which come only from a Search Console connection.');
-    const html = head('Visibility by page type', `Search Console impressions, clicks, CTR and position for each Unstop page type, branded vs non-branded, with keyword ranking buckets and indexation. ${prevNote}`) +
+    const html = head('Visibility by page type', `Search Console impressions, clicks, CTR and position for each Unstop page type, branded vs non-branded, with keyword ranking buckets and indexation. ${prevNote}`) + scopePicker(A, D) +
       `<div class="note">${qpNote} Page types follow the rules in <a href="#funnelsetup">Funnel setup</a>. For exact branded vs non-branded numbers per URL cluster (internships, jobs, hackathons, blog, employers…), open <a href="#urlclusters">Clusters: branded vs non-branded</a>.</div>` +
       `<section class="panel"><div class="panel-h"><h2>Page types</h2><p>Totals from the page report. “Non-branded (est.)” applies the branded share of each type’s query × page rows to its totals.</p></div>
         ${table('t-un-vt', [
@@ -116,18 +116,20 @@
       ], M.strike, { file: 'unstop-positions-11-20', sort: 'impr', pageSize: 15, searchKeys: ['q', 'path', 'type', 'cluster'], placeholder: 'Filter queries, pages, types',
         filters: [{ key: 'type', label: 'Page type', options: typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.type === v }] })}</section>` +
       `<section class="panel"><div class="panel-h"><h2>Indexation by page type</h2><p>URLs submitted in sitemaps (Search Console API) next to URLs that got impressions. The API no longer reports indexed counts, so “visible ÷ submitted” is a proxy; check Pages › Indexing in Search Console per sitemap for exact indexed counts.</p></div><div class="panel-b" id="un-maps">${live ? mapsBlock(D, vis) : '<p class="empty">Needs a Search Console connection.</p>'}</div></section>` +
-      `<section class="panel"><div class="panel-h"><h2>Pages by type</h2></div>
+      `<section class="panel"><div class="panel-h"><h2>Pages by cluster and folder</h2></div>
         ${table('t-un-vp', [
-        { k: 'path', l: 'Page', cls: 'u', f: r => urlCell(r.p, r.path), csv: r => r.p }, { k: 'typeName', l: 'Page type' },
+        { k: 'path', l: 'Page', cls: 'u', f: r => urlCell(r.p, r.path), csv: r => r.p }, { k: 'cluster', l: 'Cluster' }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder },
         { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos) }
-      ], A.P.map(r => ({ ...r, typeName: typeOf.label(typeOf(r.p)) })), { file: 'unstop-pages-by-type', sort: 'clicks', pageSize: 20, searchKeys: ['path'], placeholder: 'Filter URLs',
-        filters: [{ key: 'type', label: 'Page type', options: typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.typeName === v }] })}</section>`;
+      ], withCluster(D, A.P, r => r.p).map(r => ({ ...r, typeName: typeOf.label(typeOf(r.p)) })), { file: 'unstop-pages-by-cluster', sort: 'clicks', pageSize: 20, searchKeys: ['path', 'folder'], placeholder: 'Filter URLs or folders',
+        filters: [{ key: 'type', label: 'Page type', options: typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.typeName === v }, clusterFilter(D)] })}</section>`;
     const mount = () => {
       ['t-un-vt', 't-un-vr', 't-un-vc', 't-un-vrc', 't-un-vs', 't-un-vp'].forEach(drawTable);
-      if (live) { weeklyMount(D); mapsMount(D, vis); }
+      if (live) { weeklyMount(D); mapsMount(D, vis); } scopeMount(D);
     };
     return { html, mount };
   };
+  const clusterFilter = (D, key) => { const so = sectioner(D); return { key: key || 'cl', label: 'Cluster', options: so.sections.map(x => [x.name, x.name]), test: (r, v) => r.cluster === v }; };
+  const withCluster = (D, rows, keyOf) => { const so = sectioner(D); return rows.map(r => { const u = keyOf(r); return { ...r, cluster: so.label(so(u)), folder: so.folderOf(u) }; }); };
   function bucketRow(r) { return { ...r, n3: r.n.top3, n10: r.n.top10, n11: r.n.p11, b3: r.b.top3, b10: r.b.top10, b11: r.b.p11, tot: r.n.total + r.b.total }; }
   function cnt(c, p, hasPrev) { if (!hasPrev) return fmtN(c); const d = c - p; return `${fmtN(c)} <span class="un-d ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}">${d > 0 ? '+' : ''}${d === 0 ? '±0' : fmtN(d)}</span>`; }
 
@@ -253,6 +255,26 @@
     const { clusterOf } = tools(D);
     return { live: false, st: { status: 'done' }, models: U.sectionsFromRows(A, D, sectioner(D), brandOf(A), clusterOf, { exact: D.source === 'demo' }) };
   }
+
+  // GSC: every cluster › folder from the page report, with the branded split from query × page rows
+  function gscFolderRows(A, D) {
+    const so = sectioner(D), isB = brandOf(A);
+    const g = new Map();
+    const get = (u) => { const id = so(u), folder = so.folderOf(u), k = id + '|' + folder; if (!g.has(k)) g.set(k, { id, cluster: so.label(id), type: so.typeOf(id), folder, clicks: 0, impr: 0, posW: 0, urls: 0, pClicks: 0, pImpr: 0, bC: 0, nC: 0, nImpr: 0, nPosW: 0 }); return g.get(k); };
+    (A.P || []).forEach(r => { const o = get(r.p); o.clicks += +r.clicks || 0; o.impr += +r.impr || 0; o.posW += (+r.pos || 0) * (+r.impr || 0); if (+r.impr > 0) o.urls++; });
+    (D.prevP || []).forEach(r => { const o = get(r.p); o.pClicks += +r.clicks || 0; o.pImpr += +r.impr || 0; });
+    (D.QP || []).forEach(r => { const o = get(r.p); if (isB(r.q)) o.bC += +r.clicks || 0; else { o.nC += +r.clicks || 0; o.nImpr += +r.impr || 0; o.nPosW += (+r.pos || 0) * (+r.impr || 0); } });
+    return [...g.values()].filter(o => o.impr > 0 || o.pImpr > 0).map(o => ({ ...o, ctr: o.impr ? o.clicks / o.impr * 100 : 0, pos: o.impr ? o.posW / o.impr : 0, dClicks: U.chg(o.clicks, o.pClicks), bShare: o.bC + o.nC ? o.bC / (o.bC + o.nC) * 100 : null, nPos: o.nImpr ? o.nPosW / o.nImpr : null }));
+  }
+  function folderTable(id, rows, D, hasQP) {
+    return table(id, [
+      { k: 'cluster', l: 'Cluster', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder },
+      { k: 'urls', l: 'URLs with impressions', r: 1, f: r => fmtN(r.urls) },
+      { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + dchip(r.dClicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) },
+      { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => r.impr ? posTag(r.pos) : '—', csv: r => r.pos },
+      ...(hasQP ? [{ k: 'nC', l: 'Non-branded clicks', r: 1, f: r => fmtN(r.nC) }, { k: 'nPos', l: 'NB position', r: 1, f: r => r.nPos ? posTag(r.nPos) : '—', csv: r => r.nPos }, { k: 'bShare', l: 'Branded share', r: 1, f: r => r.bShare == null ? '—' : pct1(r.bShare), csv: r => r.bShare }] : [])
+    ], rows, { file: 'unstop-clusters-by-folder', sort: 'clicks', pageSize: 40, searchKeys: ['cluster', 'folder'], placeholder: 'Filter clusters or folders', filters: [clusterFilter(D)] });
+  }
   const sumM = list => { const o = { clicks: 0, impr: 0, posW: 0 }; list.forEach(x => { o.clicks += x.clicks; o.impr += x.impr; o.posW += x.pos * x.impr; }); return { clicks: o.clicks, impr: o.impr, ctr: o.impr ? o.clicks / o.impr * 100 : 0, pos: o.impr ? o.posW / o.impr : 0 }; };
 
   V.urlclusters = (A, D) => {
@@ -278,14 +300,13 @@
       : D.source === 'demo' ? `<div class="note"><b>Sample data.</b> ${D.sampleOf === 'unstop' ? 'Unstop’s URL structure with generated numbers, computed the same way as a live connection.' : 'Fictional site, so the Unstop clusters mostly fall under Other.'} Connect Search Console for real numbers.</div>`
       : `<div class="note"><b>Estimate.</b> Without a Search Console connection, cluster totals come from the page report and the branded split from query × page rows. Connect Search Console for exact branded / non-branded totals per cluster.</div>`;
     const bar = (b, n) => { const t = b + n; return t ? `<span class="un-bar" title="Non-branded ${pct1(n / t * 100)}"><i style="width:${(n / t * 100).toFixed(1)}%"></i></span>` : ''; };
-    const html = intro + note +
+    const html = intro + scopePicker(A, D) + note +
       `<section class="panel"><div class="panel-h"><h2>By page type</h2><p>Sum of the clusters below. Never read the sitewide total on its own.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page type</th><th class="r">Clusters</th><th class="r">All clicks</th><th class="r">Non-branded clicks</th><th class="r">NB impr.</th><th class="r">NB CTR</th><th class="r">NB position</th><th class="r">Branded clicks</th><th class="r">Branded CTR</th>${X.live ? '<th class="r">Anonymised</th>' : ''}<th class="r">NB top 10</th><th class="r">NB 11–20</th><th>Non-branded share</th></tr></thead><tbody>
         ${trows.map(t => `<tr><td><b>${esc(t.name)}</b></td><td class="r">${t.n}</td><td class="r">${fmtN(t.tot.clicks)}</td><td class="r">${fmtN(Math.round(t.nb.clicks))}</td><td class="r">${fmtN(Math.round(t.nb.impr))}</td><td class="r">${pct1(t.nb.ctr)}</td><td class="r">${t.nb.impr ? posTag(t.nb.pos) : '—'}</td><td class="r">${fmtN(Math.round(t.b.clicks))}</td><td class="r">${pct1(t.b.ctr)}</td>${X.live ? `<td class="r">${fmtN(t.anon)}</td>` : ''}<td class="r">${fmtN(t.n10)}</td><td class="r">${fmtN(t.n11)}</td><td>${bar(t.b.clicks, t.nb.clicks)}</td></tr>`).join('')}
       </tbody></table></div></div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Clusters: clicks, impressions, CTR, position</h2><p>Non-branded first. ${X.live || D.source === 'demo' ? '' : 'Branded / non-branded are estimates.'}</p></div>
         ${table('t-un-clv', [
-        { k: 'typeName', l: 'Page type' },
-        { k: 'name', l: 'Cluster', f: r => `<a href="#un-cl-${esc(r.id)}" data-cl="${esc(r.id)}"><b>${esc(r.name)}</b></a>` },
+        { k: 'name', l: 'Cluster', f: r => `<a href="#un-cl-${esc(r.id)}" data-cl="${esc(r.id)}"><b>${esc(r.name)}</b></a> <a class="un-go" href="${esc(focusHref({ c: r.id }))}">Analyse →</a><br><small class="un-n">${esc((secOf.sections.find(x => x.id === r.id) || { rules: [] }).rules.join(', '))}</small>`, csv: r => r.name },
         { k: 'clicks', l: 'All clicks', r: 1, f: r => fmtN(r.m.tot.clicks) + ' ' + dchip(r.m.d && r.m.d.clicks), csv: r => r.m.tot.clicks },
         { k: 'impr', l: 'All impr.', r: 1, f: r => fmtN(r.m.tot.impr), csv: r => r.m.tot.impr },
         { k: 'nbClicks', l: 'NB clicks', r: 1, f: r => fmtN(Math.round(r.m.nb.clicks)) + ' ' + dchip(r.m.d && r.m.d.nbClicks), csv: r => Math.round(r.m.nb.clicks) },
@@ -300,9 +321,10 @@
         { k: 'bShare', l: 'Branded share', r: 1, f: r => r.m.bShare == null ? '—' : pct1(r.m.bShare), csv: r => r.m.bShare }
       ], rows.map(r => ({ ...r, clicks: r.m.tot.clicks, impr: r.m.tot.impr, nbClicks: r.m.nb.clicks, nbImpr: r.m.nb.impr, nbCtr: r.m.nb.ctr, nbPos: r.m.nb.impr ? r.m.nb.pos : 999, bClicks: r.m.b.clicks, bImpr: r.m.b.impr, bCtr: r.m.b.ctr, bPos: r.m.b.impr ? r.m.b.pos : 999, anon: r.m.anon.clicks, bShare: r.m.bShare })),
         { search: false, file: 'unstop-clusters-branded-vs-nonbranded', pageSize: 40, filters: typeFilter })}</section>` +
+      `<section class="panel"><div class="panel-h"><h2>Folders inside each cluster</h2><p>Every cluster split by the folder rule its pages matched (e.g. <code>/internship</code> vs <code>/internships</code>). Totals from the page report${(D.QP && D.QP.length) ? '; non-branded clicks and branded share from query × page rows' + (X.live ? ' (the first 25,000 Search Console returns, so they can be lower than the cluster totals above)' : '') : ''}.</p></div>
+        ${folderTable('t-un-clf', gscFolderRows(A, D), D, !!(D.QP && D.QP.length))}</section>` +
       `<section class="panel"><div class="panel-h"><h2>Keyword ranking buckets by cluster</h2><p>Queries counted once per cluster at the cluster’s average position for that query. ${hasPrev ? 'Change vs the previous period in brackets.' : ''}${rows.some(r => r.m.capped) ? ' Clusters marked * have more than 25,000 queries; counts cover the 25,000 with most clicks.' : ''}</p></div>
         ${table('t-un-clr', [
-        { k: 'typeName', l: 'Page type' },
         { k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>${r.m.capped ? ' *' : ''}` },
         { k: 'n3', l: 'NB top 3', r: 1, f: r => cnt(r.n3, r.m.prevBuckets && r.m.prevBuckets.n.top3, !!r.m.prevBuckets) },
         { k: 'n10', l: 'NB top 10', r: 1, f: r => cnt(r.n10, r.m.prevBuckets && r.m.prevBuckets.n.top10, !!r.m.prevBuckets) },
@@ -315,7 +337,7 @@
       ], rows.map(r => ({ ...r, n3: r.m.buckets.n.top3, n10: r.m.buckets.n.top10, n11: r.m.buckets.n.p11, nt: r.m.buckets.n.total, b3: r.m.buckets.b.top3, b10: r.m.buckets.b.top10, b11: r.m.buckets.b.p11, bt: r.m.buckets.b.total })),
         { search: false, file: 'unstop-cluster-ranking-buckets', pageSize: 40, filters: typeFilter })}</section>` +
       `<section class="panel"><div class="panel-h"><h2>Inside a cluster: query clusters and quick wins</h2><p>Pick a cluster to see its non-branded searches by query cluster (rules in Funnel setup) and its non-branded queries in positions 11–20.</p></div><div class="panel-b">
-        <label class="field"><span>Cluster</span><select id="un-cl-pick">${rows.map(r => `<option value="${esc(r.id)}">${esc(r.typeName)} › ${esc(r.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>Cluster</span><select id="un-cl-pick">${rows.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label>
         <div id="un-cl-detail"></div></div></section>`;
     const detail = id => {
       const r = rows.find(x => x.id === id); const el = document.getElementById('un-cl-detail'); if (!r || !el) return;
@@ -324,12 +346,156 @@
         <div><h3 class="un-sub">${esc(r.name)}: non-branded queries in positions 11–20</h3><div class="tw"><table class="un-mini"><thead><tr><th>Query</th><th class="r">Impr.</th><th class="r">Clicks</th><th class="r">Position</th></tr></thead><tbody>${m.quick.length ? m.quick.slice(0, 25).map(q => `<tr><td class="q">${esc(q.q)}</td><td class="r">${fmtN(q.impr)}</td><td class="r">${fmtN(q.clicks)}</td><td class="r">${posTag(q.pos)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">None in this period.</td></tr>'}</tbody></table></div></div></div>`;
     };
     const mount = () => {
-      ['t-un-clv', 't-un-clr'].forEach(drawTable);
+      ['t-un-clv', 't-un-clf', 't-un-clr'].forEach(drawTable); scopeMount(D);
       const pick = document.getElementById('un-cl-pick');
       if (pick) { pick.addEventListener('change', () => detail(pick.value)); detail(pick.value); }
       const tv = document.getElementById('t-un-clv'); if (tv) tv.addEventListener('click', e => { const a = e.target.closest('[data-cl]'); if (!a || !pick) return; e.preventDefault(); pick.value = a.dataset.cl; detail(a.dataset.cl); pick.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
       const rl = document.getElementById('un-cl-reload'); if (rl) rl.addEventListener('click', () => { CL.delete(clKey(D)); loadClusters(D, A); });
     };
+    return { html, mount };
+  };
+
+  // ════════════════════════════ SECTION / LANDING PAGE ANALYSIS ════════════════════════════
+  // One cluster, one folder inside it, or one landing page through the whole chain: Search Console
+  // (branded vs non-branded, ranking buckets, queries, quick wins), GA4 (sessions vs last year, device,
+  // state, signups, actions) and its pages. Chosen from the picker at the top of every Unstop screen.
+  const FOC = new Map(); // key → { status, model, error }
+  const fParams = () => { const h = location.hash, i = h.indexOf('?'); return new URLSearchParams(i >= 0 ? h.slice(i + 1) : ''); };
+  function scopeOf(D) {
+    const p = fParams(), so = sectioner(D);
+    const u = p.get('u'), c = p.get('c'), f = p.get('f');
+    if (u) { const path = U.pathOnly(u); return { kind: 'page', path, id: so(path), label: path, test: x => U.pathOnly(x).toLowerCase() === path.toLowerCase() }; }
+    if (c) {
+      const sec = so.sections.find(x => x.id === c); if (!sec) return null;
+      if (f) return { kind: 'folder', id: c, folder: f, label: `${sec.name} › ${f}`, test: x => so(x) === c && so.folderOf(x) === f };
+      return { kind: 'cluster', id: c, label: sec.name, test: x => so(x) === c };
+    }
+    return null;
+  }
+  const focusHref = o => '#focus?' + new URLSearchParams(Object.entries(o).filter(([, v]) => v)).toString();
+  // picker shown at the top of the Unstop screens
+  function scopePicker(A, D, sc) {
+    const so = sectioner(D);
+    const folders = new Map(); (A.P || []).forEach(r => { const id = so(r.p), f = so.folderOf(r.p); if (!folders.has(id)) folders.set(id, new Map()); const m = folders.get(id); m.set(f, (m.get(f) || 0) + (+r.clicks || 0)); });
+    const cur = sc || {};
+    const fl = cur.id && folders.get(cur.id) ? [...folders.get(cur.id).entries()].sort((a, b) => b[1] - a[1]) : [];
+    const pages = (A.P || []).slice().sort((a, b) => b.clicks - a.clicks).slice(0, 800).map(r => U.pathOnly(r.p));
+    return `<form class="un-scope" id="un-scope">
+      <span class="un-scope-t">Analyse</span>
+      <label class="field"><span>Section (cluster)</span><select id="un-sc-c"><option value="">Choose a cluster…</option>${so.sections.filter(x => folders.has(x.id)).map(x => `<option value="${esc(x.id)}" ${cur.id === x.id && cur.kind !== 'page' ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>Folder inside it</span><select id="un-sc-f" ${fl.length ? '' : 'disabled'}><option value="">All folders</option>${fl.map(([f, c]) => `<option value="${esc(f)}" ${cur.folder === f ? 'selected' : ''}>${esc(f)} (${fmtN(c)} clicks)</option>`).join('')}</select></label>
+      <span class="un-scope-or">or</span>
+      <label class="field un-grow"><span>Landing page</span><input type="text" id="un-sc-u" list="un-sc-pages" value="${esc(cur.kind === 'page' ? cur.path : '')}" placeholder="/internship or https://unstop.com/hackathons/…" spellcheck="false" autocomplete="off"><datalist id="un-sc-pages">${pages.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
+      <button class="btn-primary sm" type="submit">Analyse</button>
+    </form>`;
+  }
+  function scopeMount(D) {
+    const f = document.getElementById('un-scope'); if (!f) return;
+    const c = document.getElementById('un-sc-c'), fo = document.getElementById('un-sc-f'), u = document.getElementById('un-sc-u');
+    c.addEventListener('change', () => { u.value = ''; location.hash = c.value ? focusHref({ c: c.value }) : '#focus'; });
+    fo.addEventListener('change', () => { location.hash = focusHref({ c: c.value, f: fo.value }); });
+    f.addEventListener('submit', e => { e.preventDefault(); const v = u.value.trim(); location.hash = v ? focusHref({ u: U.pathOnly(v) }) : c.value ? focusHref({ c: c.value, f: fo.value }) : '#focus'; });
+  }
+  // live Search Console numbers for the scope (exact totals, its own query list)
+  async function loadScope(D, A, sc, key) {
+    const src = window.CW_SOURCE; if (!src || !src.gsc || !A.brandRx) return;
+    FOC.set(key, { status: 'loading' }); rerender();
+    try {
+      const so = sectioner(D), s = settings(D.site);
+      let filters;
+      if (sc.kind === 'page') filters = [{ dimension: 'page', operator: 'includingRegex', expression: '^https?://[^/]+' + sc.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/?(\\?.*)?$' }];
+      else {
+        const sec = so.sections.find(x => x.id === sc.id);
+        const rules = sc.kind === 'folder' ? sec.rules.filter(r => String(r).trim().replace(/^=/, '').replace(/\*$/, '…') === sc.folder) : sec.rules;
+        filters = [{ dimension: 'page', operator: 'includingRegex', expression: U.sectionRegex({ id: sec.id, rules }, null) }];
+        const ex = U.sectionExclude(sec, s.sections); if (ex) filters.push({ dimension: 'page', operator: 'excludingRegex', expression: ex });
+      }
+      const agg = (st, en, brand) => src.gsc.query({ startDate: st, endDate: en, type: 'web', rowLimit: 1, dimensionFilterGroups: [{ groupType: 'and', filters: filters.concat(brand == null ? [] : [{ dimension: 'query', operator: brand ? 'includingRegex' : 'excludingRegex', expression: A.brandRx }]) }] }).then(d => (d.rows || [])[0] || null);
+      const qs = (st, en) => src.gsc.query({ startDate: st, endDate: en, type: 'web', dimensions: ['query'], rowLimit: 25000, dimensionFilterGroups: [{ groupType: 'and', filters }] }).then(d => (d.rows || []).map(r => ({ q: r.keys[0], clicks: r.clicks, impr: r.impressions, pos: r.position })));
+      const cur = await Promise.all([agg(D.start, D.end), agg(D.start, D.end, true), agg(D.start, D.end, false), qs(D.start, D.end)]);
+      const prev = D.prevStart ? await Promise.all([agg(D.prevStart, D.prevEnd), agg(D.prevStart, D.prevEnd, true), agg(D.prevStart, D.prevEnd, false), qs(D.prevStart, D.prevEnd)]) : [];
+      FOC.set(key, { status: 'done', model: U.sectionModel({ tot: cur[0], b: cur[1], nb: cur[2], queries: cur[3], capped: cur[3].length >= 25000, prevTot: prev[0], prevB: prev[1], prevNb: prev[2], prevQueries: prev[3] || null }, brandOf(A), tools(D).clusterOf) });
+    } catch (e) { FOC.set(key, { status: 'error', error: e.message }); }
+    rerender();
+  }
+  // the same model from loaded rows (uploads and sample data)
+  function scopeFromRows(A, D, sc) {
+    const isB = brandOf(A), P = (A.P || []).filter(r => sc.test(r.p)), PP = (D.prevP || []).filter(r => sc.test(r.p));
+    const qm = new Map(); (D.QP || []).filter(r => sc.test(r.p)).forEach(r => { const o = qm.get(r.q) || { q: r.q, clicks: 0, impr: 0, posW: 0 }; o.clicks += +r.clicks || 0; o.impr += +r.impr || 0; o.posW += (+r.pos || 0) * (+r.impr || 0); qm.set(r.q, o); });
+    const queries = [...qm.values()].map(o => ({ q: o.q, clicks: o.clicks, impr: o.impr, pos: o.impr ? o.posW / o.impr : 0 }));
+    const tot = l => { const o = { clicks: 0, impressions: 0, pw: 0 }; l.forEach(r => { o.clicks += +r.clicks || 0; o.impressions += +r.impr || 0; o.pw += (+r.pos || 0) * (+r.impr || 0); }); o.position = o.impressions ? o.pw / o.impressions : 0; return o; };
+    const m = U.sectionModel({ tot: tot(P), b: tot(queries.filter(r => isB(r.q))), nb: tot(queries.filter(r => !isB(r.q))), queries, prevTot: PP.length ? tot(PP) : null, prevB: null, prevNb: null }, isB, tools(D).clusterOf);
+    if (D.source !== 'demo') m.estimated = true;
+    return m;
+  }
+
+  V.focus = (A, D) => {
+    demoFill(D);
+    window.CW_LAST_A = A;
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-fo')).forEach(k => delete TABLES[k]);
+    const sc = scopeOf(D);
+    const intro = head(sc ? sc.label : 'Section & landing page analysis', 'One cluster, one folder inside it, or one landing page through the whole chain: Search Console visibility (branded vs non-branded), GA4 traffic vs last year, signups and actions.');
+    const picker = scopePicker(A, D, sc);
+    if (!sc) return { html: intro + picker + '<div class="note">Pick a section (cluster) and, if you want, a folder inside it, or type a landing page.</div>', mount: () => scopeMount(D) };
+    const so = sectioner(D);
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const key = [D.site, D.start, D.end, D.prevStart || '', sc.kind, sc.id || '', sc.folder || '', sc.path || ''].join('|');
+    const F = live ? FOC.get(key) : { status: 'done', model: scopeFromRows(A, D, sc) };
+    // pages in scope (Search Console page report)
+    const pages = withCluster(D, (A.P || []).filter(r => sc.test(r.p)), r => r.p);
+    const prevBy = new Map((D.prevP || []).filter(r => sc.test(r.p)).map(r => [r.p, r]));
+    // GA4 in scope
+    const g = GA.get(D.site), M = gaModel(D);
+    const gp = M ? M.pages.filter(p => sc.test(p.path)) : [];
+    const gt = k => gp.reduce((a, p) => a + (p[k] || 0), 0);
+    const ses = gt('sessions'), ys = gt('ySessions'), nu = gt('newUsers'), yn = gt('yNewUsers'), sg = gt('signups');
+    const crossOf = (name, dim) => { if (!g || !g.raw || !g.raw[name]) return []; const m = new Map(); U.gaRows(g.raw[name]).filter(r => sc.test(r.landingPage)).forEach(r => { const k = r[dim] || '(not set)'; const o = m.get(k) || { key: k, sessions: 0, ySessions: 0, newUsers: 0 }; if (r.range === 'yoy') o.ySessions += r.sessions; else { o.sessions += r.sessions; o.newUsers += r.newUsers; } m.set(k, o); }); return [...m.values()].map(o => ({ ...o, dSessions: U.chg(o.sessions, o.ySessions), share: ses ? o.sessions / ses * 100 : 0 })).sort((a, b) => b.sessions - a.sessions); };
+    const dev = crossOf('landingDevice', 'deviceCategory'), st = crossOf('landingRegion', 'region').slice(0, 12);
+    const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
+    const sectionName = sc.kind === 'page' ? `${so.label(sc.id)} › <code>${esc(so.folderOf(sc.path))}</code>` : '';
+    let gsc = '';
+    if (live && (!F || F.status === 'loading')) gsc = '<div class="note">Loading this section from Search Console…</div>';
+    else if (F && F.status === 'error') gsc = `<div class="note"><span class="start-error">${esc(F.error)}</span></div>`;
+    else {
+      const m = F.model, pb = m.prevBuckets;
+      gsc = `<h2 class="un-sub">Search Console${m.estimated ? ' <small class="un-n">(branded split from query × page rows)</small>' : ''}</h2>
+      <div class="un-kpis">
+        ${kp('Clicks', fmtN(m.tot.clicks), dchip(m.d && m.d.clicks), 'vs previous period')}
+        ${kp('Impressions', fmtN(m.tot.impr), dchip(m.d && m.d.impr), '')}
+        ${kp('CTR', pct1(m.tot.ctr), '', 'position ' + (m.tot.impr ? m.tot.pos.toFixed(1) : '—'))}
+        ${kp('Non-branded clicks', fmtN(Math.round(m.nb.clicks)), dchip(m.d && m.d.nbClicks), `CTR ${pct1(m.nb.ctr)} · pos. ${m.nb.impr ? m.nb.pos.toFixed(1) : '—'}`)}
+        ${kp('Branded clicks', fmtN(Math.round(m.b.clicks)), dchip(m.d && m.d.bClicks), `CTR ${pct1(m.b.ctr)} · pos. ${m.b.impr ? m.b.pos.toFixed(1) : '—'}`)}
+        ${kp('NB keywords top 3', fmtN(m.buckets.n.top3), pb ? cnt(m.buckets.n.top3, pb.n.top3, true).replace(/^[^<]*/, '') : '', '')}
+        ${kp('NB keywords top 10', fmtN(m.buckets.n.top10), pb ? cnt(m.buckets.n.top10, pb.n.top10, true).replace(/^[^<]*/, '') : '', '')}
+        ${kp('NB keywords 11–20', fmtN(m.buckets.n.p11), pb ? cnt(m.buckets.n.p11, pb.n.p11, true).replace(/^[^<]*/, '') : '', 'quick wins')}
+      </div>
+      <div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Query clusters</h2></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Query cluster</th><th class="r">NB clicks</th><th class="r">NB impr.</th><th class="r">NB pos.</th><th class="r">Top 10</th><th class="r">11–20</th><th class="r">Branded clicks</th></tr></thead><tbody>${m.byQueryCluster.map(c => `<tr><td><b>${esc(c.name)}</b></td><td class="r">${fmtN(c.nb.clicks)}</td><td class="r">${fmtN(c.nb.impr)}</td><td class="r">${c.nb.impr ? posTag(c.nb.pos) : '—'}</td><td class="r">${fmtN(c.n10)}</td><td class="r">${fmtN(c.n11)}</td><td class="r">${fmtN(c.b.clicks)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No query rows.</td></tr>'}</tbody></table></div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Quick wins: non-branded queries in positions 11–20</h2></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Query</th><th class="r">Impr.</th><th class="r">Clicks</th><th class="r">Position</th></tr></thead><tbody>${m.quick.slice(0, 20).map(q => `<tr><td class="q">${esc(q.q)}</td><td class="r">${fmtN(q.impr)}</td><td class="r">${fmtN(q.clicks)}</td><td class="r">${posTag(q.pos)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">None in this period.</td></tr>'}</tbody></table></div></div></section></div>
+      <section class="panel"><div class="panel-h"><h2>Top queries</h2></div>${table('t-un-foq', [{ k: 'q', l: 'Query', cls: 'q', f: r => esc(r.q) }, { k: 'brand', l: 'Branded', f: r => r.brand ? '<span class="un-st file">Branded</span>' : 'Non-branded', csv: r => r.brand ? 'branded' : 'non-branded' }, { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos) }],
+        (m.queryList || []).map(q => ({ ...q, ctr: q.impr ? q.clicks / q.impr * 100 : 0, brand: brandOf(A)(q.q) })), { file: 'unstop-scope-queries', sort: 'clicks', pageSize: 15, placeholder: 'Filter queries', filters: [{ key: 'b', label: 'Queries', options: [['n', 'Non-branded'], ['b', 'Branded']], test: (r, v) => v === 'b' ? r.brand : !r.brand }] })}</section>`;
+    }
+    const ga = !g ? '<h2 class="un-sub">GA4</h2><div class="note"><a href="#ga4">Connect GA4</a> to add sessions, signups and actions for this section.</div>' :
+      `<h2 class="un-sub">GA4 organic${g.sample ? ' <span class="un-st sample">Sample</span>' : ''}</h2>
+      <div class="un-kpis">
+        ${kp('Organic sessions', fmtN(Math.round(ses)), dchip(U.chg(ses, ys)), 'vs last year')}
+        ${kp('New users', fmtN(Math.round(nu)), dchip(U.chg(nu, yn)), 'vs last year')}
+        ${kp('Signups', fmtN(Math.round(sg)), '', `student ${fmtN(Math.round(gt('stu')))} · employer ${fmtN(Math.round(gt('emp')))}`)}
+        ${kp('Signup CVR', pct1(ses ? sg / ses * 100 : null), '', 'signups ÷ sessions')}
+        ${kp('Engagement rate', pct1(ses ? gt('engaged') / ses * 100 : null), '', '')}
+        ${kp('Register / apply', fmtN(Math.round(gt('opp'))), '', ses ? (gt('opp') / ses * 100).toFixed(1) + ' per 100 sessions' : '')}
+        ${kp('Product clicks', fmtN(Math.round(gt('prodClick'))), '', '')}
+        ${kp('Demo + contact', fmtN(Math.round(gt('demo') + gt('contact'))), '', '')}
+      </div>
+      <div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Device</h2><p>vs last year</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Device</th><th class="r">Sessions</th><th class="r">Share</th></tr></thead><tbody>${dev.map(r => `<tr><td>${esc(r.key)}</td><td class="r">${fmtN(Math.round(r.sessions))} ${dchip(r.dSessions)}</td><td class="r">${pct1(r.share)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No device rows.</td></tr>'}</tbody></table></div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Indian states</h2><p>Top 12, vs last year</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>State</th><th class="r">Sessions</th><th class="r">Share</th></tr></thead><tbody>${st.map(r => `<tr><td>${esc(r.key)}</td><td class="r">${fmtN(Math.round(r.sessions))} ${dchip(r.dSessions)}</td><td class="r">${pct1(r.share)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No state rows.</td></tr>'}</tbody></table></div></div></section></div>`;
+    const pagesTbl = sc.kind === 'page' ? '' : `<section class="panel"><div class="panel-h"><h2>Landing pages in this section</h2><p>Click a page to analyse it on its own.</p></div>${table('t-un-fop', [
+      { k: 'path', l: 'Page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.p }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder },
+      { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + dchip(r.dClicks) }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos) },
+      ...(M ? [{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.ga ? fmtN(Math.round(r.ga.sessions)) + ' ' + dchip(r.ga.dSessions) : '—', csv: r => r.ga ? r.ga.sessions : '' }, { k: 'signups', l: 'Signups', r: 1, f: r => r.ga ? fmtN(Math.round(r.ga.signups)) : '—', csv: r => r.ga ? r.ga.signups : '' }, { k: 'cvr', l: 'CVR', r: 1, f: r => r.ga ? pct1(r.ga.cvr) : '—', csv: r => r.ga ? r.ga.cvr : '' }] : [])
+    ], pages.map(r => { const pr = prevBy.get(r.p), gaP = gp.find(x => x.path.toLowerCase() === U.pathOnly(r.p).toLowerCase()); return { ...r, path: U.pathOnly(r.p), dClicks: pr ? U.chg(r.clicks, pr.clicks) : null, ga: gaP || null, sessions: gaP ? gaP.sessions : -1, signups: gaP ? gaP.signups : -1, cvr: gaP ? gaP.cvr : -1 }; }), { file: 'unstop-scope-pages', sort: 'clicks', pageSize: 20, searchKeys: ['path', 'folder'], placeholder: 'Filter URLs' })}</section>`;
+    const html = intro + picker + (sectionName ? `<p class="un-meta">Cluster › folder: ${sectionName} · <a href="${esc(focusHref({ c: sc.id }))}">analyse the whole cluster</a></p>` : sc.kind === 'folder' ? `<p class="un-meta"><a href="${esc(focusHref({ c: sc.id }))}">Back to the whole cluster</a></p>` : '') +
+      `<p class="un-meta">${fmtN(pages.length)} page${pages.length === 1 ? '' : 's'} with Search Console data${M ? ` · ${fmtN(gp.length)} organic landing page${gp.length === 1 ? '' : 's'} in GA4` : ''}</p>` + gsc + ga + pagesTbl;
+    const mount = () => { scopeMount(D); ['t-un-foq', 't-un-fop'].forEach(drawTable); if (live && !F) loadScope(D, A, sc, key); };
     return { html, mount };
   };
 
@@ -424,7 +590,7 @@
     const emptyNote = !M.ok ? '<div class="note"><b>GA4 returned no organic sessions for these dates.</b> Check the property and dates, and that the property records the Organic Search channel.</div>' : '';
     const failNote = g.failed && g.failed.length ? `<div class="note">Some GA4 reports did not load: ${esc(g.failed.join('; '))}</div>` : '';
     const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
-    const html = intro + form + sampleNote + emptyNote + failNote +
+    const html = intro + scopePicker(A, D) + form + sampleNote + emptyNote + failNote +
       `<p class="un-meta">${esc(g.propertyName || '')} · ${fmtD(g.start)} – ${fmtD(g.end)} · loaded ${when(g.at)}</p>` +
       `<div class="un-kpis">
         ${kp('Organic sessions', fmtN(t.sessions), dchip(M.dSessions), 'vs last year')}
@@ -451,7 +617,7 @@
         { k: 'prodClick', l: 'Product clicks', r: 1, f: r => fmtN(r.prodClick) },
         { k: 'leads', l: 'Demo + contact', r: 1, f: r => fmtN(r.demo + r.contact), csv: r => r.demo + r.contact }
       ], M.types.map(r => ({ ...r, leads: r.demo + r.contact })), { search: false, file: 'unstop-ga4-by-page-type', pageSize: 30 })}</section>` +
-      gaPathBlock(M, s) + gaCrossBlocks(M, D) +
+      gaPathBlock(M, s, D) + gaCrossBlocks(M, D) +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Device</h2></div>${splitTable('t-un-gd', 'Device', M.device)}</section>
         <section class="panel"><div class="panel-h"><h2>Country</h2></div>${splitTable('t-un-gc', 'Country', M.country)}</section></div>` +
       (M.region.length ? `<section class="panel"><div class="panel-h"><h2>Indian states and regions</h2><p>All organic sessions in India, vs the same dates last year.</p></div>${table('t-un-gr', [{ k: 'key', l: 'Region' }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) }], M.region, { search: false, file: 'unstop-ga4-regions', pageSize: 15 })}</section>` : '') +
@@ -478,15 +644,15 @@
         ${table('t-un-gaip', [{ k: 'path', l: 'Landing page', cls: 'u' }, { k: 'type', l: 'Page type' }, { k: 'sessions', l: 'AI sessions', r: 1, f: r => fmtN(r.sessions) }, { k: 'keyEvents', l: 'Key events', r: 1, f: r => fmtN(r.keyEvents) }], M.aiPages, { file: 'unstop-ai-landing-pages', sort: 'sessions', pageSize: 10, placeholder: 'Filter URLs' })}</section>` +
       `<section class="panel"><div class="panel-h"><h2>Landing pages</h2></div>
         ${table('t-un-gp', [
-        { k: 'path', l: 'Landing page', cls: 'u' }, { k: 'typeName', l: 'Page type' }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) },
+        { k: 'path', l: 'Landing page', cls: 'u' }, { k: 'cluster', l: 'Cluster' }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) },
         { k: 'engRate', l: 'Eng. rate', r: 1, f: r => pct1(r.engRate) }, { k: 'signups', l: 'Signups', r: 1, f: r => fmtN(r.signups) }, { k: 'cvr', l: 'CVR', r: 1, f: r => pct1(r.cvr) }, { k: 'opp', l: 'Register / apply', r: 1, f: r => fmtN(r.opp) }
-      ], M.pages, { file: 'unstop-ga4-landing-pages', sort: 'sessions', placeholder: 'Filter URLs', filters: [{ key: 't', label: 'Page type', options: tools(D).typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.typeName === v }] })}</section>` +
+      ], withCluster(D, M.pages, r => r.path), { file: 'unstop-ga4-landing-pages', sort: 'sessions', placeholder: 'Filter URLs or folders', searchKeys: ['path', 'folder'], filters: [{ key: 't', label: 'Page type', options: tools(D).typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.typeName === v }, clusterFilter(D)] })}</section>` +
       `<section class="panel"><div class="panel-h"><h2>Events in organic sessions</h2><p>Every event GA4 recorded in organic sessions, and which funnel step it counts toward. Change the lists in <a href="#funnelsetup">Funnel setup</a>.</p></div>
         ${table('t-un-gev', [{ k: 'name', l: 'Event name' }, { k: 'step', l: 'Counts as' }, { k: 'count', l: 'Events', r: 1, f: r => fmtN(r.count) }, { k: 'users', l: 'Users (sum by landing page)', r: 1, f: r => fmtN(r.users) }], M.events.map(e => ({ ...e, step: stepOf(e.name, s.events) })), { file: 'unstop-ga4-events', sort: 'count', placeholder: 'Filter events' })}</section>` +
       `<div class="note"><b>How to read this.</b> Events are counted in the session’s channel and landing page, so a signup made later in an organic session counts for the page that session started on. GA4’s returning-user split is not a strict 30-day return window. Branded vs non-branded is not visible in GA4; the Full funnel screen gives a labelled estimate using Search Console.</div>`;
     const mount = () => {
-      gaMount(D);
-      ['t-un-gt', 't-un-gpc', 't-un-gd', 't-un-gc', 't-un-gr', 't-un-gb', 't-un-ge', 't-un-gch', 't-un-gai', 't-un-gaip', 't-un-gp', 't-un-gev'].forEach(drawTable);
+      gaMount(D); scopeMount(D);
+      ['t-un-gt', 't-un-gpc', 't-un-gfo', 't-un-gd', 't-un-gc', 't-un-gr', 't-un-gb', 't-un-ge', 't-un-gch', 't-un-gai', 't-un-gaip', 't-un-gp', 't-un-gev'].forEach(drawTable);
       chart('un-ga-daily', { type: 'line', data: { labels: M.daily.map(d => fmtD(d.d)), datasets: [
         { label: 'Organic sessions', data: M.daily.map(d => d.sessions), borderColor: cssVar('--signal'), backgroundColor: cssVar('--signal'), tension: .25, pointRadius: 0, borderWidth: 2 },
         { label: 'Same dates last year', data: M.daily.map(d => d.ySessions), borderColor: cssVar('--muted'), borderDash: [5, 4], tension: .25, pointRadius: 0, borderWidth: 1.5 }
@@ -498,19 +664,30 @@
   function stepOf(name, ev) { const n = String(name).toLowerCase(); const hit = Object.keys(STEP_LABEL).filter(k => (ev[k] || []).some(x => String(x).toLowerCase() === n)); return hit.map(k => STEP_LABEL[k]).join(', ') || '—'; }
 
   // conversion-path coverage and organic traffic by URL cluster
-  function gaPathBlock(M, s) {
+  function gaPathBlock(M, s, D) {
     if (!M.sections) return '';
     const c = M.pathCov || {};
     return `<section class="panel"><div class="panel-h"><h2>By URL cluster and conversion-path coverage</h2><p>Share of organic landing sessions on clusters with a clear conversion path (register, apply, post a job, book a demo). Choose the clusters in <a href="#funnelsetup">Funnel setup</a>.</p></div>
       <div class="panel-b"><div class="un-big"><b>${pct1(c.share)}</b><span>of organic sessions land on pages with a clear conversion path${c.yShare != null ? ` · ${pct1(c.yShare)} the same dates last year` : ''} · ${fmtN(Math.round(c.sessions || 0))} sessions across ${c.sections || 0} clusters</span></div></div>
       ${table('t-un-gpc', [
-      { k: 'typeName', l: 'Page type' }, { k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>` },
+      { k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>` },
       { k: 'pathL', l: 'Conversion path', f: r => r.path ? '<span class="un-st live">Yes</span>' : '<span class="un-st none">No</span>', csv: r => r.path ? 'yes' : 'no' },
       { k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'share', l: 'Share', r: 1, f: r => pct1(r.share) },
       { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) + ' ' + dchip(r.dNewUsers) },
       { k: 'engRate', l: 'Eng. rate', r: 1, f: r => pct1(r.engRate) }, { k: 'signups', l: 'Signups', r: 1, f: r => fmtN(r.signups) }, { k: 'cvr', l: 'Signup CVR', r: 1, f: r => pct1(r.cvr) }, { k: 'opp', l: 'Register / apply', r: 1, f: r => fmtN(r.opp) }
     ], M.sections.filter(x => x.sessions > 0 || x.ySessions > 0).map(x => ({ ...x, pathL: x.path ? 1 : 0 })), { search: false, file: 'unstop-ga4-by-cluster', pageSize: 30, sort: 'sessions',
-      filters: [{ key: 'p', label: 'Conversion path', options: [['y', 'Yes'], ['n', 'No']], test: (r, v) => v === 'y' ? r.path : !r.path }] })}</section>`;
+      filters: [{ key: 'p', label: 'Conversion path', options: [['y', 'Yes'], ['n', 'No']], test: (r, v) => v === 'y' ? r.path : !r.path }] })}</section>` +
+      `<section class="panel"><div class="panel-h"><h2>Folders inside each cluster</h2><p>Organic landing sessions by the folder rule each landing page matched, vs the same dates last year.</p></div>
+      ${table('t-un-gfo', [
+      { k: 'cluster', l: 'Cluster', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder },
+      { k: 'landings', l: 'Landing pages', r: 1, f: r => fmtN(r.landings) },
+      { k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSessions) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(Math.round(r.newUsers)) + ' ' + dchip(r.dNewUsers) },
+      { k: 'engRate', l: 'Eng. rate', r: 1, f: r => pct1(r.engRate) }, { k: 'signups', l: 'Signups', r: 1, f: r => fmtN(Math.round(r.signups)) }, { k: 'cvr', l: 'Signup CVR', r: 1, f: r => pct1(r.cvr) }, { k: 'opp', l: 'Register / apply', r: 1, f: r => fmtN(Math.round(r.opp)) }
+    ], gaFolders(M, D), { file: 'unstop-ga4-by-folder', sort: 'sessions', pageSize: 40, searchKeys: ['cluster', 'folder'], placeholder: 'Filter clusters or folders', filters: [clusterFilter(D)] })}</section>`;
+  }
+  function gaFolders(M, D) {
+    return U.byFolder(M.pages, p => p.path, sectioner(D)).map(g => { const t = k => g.rows.reduce((a, r) => a + (r[k] || 0), 0); const ses = t('sessions'), ys = t('ySessions'), nu = t('newUsers'), yn = t('yNewUsers'), sg = t('signups');
+      return { cluster: g.cluster, folder: g.folder, landings: g.rows.filter(r => r.sessions > 0).length, sessions: ses, newUsers: nu, dSessions: U.chg(ses, ys), dNewUsers: U.chg(nu, yn), engRate: ses ? t('engaged') / ses * 100 : null, signups: sg, cvr: ses ? sg / ses * 100 : null, opp: t('opp') }; }).filter(r => r.sessions > 0);
   }
   // device and state inside each page type, both against last year
   function gaCrossBlocks(M, D) {
@@ -950,7 +1127,7 @@
     };
     const chain = U.joinChain(G.vis, ga, typeOf).filter(r => (r.gsc && r.gsc.impr) || (r.ga && r.ga.sessions));
     const q1 = U.topSignupPages(ga, 15), q2 = U.nonBrandedSignupShare(ga, D, brandOf(A));
-    const html = head('Full funnel', 'Visibility → traffic → signups → engagement → leads → pipeline in one view. Every metric shows its source, owner, cadence and whether it is live. Hover a metric for its definition.') +
+    const html = head('Full funnel', 'Visibility → traffic → signups → engagement → leads → pipeline in one view. Every metric shows its source, owner, cadence and whether it is live. Hover a metric for its definition.') + scopePicker(A, D) +
       `<div class="un-sources">
         <div><span>Search Console</span>${chip(gscSt)}<small>${esc(D.site)} · ${fmtD(D.start)} – ${fmtD(D.end)}${D.prevStart ? '' : ' · no comparison period'}</small></div>
         <div><span>GA4</span>${chip(gaSt)}<small>${g ? esc(g.propertyName) + ' · ' + fmtD(g.start) + ' – ' + fmtD(g.end) : '<a href="#ga4">Connect GA4</a>'}</small></div>
@@ -973,14 +1150,14 @@
         { k: 'leads', l: 'Demo + contact', r: 1, f: r => r.ga ? fmtN(r.ga.demo + r.ga.contact) : '—', csv: r => r.ga ? r.ga.demo + r.ga.contact : '' }
       ], chain.map(r => ({ ...r, impr: r.gsc ? r.gsc.impr : -1, clicks: r.gsc ? r.gsc.clicks : -1, sessions: r.ga ? r.ga.sessions : -1, signups: r.ga ? r.ga.signups : -1 })), { search: false, file: 'unstop-funnel-by-page-type', pageSize: 30 })}</section>` +
       `<div class="grid-2 even">
-        <section class="panel"><div class="panel-h"><h2>1. Which pages drove the most signups?</h2><p>Organic landing pages ranked by signup events in the GA4 period.</p></div>${ga ? (q1.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Landing page</th><th>Type</th><th class="r">Signups</th><th class="r">CVR</th></tr></thead><tbody>${q1.map(p => `<tr><td class="u">${esc(p.path)}</td><td>${esc(p.typeName)}</td><td class="r">${fmtN(p.signups)}</td><td class="r">${pct1(p.cvr)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No signup events found in organic sessions. Check the signup event names in Funnel setup against the GA4 event list.</p>') : '<p class="empty"><a href="#ga4">Connect GA4</a> to answer this.</p>'}</section>
+        <section class="panel"><div class="panel-h"><h2>1. Which pages drove the most signups?</h2><p>Organic landing pages ranked by signup events in the GA4 period.</p></div>${ga ? (q1.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Landing page</th><th>Cluster › folder</th><th class="r">Signups</th><th class="r">CVR</th></tr></thead><tbody>${withCluster(D, q1, p => p.path).map(p => `<tr><td class="u">${esc(p.path)}</td><td>${esc(p.cluster)} <code>${esc(p.folder)}</code></td><td class="r">${fmtN(p.signups)}</td><td class="r">${pct1(p.cvr)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No signup events found in organic sessions. Check the signup event names in Funnel setup against the GA4 event list.</p>') : '<p class="empty"><a href="#ga4">Connect GA4</a> to answer this.</p>'}</section>
         <section class="panel"><div class="panel-h"><h2>2. What share of organic signups comes from non-branded searches?</h2><p>Estimate: each landing page’s signups × the non-branded share of its Search Console clicks.</p></div><div class="panel-b">${q2 ? `<div class="un-big"><b>${pct1(q2.share)}</b><span>estimated non-branded share of organic signups</span></div><p class="hint">${fmtN(Math.round(q2.nb))} of ${fmtN(q2.matched)} signups on pages found in Search Console query × page rows (${pct1(q2.coverage)} of organic signups). ${fmtN(q2.unmatched)} signups landed on pages without query data and are left out. Search Console never ties a query to a signup, so treat this as a labelled proxy.</p>` : `<p class="empty">${!ga ? '<a href="#ga4">Connect GA4</a> and ' : ''}${!(D.QP && D.QP.length) ? 'connect Search Console (query × page rows are needed)' : 'load signup events'} to estimate this.</p>`}</div></section>
       </div>` +
       `<section class="panel"><div class="panel-h"><h2>3. How much pipeline can we trace to organic?</h2></div><div class="panel-b"><p class="empty">Next phase: needs the CRM export (lead ID, first-touch and assisted channel, opportunity, amount, stage). Report organic first-touch and organic-assisted pipeline separately, and only after join coverage is validated.</p></div></section>` +
       `<p class="un-row"><button class="btn-quiet" type="button" id="un-f-export">Download funnel metrics (CSV)</button><span class="hint">Metric, stage, value, change, status, source, owner, cadence, definition and last refresh.</span></p>`;
     const mount = () => {
       drawTable('t-un-fc');
-      moeAuto(D);
+      moeAuto(D); scopeMount(D);
       const ex = document.getElementById('un-f-export');
       if (ex) ex.addEventListener('click', () => {
         const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
