@@ -73,7 +73,7 @@
       if (r.startsWith('=')) { const p = pathOnly(r.slice(1)); return esc(p) + (p === '/' ? '?' : '/?') + '(\\?.*)?$'; }
       if (!r.startsWith('/')) r = '/' + r;
       if (r.endsWith('*')) return esc(r.slice(0, -1));
-      return esc(r.replace(/\/$/, '')) + '([/?#]|$)';
+      return esc(r.replace(/\/$/, '')) + '([/?#%]|$)';
     }).filter(Boolean);
     if (type.id === 'blog') parts.push('/[^/?#]*(-[^/?#]*){' + ROOT_ARTICLE_HYPHENS + ',}/?(\\?.*)?$');
     return parts.length ? h + '(' + parts.join('|') + ')' : null;
@@ -185,6 +185,21 @@
   }
   const sectionsText = (sections, types) => { const T = types && types.length ? types : DEFAULT_TYPES; return (sections || DEFAULT_SECTIONS).map(x => `${x.name} | ${(T.find(t => t.id === x.type) || { name: x.type || 'Other' }).name}: ${(x.rules || []).join(', ')}`).join('\n'); };
   function sectionRegex(section, host) { return typeRegex({ id: section.id === 'blog' ? 'blog' : 'x', rules: section.rules }, host); }
+  // Search Console page filters are independent regexes, not "first match wins", so a wide cluster
+  // (/employers) would also count a narrower cluster listed above it (/employers/hire-*). This returns a
+  // regex of those earlier, narrower rules to exclude (null when nothing overlaps).
+  function sectionExclude(section, sections) {
+    const list = sections && sections.length ? sections : DEFAULT_SECTIONS;
+    const idx = list.findIndex(x => x.id === section.id);
+    const base = r => { r = String(r).trim().toLowerCase(); if (r.startsWith('=')) return null; if (!r.startsWith('/')) r = '/' + r; return r.replace(/\*$/, '').replace(/\/$/, ''); };
+    const mine = (section.rules || []).map(base).filter(Boolean);
+    const hits = [];
+    list.slice(0, Math.max(0, idx)).forEach(e => (e.rules || []).forEach(r => { const b = base(r); if (b && mine.some(m => b !== m && b.startsWith(m + (m.endsWith('-') ? '' : '/')))) hits.push(r); }));
+    // the blog cluster's root-article-slug pattern only applies when no other cluster's rule matches
+    // (only prefix rules such as /top-* can match a one-segment slug; exact paths with 4+ hyphens too)
+    if (section.id === 'blog') list.forEach(e => { if (e.id !== 'blog') (e.rules || []).forEach(r => { const t = String(r).trim(); if ((t.endsWith('*') || (t.match(/-/g) || []).length >= ROOT_ARTICLE_HYPHENS) && !hits.includes(r)) hits.push(r); }); });
+    return hits.length ? typeRegex({ id: 'x', rules: hits }, null) : null;
+  }
 
   // One URL cluster from Search Console rows.
   //   tot/b/nb: aggregate rows ({ clicks, impressions, position }) for all, branded-only and non-branded-only
@@ -656,7 +671,7 @@
     { stage: 'Pipeline & revenue', id: 'mql', label: 'MQLs, pipeline, closed revenue', src: 'CRM', owner: 'CRM Ops + Finance + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Next phase: needs the CRM export joined on lead ID.', later: true }
   ];
 
-  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, makeSectioner, parseSections, sectionsText, sectionRegex, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
+  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, makeSectioner, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
     moeHeaderMap, moeQuality, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;

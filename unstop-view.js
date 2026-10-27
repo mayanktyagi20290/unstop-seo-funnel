@@ -219,22 +219,23 @@
     const st = { status: 'loading', done: 0, total: list.length, models: new Map(), raw: new Map(), at: null };
     CL.set(k, st); rerender();
     const { clusterOf } = tools(D), isB = brandOf(A);
-    const agg = (rx, s, e, brand) => {
-      const f = [{ dimension: 'page', operator: 'includingRegex', expression: rx }];
+    const pf = (rx, ex) => [{ dimension: 'page', operator: 'includingRegex', expression: rx }].concat(ex ? [{ dimension: 'page', operator: 'excludingRegex', expression: ex }] : []);
+    const agg = (rx, ex, s, e, brand) => {
+      const f = pf(rx, ex);
       if (brand != null) f.push({ dimension: 'query', operator: brand ? 'includingRegex' : 'excludingRegex', expression: A.brandRx });
       return src.gsc.query({ startDate: s, endDate: e, type: 'web', rowLimit: 1, dimensionFilterGroups: [{ groupType: 'and', filters: f }] }).then(d => (d.rows || [])[0] || null);
     };
-    const qs = (rx, s, e) => src.gsc.query({ startDate: s, endDate: e, type: 'web', dimensions: ['query'], rowLimit: 25000, dimensionFilterGroups: [{ groupType: 'and', filters: [{ dimension: 'page', operator: 'includingRegex', expression: rx }] }] })
+    const qs = (rx, ex, s, e) => src.gsc.query({ startDate: s, endDate: e, type: 'web', dimensions: ['query'], rowLimit: 25000, dimensionFilterGroups: [{ groupType: 'and', filters: pf(rx, ex) }] })
       .then(d => (d.rows || []).map(r => ({ q: r.keys[0], clicks: r.clicks, impr: r.impressions, pos: r.position })));
     let i = 0;
     const errors = [];
     const worker = async () => {
       while (i < list.length) {
         const sec = list[i++];
-        const rx = U.sectionRegex(sec, null);
+        const rx = U.sectionRegex(sec, null), ex = U.sectionExclude(sec, settings(D.site).sections);
         try {
-          const cur = await Promise.all([agg(rx, D.start, D.end), agg(rx, D.start, D.end, true), agg(rx, D.start, D.end, false), qs(rx, D.start, D.end)]);
-          const prev = D.prevStart ? await Promise.all([agg(rx, D.prevStart, D.prevEnd), agg(rx, D.prevStart, D.prevEnd, true), agg(rx, D.prevStart, D.prevEnd, false), qs(rx, D.prevStart, D.prevEnd)]) : [];
+          const cur = await Promise.all([agg(rx, ex, D.start, D.end), agg(rx, ex, D.start, D.end, true), agg(rx, ex, D.start, D.end, false), qs(rx, ex, D.start, D.end)]);
+          const prev = D.prevStart ? await Promise.all([agg(rx, ex, D.prevStart, D.prevEnd), agg(rx, ex, D.prevStart, D.prevEnd, true), agg(rx, ex, D.prevStart, D.prevEnd, false), qs(rx, ex, D.prevStart, D.prevEnd)]) : [];
           const o = { tot: cur[0], b: cur[1], nb: cur[2], queries: cur[3], capped: cur[3].length >= 25000, prevTot: prev[0], prevB: prev[1], prevNb: prev[2], prevQueries: prev[3] || null };
           st.models.set(sec.id, U.sectionModel(o, isB, clusterOf));
         } catch (e) { errors.push(sec.name + ': ' + e.message); }
