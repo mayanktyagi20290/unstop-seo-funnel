@@ -135,7 +135,7 @@
     { id: 'awards', name: 'Opportunity › Awards', type: 'opp', rules: ['/awards'] },
     { id: 'ambassador', name: 'Opportunity › Campus ambassador', type: 'opp', rules: ['/campus-ambassador-program'] },
     { id: 'oppother', name: 'Opportunity › Other opportunity pages', type: 'opp', rules: ['/all-opportunities', '/p', '/o', '/voting-round', '/unstop-dream-companies-*'] },
-    { id: 'orgpages', name: 'College & company › Company & college pages', type: 'org', rules: ['/c', '/college', '/colleges', '/company', '/companies', '/institute', '/institutes'] },
+    { id: 'orgpages', name: 'College & company › Company & college pages (/c/)', type: 'org', rules: ['/c', '/college', '/colleges', '/company', '/companies', '/institute', '/institutes'] },
     { id: 'blog', name: 'Content › Blog', type: 'blog', rules: ['/blog', '/blog-series', '/category', '/bites'] },
     { id: 'resources', name: 'Content › Resources & prep', type: 'blog', rules: ['/resources', '/prep-zone', '/top-*'] },
     { id: 'empjobboard', name: 'Employer › Job board', type: 'emp', rules: ['/employers/hire-*', '/employers/ai-sourcing-agent', '/employers/jobs-internships-listings-jobboard', '/employers/our-largest-early-talent-community'] },

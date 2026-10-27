@@ -388,7 +388,7 @@
     const opts = ['<option value="">Whole site (or type a folder / page below)</option>'];
     so.sections.filter(x => seen.has(x.id) || !(full.P || []).length).forEach(x => {
       opts.push(`<option value="cluster:${esc(x.id)}">${esc(x.name)}</option>`);
-      const fs = [...(seen.get(x.id) || [])]; if (fs.length > 1) fs.sort().forEach(f => opts.push(`<option value="cluster:${esc(x.id)}|${esc(f)}">\u00a0\u00a0\u00a0${esc(x.name)} › ${esc(f)}</option>`));
+      const fs = [...(seen.get(x.id) || [])]; fs.sort().forEach(f => opts.push(`<option value="cluster:${esc(x.id)}|${esc(f)}">\u00a0\u00a0\u00a0${esc(x.name)} › ${esc(f)}</option>`));
     });
     sel.innerHTML = opts.join('');
     sel.value = /^cluster:/.test(current || '') ? current : '';
@@ -396,7 +396,8 @@
   }
   function openChange(focus, preset) {
     if (!D) return;
-    const live = D.source === 'api' && LAST, demo = D.source === 'demo';
+    // sample data: only the section filter (top-bar scope pill) can change; the date and site pills explain they are fixed
+    const live = D.source === 'api' && LAST, demo = D.source === 'demo' && focus === 'scope';
     $('scope-fields').hidden = !(live || demo); $('scope-fixed').hidden = !!(live || demo);
     $('scope-go').hidden = !(live || demo); $('scope-whole').hidden = !(live || demo); $('scope-new').hidden = !!(live || demo);
     // sample data: only the section / folder / page can change (property, dates and device are fixed)
