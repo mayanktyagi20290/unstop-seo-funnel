@@ -17,6 +17,10 @@ GA4 organic traffic → signups → engagement → leads, and MoEngage signup qu
 
 Files: `unstop.js` (pure logic, tested in `tests/unstop.test.js`), `moengage.js` (MoEngage chart parsing and mapping), `unstop-view.js` (screens), `unstop.css`, `moengage-proxy/` (Cloudflare Worker), Unstop defaults in `config.js › unstop`. Browser storage keys use the `un:` prefix so this app never mixes settings with Clickwise on the same github.io origin.
 
+## Sample data
+
+"Try it with sample data" (or `app.html?demo`) opens an Unstop-shaped sample: unstop.com's real URL structure (hackathons, competitions, internships, jobs, quizzes, fests, company pages, blog, employers job board / B2B, `/saas-pricing`…) with generated numbers, opportunity names and company names (`demo-unstop.js`). GA4, the MoEngage user export and a MoEngage dashboard are filled with sample numbers automatically, so every funnel screen and the cluster split can be shown without signing in. Everything is marked **Sample**. `app.html?demo=trailcraft` keeps Clickwise's original sample site (used by the base browser tests).
+
 ## Turning on GA4
 
 Sign-in asks for Search Console **and** Analytics (both read-only) in one pop-up. In the Google Cloud project that owns the OAuth client in `config.js`:

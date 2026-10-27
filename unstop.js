@@ -233,7 +233,7 @@
   }
   // Fallback for uploads and sample data: page totals from the page report, the branded split from
   // query × page rows (an estimate, labelled as such by the view).
-  function sectionsFromRows(A, D, sectionOf, isBrand, clusterOf) {
+  function sectionsFromRows(A, D, sectionOf, isBrand, clusterOf, opt = {}) {
     const S = new Map();
     const get = id => { if (!S.has(id)) S.set(id, { tot: blank(), prevTot: blank(), qp: new Map() }); return S.get(id); };
     (A.P || []).forEach(r => add(get(sectionOf(r.p)).tot, r));
@@ -245,11 +245,12 @@
       const sumOf = f => { const o = blank(); queries.filter(f).forEach(r => add(o, r)); return o; };
       const qb = sumOf(r => isBrand(r.q)), qn = sumOf(r => !isBrand(r.q));
       const T = fin(x.tot), share = (qb.clicks + qn.clicks) ? qb.clicks / (qb.clicks + qn.clicks) : null, ishare = (qb.impr + qn.impr) ? qb.impr / (qb.impr + qn.impr) : null;
-      const est = (f, fi, src) => ({ clicks: f == null ? 0 : T.clicks * f, impressions: fi == null ? 0 : T.impr * fi, position: fin(src).pos });
+      // exact: query × page rows are complete (sample data), so they are used as they are
+      const est = (f, fi, src) => opt.exact ? { clicks: src.clicks, impressions: src.impr, position: fin(src).pos } : ({ clicks: f == null ? 0 : T.clicks * f, impressions: fi == null ? 0 : T.impr * fi, position: fin(src).pos });
       const pt = fin(x.prevTot);
       out.set(id, sectionModel({ tot: { clicks: T.clicks, impressions: T.impr, position: T.pos }, b: est(share, ishare, qb), nb: est(share == null ? null : 1 - share, ishare == null ? null : 1 - ishare, qn), queries,
         prevTot: pt.impr ? { clicks: pt.clicks, impressions: pt.impr, position: pt.pos } : null, prevB: null, prevNb: null }, isBrand, clusterOf));
-      const s = out.get(id); s.estimated = true; s.anon = { clicks: 0, impr: 0 }; if (s.prev) { s.d = { clicks: chg(T.clicks, pt.clicks), impr: chg(T.impr, pt.impr) }; }
+      const s = out.get(id); s.estimated = !opt.exact; if (!opt.exact) s.anon = { clicks: 0, impr: 0 }; if (s.prev) { s.d = { clicks: chg(T.clicks, pt.clicks), impr: chg(T.impr, pt.impr) }; }
     });
     return out;
   }

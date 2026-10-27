@@ -102,7 +102,7 @@ function writeComparisonExports(dir) {
   const toApp = async () => { await page.waitForSelector('#setup:not([hidden]), #app:not([hidden])', { timeout: 15000 }); if (await page.isVisible('#setup')) await page.click('#setup-form button[type=submit]'); await page.waitForSelector('#app:not([hidden])'); };
 
   await testAsync('sample data: every screen and workflow renders without errors', async () => {
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     const views = await page.$$eval('.nav a[data-view]', a => a.map(x => x.dataset.view));
     for (const v of views) { await go('#' + v); assert.ok(await text('#view h1'), 'heading on ' + v); }
     const wfs = await page.evaluate(() => window.CW_WORKFLOWS.TEMPLATES.map(t => t.id));
@@ -114,7 +114,7 @@ function writeComparisonExports(dir) {
   });
 
   await testAsync('All opportunities: totals match the dashboard, filters, evidence and CSV export work', async () => {
-    await page.goto(base + 'app.html?demo'); await toApp(); await go('#overview'); // the Unstop build opens on #funnel
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp(); await go('#overview'); // the Unstop build opens on #funnel
     const headline = (await text('.hero h1, .v-hero h1, #view h1')).match(/\d[\d.,]*K?–[\d.,]+K?/);
     await go('#opps');
     assert.equal(await text('#view h1'), 'All opportunities');
@@ -137,7 +137,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Goal builder: answer a question, edit a condition, run, save, re-run with history', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await page.evaluate(() => localStorage.clear());
     // the Dashboard box hands the request to the Goal builder
     await go('#overview'); await page.fill('#ov-ask-in', 'titles to rewrite'); await page.click('#ov-ask button'); await page.waitForTimeout(300);
@@ -208,7 +208,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Content & links: tabs, a brief, and a crawler export that removes a link that exists', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await go('#content');
     assert.equal(await text('#view h1'), 'Content & links');
     for (const tab of ['topics', 'gaps', 'improve', 'links', 'briefs']) {
@@ -237,7 +237,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Fix tracker: add, measure, details, remove; Track this fix; exports measure the whole site only', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await page.evaluate(() => localStorage.clear());
     await go('#fixes');
     assert.equal(await text('#view h1'), 'Fix tracker');
@@ -277,7 +277,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Titles & metas: a page export is recognised, audited and shown on Titles to rewrite', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await go('#content?tab=titles');
     assert.ok(/Upload your crawler's page export/.test(await text('.ct-crawl')), 'asks for the file');
     const h = 'https://www.trailcraft.co';
@@ -330,9 +330,9 @@ function writeComparisonExports(dir) {
 
   await testAsync('growth loop: priorities → detail → task → implemented → measured → copilot', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await page.evaluate(() => localStorage.clear());
-    await page.goto(base + 'app.html?demo'); await toApp(); await go('#overview');
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp(); await go('#overview');
     await go('#overview');
     assert.ok(/SEO Growth Command Center/.test(await text('.cc-title')), 'command center title');
     assert.ok(/Sample data/.test(await text('.cc-status')), 'data source shown');
@@ -374,9 +374,9 @@ function writeComparisonExports(dir) {
 
   await testAsync('Command Center: top action above the fold, explanations, inline tasks, target workflow, sync, persistence', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await page.evaluate(() => localStorage.clear());
-    await page.goto(base + 'app.html?demo'); await toApp(); await go('#overview');
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp(); await go('#overview');
     // the main priority action is visible without scrolling at 1360 × 900
     const box = await page.$eval('.cc-hero-top', e => { const r = e.getBoundingClientRect(); return { top: r.top, h: r.height }; });
     assert.ok(box.top > 0 && box.top + box.h < 900, 'top priority banner above the fold at y=' + Math.round(box.top));
@@ -463,7 +463,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Generative AI report: link, sample, export upload, wrong file, start-screen guard', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await go('#genai');
     assert.equal(await text('#view h1'), 'Generative AI report');
     const href = await page.$eval('.ga-up a[target=_blank]', a => a.href);
@@ -496,12 +496,12 @@ function writeComparisonExports(dir) {
     await page.goto(base + 'app.html'); await page.waitForSelector('#file-input', { state: 'attached' });
     await page.setInputFiles('#file-input', gx); await page.waitForTimeout(800);
     assert.ok(/Generative AI report export/.test(await page.evaluate(() => document.body.textContent)), 'start screen explains where it goes');
-    await page.goto(base + 'app.html?demo'); await toApp(); // leave the app open for the tests that follow
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp(); // leave the app open for the tests that follow
     assert.equal(errors.filter(e => !/ERR_/.test(e)).length, 0, 'JS errors: ' + errors.join(' | '));
   });
 
   await testAsync('sidebar groups start closed, open only on click, and highlight the current screen’s group', async () => {
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     const open = g => page.$eval(`.nav-grp[data-grp="${g}"] .nav-group`, b => b.getAttribute('aria-expanded'));
     for (const g of ['seo-opportunities', 'automation', 'ai-search', 'search-console', 'explore']) assert.equal(await open(g), 'false', g + ' closed on load');
     assert.ok(await page.isVisible('#btn-settings'), 'whole sidebar reachable without scrolling past open groups');
@@ -519,7 +519,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Statistics & Trends: own tab and route, direct URL, filters, charts, export, other screens intact', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo#stats'); await toApp(); await page.waitForTimeout(400);
+    await page.goto(base + 'app.html?demo=trailcraft#stats'); await toApp(); await page.waitForTimeout(400);
     assert.equal(await page.evaluate(() => location.hash), '#stats', 'direct URL keeps the route');
     assert.equal(await text('#view h1'), 'Statistics & Trends');
     assert.equal(await text('.nav a.on span'), 'Statistics & Trends', 'its own nav item is active');
@@ -562,7 +562,7 @@ function writeComparisonExports(dir) {
 
   await testAsync('Statistics & Trends › Best day & time: tab, weekday analysis, hourly, calendar, insights', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo#stats?tab=timing'); await toApp(); await page.waitForTimeout(500);
+    await page.goto(base + 'app.html?demo=trailcraft#stats?tab=timing'); await toApp(); await page.waitForTimeout(500);
     assert.equal(await text('.st-pagetabs a.on'), 'Best day & time', 'direct URL opens the tab');
     assert.equal(await text('.nav a.on span'), 'Statistics & Trends', 'same nav item');
     assert.ok(/Strongest/.test(await text('.tm-best')) && /Weakest/.test(await text('.tm-best')), 'best day card');
@@ -607,12 +607,12 @@ function writeComparisonExports(dir) {
     await page.click('#btn-new'); await page.goto('about:blank'); await page.goto(base + 'app.html#overview');
     assert.ok(await page.isVisible('#start') && await page.isVisible('#start-info'), 'start screen after New analysis');
     assert.equal(errors.filter(e => !/ERR_/.test(e)).length, 0, 'JS errors: ' + errors.join(' | '));
-    await page.goto(base + 'app.html?demo'); await toApp(); // leave the app open for the next tests
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp(); // leave the app open for the next tests
   });
 
   await testAsync('Last 24 hours: branded searches left out by default, with a branded / all switch', async () => {
     errors.length = 0;
-    await page.goto(base + 'app.html?demo#live'); await toApp(); await page.evaluate(() => localStorage.removeItem('un:live-brand')); await go('#overview'); await go('#live');
+    await page.goto(base + 'app.html?demo=trailcraft#live'); await toApp(); await page.evaluate(() => localStorage.removeItem('un:live-brand')); await go('#overview'); await go('#live');
     assert.equal(await text('[data-live-brand].on'), 'Non-branded', 'non-branded by default');
     assert.ok(/Non-branded clicks/.test(await text('.tiles')), 'tiles say what they count');
     const num = async () => parseFloat((await text('.tiles .tile-v')).replace(/[^\d.]/g, '')) * (/K/.test(await text('.tiles .tile-v')) ? 1000 : 1);
@@ -900,7 +900,7 @@ function writeComparisonExports(dir) {
   });
 
   await testAsync('sample data: date and site pills explain the range is fixed', async () => {
-    await page.goto(base + 'app.html?demo'); await toApp();
+    await page.goto(base + 'app.html?demo=trailcraft'); await toApp();
     await page.click('#top-range-btn'); await page.waitForSelector('#scope-dialog[open]');
     assert.ok(/sample data/.test(await text('#scope-fixed-msg')), 'explains sample data');
     assert.ok(await page.isVisible('#scope-new') && !(await page.isVisible('#scope-go')), 'offers a new analysis');
@@ -974,7 +974,7 @@ function writeComparisonExports(dir) {
     const errs = []; p5.on('pageerror', e => errs.push(e.message));
     p5.on('dialog', d => d.accept());
     const t5 = sel => p5.$eval(sel, e => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
-    await p5.goto(base + 'app.html?demo');
+    await p5.goto(base + 'app.html?demo=trailcraft');
     await p5.waitForSelector('#setup:not([hidden]), #app:not([hidden])', { timeout: 15000 });
     if (await p5.isVisible('#setup')) await p5.click('#setup-form button[type=submit]');
     await p5.waitForSelector('#app:not([hidden])');

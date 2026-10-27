@@ -251,11 +251,12 @@
     const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
     if (live) { const st = CL.get(clKey(D)); return { live: true, st, models: st ? st.models : new Map() }; }
     const { clusterOf } = tools(D);
-    return { live: false, st: { status: 'done' }, models: U.sectionsFromRows(A, D, sectioner(D), brandOf(A), clusterOf) };
+    return { live: false, st: { status: 'done' }, models: U.sectionsFromRows(A, D, sectioner(D), brandOf(A), clusterOf, { exact: D.source === 'demo' }) };
   }
   const sumM = list => { const o = { clicks: 0, impr: 0, posW: 0 }; list.forEach(x => { o.clicks += x.clicks; o.impr += x.impr; o.posW += x.pos * x.impr; }); return { clicks: o.clicks, impr: o.impr, ctr: o.impr ? o.clicks / o.impr * 100 : 0, pos: o.impr ? o.posW / o.impr : 0 }; };
 
   V.urlclusters = (A, D) => {
+    demoFill(D);
     Object.keys(TABLES).filter(k => k.startsWith('t-un-cl')).forEach(k => delete TABLES[k]);
     window.CW_LAST_A = A;
     const secOf = sectioner(D), { typeOf } = tools(D);
@@ -274,13 +275,14 @@
     const hasPrev = rows.some(r => r.m.prevBuckets);
     const typeFilter = [{ key: 'typeName', label: 'Page type', options: [...new Set(rows.map(r => r.typeName))].map(n => [n, n]), test: (r, v) => r.typeName === v }];
     const note = X.live ? `<div class="note">Exact Search Console totals per cluster (page filter per cluster). <b>Anonymised</b> = clicks Google reports for the cluster without a query; they belong to neither branded nor non-branded. Brand terms are set in Settings. Loaded ${when(st.at)}.${st.error ? `<br><span class="start-error">Some clusters failed: ${esc(st.error)}</span>` : ''} <button class="btn-quiet sm" type="button" id="un-cl-reload">Reload</button></div>`
-      : `<div class="note"><b>Estimate.</b> ${D.source === 'demo' ? 'Sample site, so the Unstop clusters mostly fall under Other. ' : ''}Without a Search Console connection, cluster totals come from the page report and the branded split from query × page rows. Connect Search Console for exact branded / non-branded totals per cluster.</div>`;
+      : D.source === 'demo' ? `<div class="note"><b>Sample data.</b> ${D.sampleOf === 'unstop' ? 'Unstop’s URL structure with generated numbers, computed the same way as a live connection.' : 'Fictional site, so the Unstop clusters mostly fall under Other.'} Connect Search Console for real numbers.</div>`
+      : `<div class="note"><b>Estimate.</b> Without a Search Console connection, cluster totals come from the page report and the branded split from query × page rows. Connect Search Console for exact branded / non-branded totals per cluster.</div>`;
     const bar = (b, n) => { const t = b + n; return t ? `<span class="un-bar" title="Non-branded ${pct1(n / t * 100)}"><i style="width:${(n / t * 100).toFixed(1)}%"></i></span>` : ''; };
     const html = intro + note +
       `<section class="panel"><div class="panel-h"><h2>By page type</h2><p>Sum of the clusters below. Never read the sitewide total on its own.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page type</th><th class="r">Clusters</th><th class="r">All clicks</th><th class="r">Non-branded clicks</th><th class="r">NB impr.</th><th class="r">NB CTR</th><th class="r">NB position</th><th class="r">Branded clicks</th><th class="r">Branded CTR</th>${X.live ? '<th class="r">Anonymised</th>' : ''}<th class="r">NB top 10</th><th class="r">NB 11–20</th><th>Non-branded share</th></tr></thead><tbody>
         ${trows.map(t => `<tr><td><b>${esc(t.name)}</b></td><td class="r">${t.n}</td><td class="r">${fmtN(t.tot.clicks)}</td><td class="r">${fmtN(Math.round(t.nb.clicks))}</td><td class="r">${fmtN(Math.round(t.nb.impr))}</td><td class="r">${pct1(t.nb.ctr)}</td><td class="r">${t.nb.impr ? posTag(t.nb.pos) : '—'}</td><td class="r">${fmtN(Math.round(t.b.clicks))}</td><td class="r">${pct1(t.b.ctr)}</td>${X.live ? `<td class="r">${fmtN(t.anon)}</td>` : ''}<td class="r">${fmtN(t.n10)}</td><td class="r">${fmtN(t.n11)}</td><td>${bar(t.b.clicks, t.nb.clicks)}</td></tr>`).join('')}
       </tbody></table></div></div></section>` +
-      `<section class="panel"><div class="panel-h"><h2>Clusters: clicks, impressions, CTR, position</h2><p>Non-branded first. ${X.live ? '' : 'Branded / non-branded are estimates.'}</p></div>
+      `<section class="panel"><div class="panel-h"><h2>Clusters: clicks, impressions, CTR, position</h2><p>Non-branded first. ${X.live || D.source === 'demo' ? '' : 'Branded / non-branded are estimates.'}</p></div>
         ${table('t-un-clv', [
         { k: 'typeName', l: 'Page type' },
         { k: 'name', l: 'Cluster', f: r => `<a href="#un-cl-${esc(r.id)}" data-cl="${esc(r.id)}"><b>${esc(r.name)}</b></a>` },
@@ -395,6 +397,7 @@
   }
 
   V.ga4 = (A, D) => {
+    demoFill(D);
     window.CW_LAST_A = A;
     Object.keys(TABLES).filter(k => k.startsWith('t-un-g')).forEach(k => delete TABLES[k]);
     const g = GA.get(D.site), s = settings(D.site);
@@ -577,6 +580,9 @@
   const MU = window.UN_MOE;
   const MOELIVE = new Map(); // site → { status, error, dashboards, dash, tables: { id: { name, tbl, error } }, at }
   const moeCfg = s => ({ mode: 'proxy', proxy: '', dc: '01', workspace: '', dashboard: '', maps: {}, ...(s.moe || {}) });
+  // In the sample, MoEngage is a generated dashboard held in memory; mappings are not saved.
+  const moeCfgFor = D => { const c = moeCfg(settings(D.site)), L = MOELIVE.get(D.site); return L && L.demo ? { ...c, mode: 'demo', dashboard: 'sample', maps: L.maps || {} } : c; };
+  function setMaps(D, maps) { const L = MOELIVE.get(D.site); if (L && L.demo) { L.maps = maps; return; } const s = settings(D.site), c = moeCfg(s); c.maps = maps; s.moe = c; save(D.site, s); }
   const moeKey = () => { try { return sessionStorage.getItem('un:moe-key') || ''; } catch (e) { return ''; } };
   function googleTok() {
     for (const k of ['un:tok', 'un:ga-tok']) { try { const v = JSON.parse(sessionStorage.getItem(k)); if (v && v.t && v.exp > Date.now() + 30000) return v.t; } catch (e) { } }
@@ -625,7 +631,7 @@
   // Live MoEngage values for the funnel (null when nothing is mapped or loaded).
   function moeLive(D) {
     const L = MOELIVE.get(D.site); if (!L || !L.tables) return null;
-    const c = moeCfg(settings(D.site));
+    const c = moeCfgFor(D);
     const tbls = {}; Object.entries(L.tables).forEach(([k, v]) => { if (v.tbl) tbls[k] = v.tbl; });
     const m = MU.metrics(c.maps, tbls);
     return Object.keys(m).length ? { m, at: L.at } : null;
@@ -639,10 +645,10 @@
   }
 
   function moeLiveBlock(D) {
-    const s = settings(D.site), c = moeCfg(s), L = MOELIVE.get(D.site) || {};
-    const ready = moeReady(c);
+    const s = settings(D.site), c = moeCfgFor(D), L = MOELIVE.get(D.site) || {};
+    const ready = L.demo || moeReady(c);
     const dcOpt = MU.DCS.map(d => `<option value="${d}" ${c.dc === d ? 'selected' : ''}>DC-${d}</option>`).join('');
-    const conn = `<details class="un-moe-conn" ${ready ? '' : 'open'}><summary>${ready ? `Connection: ${c.mode === 'proxy' ? 'Unstop proxy · ' + esc(c.proxy) : 'direct · workspace ' + esc(c.workspace) + ' · DC-' + esc(c.dc)}` : 'Connect MoEngage'}</summary>
+    const conn = `<details class="un-moe-conn" ${ready ? '' : 'open'}><summary>${L.demo ? 'Sample dashboard (generated charts; connect MoEngage for real ones)' : ready ? `Connection: ${c.mode === 'proxy' ? 'Unstop proxy · ' + esc(c.proxy) : 'direct · workspace ' + esc(c.workspace) + ' · DC-' + esc(c.dc)}` : 'Connect MoEngage'}</summary>
       <form id="un-moe-conn" class="un-grid2">
         <fieldset class="field"><span>How to connect</span>
           <label class="check"><input type="radio" name="un-moe-mode" value="proxy" ${c.mode === 'proxy' ? 'checked' : ''}> Through the Unstop proxy (recommended: the API key stays on the server; only people with access to Unstop’s Search Console or GA4 get data)</label>
@@ -665,8 +671,8 @@
       const opts = (L.dashboards || []).map(d => `<option value="${esc(d.id)}" ${d.id === c.dashboard ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
       body += `<div class="un-row">
         <label class="field"><span>Dashboard</span>${opts ? `<select id="un-moe-dash"><option value="">Choose a dashboard…</option>${opts}</select>` : `<input type="text" id="un-moe-dash" value="${esc(c.dashboard)}" placeholder="Dashboard ID" spellcheck="false">`}</label>
-        <button class="btn-primary sm" type="button" id="un-moe-load">${c.dashboard ? 'Refresh data' : 'Load dashboards'}</button>
-        ${c.dashboard && L.status === 'ok' ? '<button class="btn-quiet" type="button" id="un-moe-fresh" title="Asks MoEngage to recompute every chart instead of using its cache (slower)">Recompute charts</button>' : ''}
+        ${L.demo ? '' : `<button class="btn-primary sm" type="button" id="un-moe-load">${c.dashboard ? 'Refresh data' : 'Load dashboards'}</button>`}
+        ${!L.demo && c.dashboard && L.status === 'ok' ? '<button class="btn-quiet" type="button" id="un-moe-fresh" title="Asks MoEngage to recompute every chart instead of using its cache (slower)">Recompute charts</button>' : ''}
         <span class="progress" id="un-moe-prog" role="status">${L.status === 'loading' ? 'Loading…' : L.at ? 'Loaded ' + when(L.at) : ''}</span>
       </div>`;
       if (L.status === 'error') body += `<p class="start-error" role="alert">${esc(L.error)}</p>`;
@@ -692,7 +698,7 @@
           const t = x.tbl; return `<details><summary>${esc(x.name)}${x.type ? ` <small class="un-n">${esc(x.type)}</small>` : ''} <span class="un-n">${fmtN(t.rows.length)} rows · ${t.columns.length} columns</span></summary>${t.rows.length ? `<div class="tw"><table class="un-mini"><thead><tr>${t.columns.slice(0, 14).map(col => `<th class="${col.numeric ? 'r' : ''}">${esc(col.key)}</th>`).join('')}</tr></thead><tbody>${t.rows.slice(0, 40).map(r => `<tr>${t.columns.slice(0, 14).map(col => `<td class="${col.numeric ? 'r' : ''}">${esc(r[col.key] == null ? '' : r[col.key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${t.rows.length > 40 ? `<p class="hint">First 40 of ${fmtN(t.rows.length)} rows.</p>` : ''}` : '<p class="empty">This chart returned no rows.</p>'}</details>`; }).join('')}</div>`;
       } else if (c.dashboard && L.status === 'ok') body += '<p class="empty">This dashboard has no charts, or none could be read.</p>';
     }
-    return `<section class="panel un-moe-live"><div class="panel-h"><h2>MoEngage live ${L.status === 'ok' && c.dashboard ? chip('live') : ready ? '' : chip('none')}</h2><p>Reads charts from a MoEngage custom dashboard through MoEngage’s Custom Dashboards API, then maps them to the funnel metrics below.</p></div><div class="panel-b">${conn}${body}</div></section>`;
+    return `<section class="panel un-moe-live"><div class="panel-h"><h2>MoEngage live ${L.demo ? chip('sample') : L.status === 'ok' && c.dashboard ? chip('live') : ready ? '' : chip('none')}</h2><p>Reads charts from a MoEngage custom dashboard through MoEngage’s Custom Dashboards API, then maps them to the funnel metrics below.</p></div><div class="panel-b">${conn}${body}</div></section>`;
   }
   function moeLiveMount(D) {
     const $ = id => document.getElementById(id);
@@ -721,14 +727,14 @@
     if (mf) {
       // changing the chart refreshes that row's column lists
       mf.querySelectorAll('[data-k=chart]').forEach(sel => sel.addEventListener('change', () => {
-        const s = settings(D.site), c = moeCfg(s), id = sel.closest('tr').dataset.t;
-        c.maps = { ...c.maps, [id]: { ...(c.maps[id] || {}), chart: sel.value, column: '', filterCol: '' } }; s.moe = c; save(D.site, s); rerender();
+        const c = moeCfgFor(D), id = sel.closest('tr').dataset.t;
+        setMaps(D, { ...c.maps, [id]: { ...(c.maps[id] || {}), chart: sel.value, column: '', filterCol: '' } }); rerender();
       }));
       mf.addEventListener('submit', e => {
         e.preventDefault();
-        const s = settings(D.site), c = moeCfg(s), maps = {};
+        const maps = {};
         mf.querySelectorAll('tr[data-t]').forEach(tr => { const m = {}; tr.querySelectorAll('[data-k]').forEach(i => { if (i.value.trim()) m[i.dataset.k] = i.value.trim(); }); if (m.chart) maps[tr.dataset.t] = m; });
-        c.maps = maps; s.moe = c; save(D.site, s); rerender();
+        setMaps(D, maps); rerender();
       });
     }
     moeAuto(D);
@@ -736,6 +742,7 @@
 
   function moeOpt(s) { return { profileThreshold: +s.moeThreshold || 80, organicSources: s.organicSources ? s.organicSources.split(',').map(x => x.trim()).filter(Boolean) : undefined }; }
   V.quality = (A, D) => {
+    demoFill(D);
     window.CW_LAST_A = A;
     Object.keys(TABLES).filter(k => k.startsWith('t-un-q')).forEach(k => delete TABLES[k]);
     const s = settings(D.site), m = MOE.get(D.site);
@@ -811,15 +818,42 @@
   }
   function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 
+
+  // ── sample data: fill GA4, MoEngage export and a MoEngage dashboard so every screen has numbers ──
+  function sampleMoeLive() {
+    const t = r => MU.table({ data: r });
+    const months = ['2026-07', '2026-08', '2026-09'];
+    return { status: 'ok', demo: true, at: Date.now(), dashboards: [{ id: 'sample', name: 'SEO funnel (sample)' }], dash: { name: 'SEO funnel (sample)' },
+      tables: {
+        c1: { name: 'Sign-ups by source', type: 'Session & Source', tbl: t([{ source: 'google / organic', signups: 48210 }, { source: 'bing / organic', signups: 1630 }, { source: '(direct) / (none)', signups: 21900 }, { source: 'google / cpc', signups: 9800 }, { source: 'instagram / social', signups: 7400 }, { source: 'whatsapp / referral', signups: 5100 }, { source: 'chatgpt.com / referral', signups: 640 }]) },
+        c2: { name: 'Sign up → Profile completed', type: 'Funnels', tbl: t([{ channel: 'organic', conversion: 0.58 }, { channel: 'paid', conversion: 0.41 }, { channel: 'direct', conversion: 0.52 }, { channel: 'social', conversion: 0.37 }]) },
+        c3: { name: 'Sign up → Registered or applied (7 days)', type: 'Funnels', tbl: t([{ channel: 'organic', conversion: 0.44 }, { channel: 'paid', conversion: 0.29 }, { channel: 'direct', conversion: 0.39 }, { channel: 'social', conversion: 0.26 }]) },
+        c4: { name: 'Retention of new signups', type: 'Retention', tbl: t(months.flatMap(m => [{ cohort: m, source: 'organic', day_7: 0.36, day_30: 0.21 }, { cohort: m, source: 'paid', day_7: 0.27, day_30: 0.13 }])) }
+      },
+      maps: {
+        moeSignups: { chart: 'c1', column: 'signups', agg: 'sum', filterCol: 'source', filterText: 'organic', compareText: 'cpc, social, referral' },
+        profile: { chart: 'c2', column: 'conversion', agg: 'avg', filterCol: 'channel', filterText: 'organic', compareText: 'paid' },
+        act7: { chart: 'c3', column: 'conversion', agg: 'avg', filterCol: 'channel', filterText: 'organic', compareText: 'paid' },
+        ret30: { chart: 'c4', column: 'day_30', agg: 'avg', filterCol: 'source', filterText: 'organic', compareText: 'paid' }
+      } };
+  }
+  function demoFill(D) {
+    if (D.source !== 'demo' || D.sampleOf !== 'unstop') return;
+    if (!GA.has(D.site)) GA.set(D.site, { raw: sampleGa(D), property: 'sample', propertyName: 'Sample numbers', start: D.start, end: D.end, at: Date.now(), sample: true, failed: [] });
+    if (!MOE.has(D.site)) { const rows = sampleMoe(D); MOE.set(D.site, { rows, res: U.moeQuality(rows, moeOpt(settings(D.site))), name: 'Sample users', at: Date.now(), sample: true }); }
+    if (!MOELIVE.has(D.site)) MOELIVE.set(D.site, sampleMoeLive());
+  }
+
   // ════════════════════════════ FULL FUNNEL ════════════════════════════
   V.funnel = (A, D) => {
+    demoFill(D);
     Object.keys(TABLES).filter(k => k.startsWith('t-un-f')).forEach(k => delete TABLES[k]);
     window.CW_LAST_A = A;
     const { typeOf, s } = tools(D);
     const G = gscModel(A, D), ga = gaModel(D), g = GA.get(D.site), m = MOE.get(D.site), moe = m && m.res.ok ? m.res : null;
     const src = window.CW_SOURCE || {};
-    const ml = moeLive(D), mlv = ml ? ml.m : {}, mlc = moeCfg(s), mlL = MOELIVE.get(D.site);
-    const gscSt = D.source === 'api' ? 'live' : D.source === 'demo' ? 'sample' : 'file', gaSt = g ? (g.sample ? 'sample' : 'live') : 'none', moeSt = ml ? 'live' : m ? (m.sample ? 'sample' : 'file') : 'none';
+    const ml = moeLive(D), mlv = ml ? ml.m : {}, mlL = MOELIVE.get(D.site), mlSt = mlL && mlL.demo ? 'sample' : 'live';
+    const gscSt = D.source === 'api' ? 'live' : D.source === 'demo' ? 'sample' : 'file', gaSt = g ? (g.sample ? 'sample' : 'live') : 'none', moeSt = ml ? mlSt : m ? (m.sample ? 'sample' : 'file') : 'none';
     const gscAt = src.kind === 'api' ? Date.now() : null;
     const nbTot = A.totNB, bTot = A.totB;
     const site = A.site, ps = A.prevSite;
@@ -827,7 +861,8 @@
     const visUrls = G.vis.rows.reduce((a, r) => a + r.urls, 0), prevUrls = G.vis.rows.reduce((a, r) => a + (r.prevUrls || 0), 0);
     const sigs = ga ? ga.ev.stu + ga.ev.emp : null;
     const days = ga && g ? Math.round((new Date(g.end) - new Date(g.start)) / 864e5) + 1 : null;
-    const cost = parseFloat(String(s.monthlyCost).replace(/[^0-9.]/g, ''));
+    const demoCost = D.sampleOf === 'unstop' && !String(s.monthlyCost || '').trim();
+    const cost = demoCost ? 450000 : parseFloat(String(s.monthlyCost).replace(/[^0-9.]/g, ''));
     const pathTypes = new Set(s.pathTypes || []);
     const pathCov = ga && ga.total.sessions ? ga.types.filter(t => pathTypes.has(t.id)).reduce((a, t) => a + t.sessions, 0) / ga.total.sessions * 100 : null;
     const blogT = ga && ga.types.find(t => t.id === 'blog');
@@ -848,11 +883,11 @@
       stu: ga ? [fmtN(ga.ev.stu), U.chg(ga.ev.stu, ga.ev.yStu), gaSt, g.at, null, 'vs last year'] : null,
       emp: ga ? [fmtN(ga.ev.emp), U.chg(ga.ev.emp, ga.ev.yEmp), gaSt, g.at, null, 'vs last year'] : null,
       cvr: ga ? [pct1(ga.total.sessions ? sigs / ga.total.sessions * 100 : null), null, gaSt, g.at] : null,
-      cps: ga && cost > 0 && sigs ? ['₹' + fmtN(cost / (sigs * 30 / days)), null, 'input', g.at, null, `₹${fmtN(cost)} / month`] : null,
+      cps: ga && cost > 0 && sigs ? ['₹' + fmtN(cost / (sigs * 30 / days)), null, 'input', g.at, null, `₹${fmtN(cost)} / month${demoCost ? ' (sample cost)' : ''}`] : null,
       profile: moe && moe.seg.organic.profile ? [pct1(moe.seg.organic.profile.rate), moe.seg.other.profile ? moe.seg.organic.profile.rate - moe.seg.other.profile.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
       act7: moe && moe.seg.organic.act7 ? [pct1(moe.seg.organic.act7.rate), moe.seg.other.act7 ? moe.seg.organic.act7.rate - moe.seg.other.act7.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
       ret30: moe && moe.seg.organic.ret30 ? [pct1(moe.seg.organic.ret30.rate), moe.seg.other.ret30 ? moe.seg.organic.ret30.rate - moe.seg.other.ret30.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
-      ...Object.fromEntries(['moeSignups', 'profile', 'act7', 'ret30'].filter(k => mlv[k] && mlv[k].value != null).map(k => { const x = mlv[k]; return [k, x.rate ? [pct1(x.value), x.compare != null ? x.value - x.compare : null, 'live', ml.at, 'pp', x.compare != null ? 'vs compared rows' : 'MoEngage live'] : [fmtN(Math.round(x.value)), null, 'live', ml.at, null, x.compare != null ? 'vs ' + fmtN(Math.round(x.compare)) + ' compared' : 'MoEngage live']]; })),
+      ...Object.fromEntries(['moeSignups', 'profile', 'act7', 'ret30'].filter(k => mlv[k] && mlv[k].value != null).map(k => { const x = mlv[k]; return [k, x.rate ? [pct1(x.value), x.compare != null ? x.value - x.compare : null, mlSt, ml.at, 'pp', x.compare != null ? 'vs compared rows' : 'MoEngage live'] : [fmtN(Math.round(x.value)), null, mlSt, ml.at, null, x.compare != null ? 'vs ' + fmtN(Math.round(x.compare)) + ' compared' : 'MoEngage live']]; })),
       engRate: ga ? [pct1(ga.total.engRate), null, gaSt, g.at] : null,
       pps: ga ? [ga.total.pps ? ga.total.pps.toFixed(2) : '—', null, gaSt, g.at] : null,
       returning: ga && ret ? [pct1(ret.share), ga.returning.yoy ? ret.share - ga.returning.yoy.share : null, gaSt, g.at, 'pp', 'vs last year'] : null,

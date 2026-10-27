@@ -31,7 +31,10 @@
 
   // ── start screen ──
   function startError(msg) { const e = $('start-error'); e.textContent = msg; e.hidden = !msg; }
-  $('btn-demo').addEventListener('click', () => { loaded(window.CW_DEMO.build()); });
+  // Sample data: the Unstop-shaped sample by default; ?demo=trailcraft keeps Clickwise's original sample site.
+  const demoKind = () => { const m = location.search.match(/[?&]demo=([a-z]+)/); if (m) return m[1] === 'trailcraft' ? 'trailcraft' : 'unstop'; return sess.get('demo-kind') || 'unstop'; };
+  const demoData = k => { k = k || demoKind(); sess.set('demo-kind', k); return k === 'trailcraft' || !window.CW_DEMO.unstop ? window.CW_DEMO.build() : window.CW_DEMO.unstop(); };
+  $('btn-demo').addEventListener('click', () => { loaded(demoData('unstop')); });
 
   const dz = $('dropzone'), fi = $('file-input');
   ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
@@ -600,7 +603,7 @@
     // comparison period and data connection, shown in the top bar (presentation only)
     $('top-cmp').textContent = D.prevStart && D.prevEnd ? `vs previous period (${fmtDate(D.prevStart)} – ${fmtDate(D.prevEnd)})` : '';
     $('top-cmp').hidden = !(D.prevStart && D.prevEnd);
-    const conn = D.source === 'api' ? ['live', 'GSC connected', `Loaded ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · read-only`] : D.source === 'demo' ? ['sample', 'Sample data', 'Fictional site'] : ['file', 'Uploaded export', 'Not live: connect Search Console for fresh data'];
+    const conn = D.source === 'api' ? ['live', 'GSC connected', `Loaded ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · read-only`] : D.source === 'demo' ? ['sample', 'Sample data', D.sampleOf === 'unstop' ? 'Unstop URLs, generated numbers' : 'Fictional site'] : ['file', 'Uploaded export', 'Not live: connect Search Console for fresh data'];
     $('top-conn').className = 'top-conn ' + conn[0]; $('top-conn-t').textContent = conn[1]; $('top-conn-s').textContent = conn[2]; $('top-conn').hidden = false;
     // API analyses can switch folder from the top bar; uploads only show the scope they came with
     const canSwitch = D.source === 'api';
@@ -714,7 +717,7 @@
   });
 
   // events from the automation screens
-  document.addEventListener('un:demo', () => { history.replaceState(null, '', location.pathname + location.hash); loaded(window.CW_DEMO.build()); });
+  document.addEventListener('un:demo', () => { history.replaceState(null, '', location.pathname + location.hash); loaded(demoData('unstop')); });
   document.addEventListener('un:ignore', e => {
     if (!S || !D) return;
     S = { ...S, ignore: (e.detail || []).map(String).map(s => s.trim()).filter(Boolean).slice(0, 50) };
@@ -747,7 +750,7 @@
   function restore() {
     if (location.hash.length <= 1 || /[?&]demo\b/.test(location.search)) return false;
     const src = sess.get('src');
-    if (src === 'demo') { document.addEventListener('DOMContentLoaded', () => { RESTORING = true; loaded(window.CW_DEMO.build()); }); return true; }
+    if (src === 'demo') { document.addEventListener('DOMContentLoaded', () => { RESTORING = true; loaded(demoData()); }); return true; }
     if (src === 'file') { const f = sess.get('file'); if (f && f.Q) { document.addEventListener('DOMContentLoaded', () => { RESTORING = true; loaded(f); }); return true; } }
     if (src === 'api') {
       const o = sess.get('last'), tk = sess.get('tok');
@@ -770,5 +773,5 @@
 
   // Deep link straight into the sample: app.html?demo
   // (deferred libraries such as Chart.js are ready by DOMContentLoaded)
-  if (/[?&]demo\b/.test(location.search)) document.addEventListener('DOMContentLoaded', () => loaded(window.CW_DEMO.build()));
+  if (/[?&]demo\b/.test(location.search)) document.addEventListener('DOMContentLoaded', () => loaded(demoData()));
 })();
