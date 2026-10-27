@@ -16,7 +16,7 @@
     types: null, sections: null, rootArticles: true, clusters: null,
     events: JSON.parse(JSON.stringify(CFG.events || {})),
     ga4Property: CFG.ga4PropertyId || '', pricingPaths: (CFG.pricingPaths || []).slice(), aiSources: (CFG.aiSources || []).slice(),
-    pathTypes: ['opp', 'emp', 'org'], pathSections: null, owners: {}, monthlyCost: '', moeThreshold: 80, organicSources: ''
+    pathTypes: ['opp', 'emp', 'org'], pathSections: null, owners: {}, monthlyCost: '', empCostShare: '', moeThreshold: 80, organicSources: ''
   });
   function settings(site) { let s = null; try { s = JSON.parse(localStorage.getItem(KEY(site))); } catch (e) { } const d = DEF(); return s ? { ...d, ...s, events: { ...d.events, ...(s.events || {}) } } : d; }
   function save(site, s) { try { localStorage.setItem(KEY(site), JSON.stringify(s)); } catch (e) { } }
@@ -1060,6 +1060,108 @@
     if (!MOELIVE.has(D.site)) MOELIVE.set(D.site, sampleMoeLive());
   }
 
+  // ════════════════════════════ USER ACQUISITION ════════════════════════════
+  // Organic signups split student vs employer, conversion rate from organic landing pages, cost per signup
+  // for each business, and signup quality against other channels (MoEngage). Shared by Full funnel.
+  function acqModel(D) {
+    const s = settings(D.site), g = GA.get(D.site), ga = gaModel(D);
+    const out = { ga, g };
+    if (ga) {
+      const empT = ga.types.find(t => t.id === 'emp') || { sessions: 0, ySessions: 0 };
+      const stuSes = ga.total.sessions - empT.sessions, yStuSes = ga.yoy ? ga.yoy.sessions - empT.ySessions : null;
+      out.stu = ga.ev.stu; out.emp = ga.ev.emp; out.yStu = ga.ev.yStu; out.yEmp = ga.ev.yEmp;
+      out.stuSes = stuSes; out.empSes = empT.sessions;
+      out.cvrStu = stuSes ? ga.ev.stu / stuSes * 100 : null; out.yCvrStu = yStuSes ? ga.ev.yStu / yStuSes * 100 : null;
+      out.cvrEmp = empT.sessions ? ga.ev.emp / empT.sessions * 100 : null; out.yCvrEmp = empT.ySessions ? ga.ev.yEmp / empT.ySessions * 100 : null;
+      out.days = Math.round((new Date(g.end) - new Date(g.start)) / 864e5) + 1;
+    }
+    const sample = D.sampleOf === 'unstop';
+    out.costSample = sample && !String(s.monthlyCost || '').trim();
+    out.cost = out.costSample ? 450000 : parseFloat(String(s.monthlyCost || '').replace(/[^0-9.]/g, '')) || null;
+    const sh = String(s.empCostShare == null ? '' : s.empCostShare).trim();
+    out.shareSample = sample && !sh;
+    out.empShare = out.shareSample ? 30 : sh !== '' && isFinite(+sh) ? Math.max(0, Math.min(100, +sh)) : null;
+    if (ga && out.cost) {
+      const per30 = n => n * 30 / out.days;
+      if (out.empShare != null) {
+        out.cpsStu = out.stu ? out.cost * (1 - out.empShare / 100) / per30(out.stu) : null;
+        out.cpsEmp = out.emp ? out.cost * (out.empShare / 100) / per30(out.emp) : null;
+      } else out.cpsAll = (out.stu + out.emp) ? out.cost / per30(out.stu + out.emp) : null;
+    }
+    // quality: MoEngage live mappings first (with their comparison rows), else the user export
+    const ml = moeLive(D), m = MOE.get(D.site), res = m && m.res && m.res.ok ? m.res : null, pairs = {};
+    let qsrc = null;
+    ['profile', 'act7', 'ret30'].forEach(k => {
+      const x = ml && ml.m[k];
+      if (x && x.value != null && x.compare != null) { pairs[k] = { organic: x.value, other: x.compare }; qsrc = qsrc || ((MOELIVE.get(D.site) || {}).demo ? 'sample' : 'live'); }
+      else if (res && res.seg.organic[k] && res.seg.other[k]) { pairs[k] = { organic: res.seg.organic[k].rate, other: res.seg.other[k].rate }; qsrc = qsrc || (m.sample ? 'sample' : 'file'); }
+    });
+    out.pairs = pairs; out.verdict = U.qualityVerdict(pairs); out.qsrc = qsrc; out.moe = res; out.moeName = m && m.name;
+    out.moeSignups = ml && ml.m.moeSignups && ml.m.moeSignups.value != null ? ml.m.moeSignups.value : null;
+    return out;
+  }
+  const QLABEL = { profile: 'Profile completion', act7: 'First registration or application within 7 days', ret30: '30-day retention' };
+
+  V.acquisition = (A, D) => {
+    demoFill(D);
+    window.CW_LAST_A = A;
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-aq')).forEach(k => delete TABLES[k]);
+    const s = settings(D.site), X = acqModel(D), ga = X.ga;
+    const intro = head('User acquisition', 'Organic signups, signup conversion rate from organic landing pages and cost per organic signup, always split into students and employers / recruiters, plus signup quality against other channels. If organic users retain worse than other sources, volume alone does not count as a win.');
+    const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
+    const pts = (a, b) => a == null || b == null ? '' : `<span class="un-d ${a - b > 0 ? 'up' : a - b < 0 ? 'down' : 'flat'}">${a - b > 0 ? '+' : ''}${(a - b).toFixed(2)} pts</span>`;
+    const rs = v => v == null ? '—' : '₹' + fmtN(Math.round(v));
+    const costNote = !X.cost ? '<a href="#funnelsetup">Add the monthly SEO cost</a>' : X.empShare == null ? '<a href="#funnelsetup">Set the employer share of cost</a>' : `₹${fmtN(X.cost)} / month · ${X.empShare}% employer${X.costSample || X.shareSample ? ' (sample cost)' : ''}`;
+    let html = intro + scopePicker(A, D);
+    if (!ga) html += '<div class="note"><a href="#ga4">Connect GA4</a> for signups, conversion rates and cost per signup. Signup quality below works from MoEngage on its own.</div>';
+    else html += (X.g.sample ? '<div class="note"><b>Sample numbers.</b> Connect GA4 and MoEngage for real data.</div>' : '') +
+      `<h2 class="un-sub">Students</h2><div class="un-kpis">
+        ${kp('Organic student signups', fmtN(Math.round(X.stu)), dchip(U.chg(X.stu, X.yStu)), 'vs last year')}
+        ${kp('Student signup CVR', pct1(X.cvrStu), pts(X.cvrStu, X.yCvrStu), `of ${fmtN(Math.round(X.stuSes))} sessions on student-facing pages`)}
+        ${kp('Cost per student signup', X.cpsStu != null ? rs(X.cpsStu) : X.cpsAll != null ? rs(X.cpsAll) + '*' : '—', '', X.cpsAll != null ? '* all signups; ' + costNote : costNote)}
+        ${kp('Organic signups in MoEngage', X.moeSignups != null ? fmtN(Math.round(X.moeSignups)) : '—', '', X.moeSignups != null ? 'second source, not deduplicated with GA4' : '<a href="#quality">Map a MoEngage chart</a>')}
+      </div>
+      <h2 class="un-sub">Employers &amp; recruiters</h2><div class="un-kpis">
+        ${kp('Organic employer signups', fmtN(Math.round(X.emp)), dchip(U.chg(X.emp, X.yEmp)), 'vs last year')}
+        ${kp('Employer signup CVR', pct1(X.cvrEmp), pts(X.cvrEmp, X.yCvrEmp), `of ${fmtN(Math.round(X.empSes))} sessions on employer-facing pages`)}
+        ${kp('Cost per employer signup', X.cpsEmp != null ? rs(X.cpsEmp) : '—', '', costNote)}
+        ${kp('Demo + contact (organic)', fmtN(Math.round(ga.ev.demo + ga.ev.contact)), dchip(U.chg(ga.ev.demo + ga.ev.contact, ga.ev.yDemo + ga.ev.yContact)), 'leads, see Full funnel')}
+      </div>`;
+    // quality verdict
+    const V0 = X.verdict;
+    html += `<section class="panel un-verdict ${V0 ? (V0.ok ? 'ok' : 'bad') : ''}"><div class="panel-h"><h2>Signup quality: organic vs other channels ${X.qsrc ? chip(X.qsrc) : chip('none')}</h2><p>${V0 ? (V0.ok ? '<b>Organic signups are at least as good as other channels on every quality measure, so volume growth counts.</b>' : `<b>Organic is worse on ${V0.worse} of ${V0.rows.length} quality measure${V0.rows.length === 1 ? '' : 's'}. Signup volume alone does not count as a win until this closes.</b>`) : 'Connect MoEngage (live dashboard or user export) on <a href="#quality">Signup quality</a> to compare organic signups with other channels.'}</p></div>
+      ${V0 ? `<div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Measure</th><th class="r">Organic</th><th class="r">Other channels</th><th class="r">Gap</th><th>Verdict</th></tr></thead><tbody>${V0.rows.map(r => `<tr><td><b>${esc(QLABEL[r.k])}</b></td><td class="r">${pct1(r.organic)}</td><td class="r">${pct1(r.other)}</td><td class="r">${pts(r.organic, r.other)}</td><td>${r.state === 'worse' ? '<span class="un-st bad">Worse</span>' : r.state === 'better' ? '<span class="un-st live">Better</span>' : '<span class="un-st none">Level</span>'}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+      ${X.moe ? `<div class="panel-b"><h3 class="un-sub">Students vs employers (${esc(X.moeName || 'MoEngage export')})</h3><div class="tw"><table class="un-mini"><thead><tr><th>Segment</th><th class="r">Signups</th><th class="r">Profile complete</th><th class="r">7-day activation</th><th class="r">30-day retention</th></tr></thead><tbody>${[['Organic students', 'orgStudent'], ['Other channels: students', 'othStudent'], ['Organic employers / recruiters', 'orgEmployer'], ['Other channels: employers / recruiters', 'othEmployer']].map(([l, k]) => { const x = X.moe.seg[k]; const r = v => v ? pct1(v.rate) : '—'; return `<tr><td><b>${esc(l)}</b></td><td class="r">${fmtN(x.users)}</td><td class="r">${r(x.profile)}</td><td class="r">${r(x.act7)}</td><td class="r">${r(x.ret30)}</td></tr>`; }).join('')}</tbody></table></div>
+        ${ga && X.moe.seg.organic.ret30 ? `<p class="hint">Retained organic signups (signups × organic 30-day retention): about <b>${fmtN(Math.round(X.stu * X.moe.seg.orgStudent.ret30.rate / 100 || 0))}</b> students and <b>${fmtN(Math.round(X.emp * ((X.moe.seg.orgEmployer.ret30 || {}).rate || 0) / 100))}</b> employers still active after 30 days. Track this next to raw volume.</p>` : ''}
+        <p class="hint">Monthly cohorts and acquisition sources: <a href="#quality">Signup quality</a>.</p></div>` : ''}
+    </section>`;
+    if (ga) {
+      // by page type / cluster / folder, students and employers separately
+      const so = sectioner(D);
+      const grp = keyFn => { const m = new Map(); ga.pages.forEach(p => { const k = keyFn(p); const o = m.get(k.id) || { ...k, sessions: 0, ySessions: 0, stu: 0, emp: 0 }; o.sessions += p.sessions; o.ySessions += p.ySessions; o.stu += p.stu; o.emp += p.emp; m.set(k.id, o); }); return [...m.values()].map(o => ({ ...o, signups: o.stu + o.emp, cvr: o.sessions ? (o.stu + o.emp) / o.sessions * 100 : null, cvrStu: o.sessions ? o.stu / o.sessions * 100 : null, cvrEmp: o.sessions ? o.emp / o.sessions * 100 : null, dSessions: U.chg(o.sessions, o.ySessions) })).filter(o => o.sessions > 0 || o.signups > 0); };
+      const cols = first => first.concat([
+        { k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSessions) },
+        { k: 'stu', l: 'Student signups', r: 1, f: r => fmtN(Math.round(r.stu)) }, { k: 'cvrStu', l: 'Student CVR', r: 1, f: r => pct1(r.cvrStu) },
+        { k: 'emp', l: 'Employer signups', r: 1, f: r => fmtN(Math.round(r.emp)) }, { k: 'cvrEmp', l: 'Employer CVR', r: 1, f: r => pct1(r.cvrEmp) },
+        { k: 'cvr', l: 'All signups CVR', r: 1, f: r => pct1(r.cvr) }]);
+      const tabs = [['cluster', 'By cluster'], ['folder', 'By folder'], ['type', 'By page type'], ['page', 'By landing page']];
+      const tab = fParams().get('by') || 'cluster';
+      let tbl;
+      if (tab === 'type') tbl = table('t-un-aqt', cols([{ k: 'name', l: 'Page type', f: r => `<b>${esc(r.name)}</b>` }]), grp(p => ({ id: p.type, name: p.typeName })), { search: false, sort: 'signups', file: 'unstop-signups-by-page-type', pageSize: 30 });
+      else if (tab === 'folder') tbl = table('t-un-aqt', cols([{ k: 'cluster', l: 'Cluster', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder }]), grp(p => { const id = so(p.path), f = so.folderOf(p.path); return { id: id + '|' + f, cluster: so.label(id), folder: f }; }), { sort: 'signups', file: 'unstop-signups-by-folder', pageSize: 40, searchKeys: ['cluster', 'folder'], placeholder: 'Filter clusters or folders', filters: [clusterFilter(D)] });
+      else if (tab === 'page') tbl = table('t-un-aqt', cols([{ k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }]), withCluster(D, grp(p => ({ id: p.path, path: p.path })), r => r.path), { sort: 'signups', file: 'unstop-signups-by-landing-page', pageSize: 25, searchKeys: ['path', 'cluster'], placeholder: 'Filter URLs', filters: [clusterFilter(D)] });
+      else tbl = table('t-un-aqt', cols([{ k: 'name', l: 'Cluster', f: r => `<a href="${esc(focusHref({ c: r.id }))}"><b>${esc(r.name)}</b></a>`, csv: r => r.name }]), grp(p => { const id = so(p.path); return { id, name: so.label(id) }; }), { search: false, sort: 'signups', file: 'unstop-signups-by-cluster', pageSize: 30 });
+      html += `<section class="panel"><div class="panel-h"><h2>Signups and conversion rate from organic landing pages</h2><p>Events counted in organic sessions, credited to the page the session landed on.</p></div>
+        <div class="panel-b"><div class="un-tabs" role="tablist">${tabs.map(([k, l]) => `<a role="tab" class="${k === tab ? 'on' : ''}" href="#acquisition?by=${k}">${l}</a>`).join('')}</div></div>${tbl}</section>`;
+      html += `<section class="panel"><div class="panel-h"><h2>Organic vs other channels</h2><p>Same dates and event lists across every GA4 channel.</p></div>
+        ${table('t-un-aqc', [{ k: 'channel', l: 'Channel', f: r => r.channel === 'Organic Search' ? `<b>${esc(r.channel)}</b>` : esc(r.channel) }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) },
+          { k: 'stu', l: 'Student signups', r: 1, f: r => fmtN(Math.round(r.stu)) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => fmtN(Math.round(r.emp)) },
+          { k: 'cvr', l: 'Signup CVR', r: 1, f: r => pct1(r.cvr) }, { k: 'engRate', l: 'Engagement rate', r: 1, f: r => pct1(r.engRate) }], ga.channels, { search: false, file: 'unstop-signups-by-channel', pageSize: 20 })}</section>`;
+    }
+    const mount = () => { scopeMount(D); ['t-un-aqt', 't-un-aqc'].forEach(drawTable); moeAuto(D); };
+    return { html, mount };
+  };
+
   // ════════════════════════════ FULL FUNNEL ════════════════════════════
   V.funnel = (A, D) => {
     demoFill(D);
@@ -1075,10 +1177,7 @@
     const site = A.site, ps = A.prevSite;
     const tr = G.ranks.total;
     const visUrls = G.vis.rows.reduce((a, r) => a + r.urls, 0), prevUrls = G.vis.rows.reduce((a, r) => a + (r.prevUrls || 0), 0);
-    const sigs = ga ? ga.ev.stu + ga.ev.emp : null;
-    const days = ga && g ? Math.round((new Date(g.end) - new Date(g.start)) / 864e5) + 1 : null;
-    const demoCost = D.sampleOf === 'unstop' && !String(s.monthlyCost || '').trim();
-    const cost = demoCost ? 450000 : parseFloat(String(s.monthlyCost).replace(/[^0-9.]/g, ''));
+    const AQ = acqModel(D);
     const pathCov = ga && ga.pathCov ? ga.pathCov.share : null;
     const blogT = ga && ga.types.find(t => t.id === 'blog');
     const ret = ga && ga.returning.cur;
@@ -1097,8 +1196,11 @@
       pathCov: ga ? [pct1(pathCov), ga.pathCov && ga.pathCov.yShare != null && pathCov != null ? pathCov - ga.pathCov.yShare : null, gaSt, g.at, 'pp', 'vs last year'] : null,
       stu: ga ? [fmtN(ga.ev.stu), U.chg(ga.ev.stu, ga.ev.yStu), gaSt, g.at, null, 'vs last year'] : null,
       emp: ga ? [fmtN(ga.ev.emp), U.chg(ga.ev.emp, ga.ev.yEmp), gaSt, g.at, null, 'vs last year'] : null,
-      cvr: ga ? [pct1(ga.total.sessions ? sigs / ga.total.sessions * 100 : null), null, gaSt, g.at] : null,
-      cps: ga && cost > 0 && sigs ? ['₹' + fmtN(cost / (sigs * 30 / days)), null, 'input', g.at, null, `₹${fmtN(cost)} / month${demoCost ? ' (sample cost)' : ''}`] : null,
+      cvrStu: ga ? [pct1(AQ.cvrStu), AQ.cvrStu != null && AQ.yCvrStu != null ? AQ.cvrStu - AQ.yCvrStu : null, gaSt, g.at, 'pp', 'vs last year'] : null,
+      cvrEmp: ga ? [pct1(AQ.cvrEmp), AQ.cvrEmp != null && AQ.yCvrEmp != null ? AQ.cvrEmp - AQ.yCvrEmp : null, gaSt, g.at, 'pp', 'vs last year'] : null,
+      cpsStu: ga && AQ.cpsStu != null ? ['₹' + fmtN(Math.round(AQ.cpsStu)), null, 'input', g.at, null, `${100 - AQ.empShare}% of ₹${fmtN(AQ.cost)} / month${AQ.costSample ? ' (sample)' : ''}`] : ga && AQ.cpsAll != null ? ['₹' + fmtN(Math.round(AQ.cpsAll)), null, 'input', g.at, null, 'all signups: set the employer cost share'] : null,
+      cpsEmp: ga && AQ.cpsEmp != null ? ['₹' + fmtN(Math.round(AQ.cpsEmp)), null, 'input', g.at, null, `${AQ.empShare}% of ₹${fmtN(AQ.cost)} / month${AQ.costSample ? ' (sample)' : ''}`] : null,
+      qcheck: AQ.verdict ? [AQ.verdict.ok ? 'Volume counts' : 'Volume is not a win', null, AQ.qsrc, (ml && ml.at) || (m && m.at), null, AQ.verdict.rows.map(r => `${{ profile: 'profile', act7: '7-day', ret30: '30-day' }[r.k]} ${r.gap > 0 ? '+' : ''}${r.gap.toFixed(1)} pts`).join(' · ')] : null,
       profile: moe && moe.seg.organic.profile ? [pct1(moe.seg.organic.profile.rate), moe.seg.other.profile ? moe.seg.organic.profile.rate - moe.seg.other.profile.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
       act7: moe && moe.seg.organic.act7 ? [pct1(moe.seg.organic.act7.rate), moe.seg.other.act7 ? moe.seg.organic.act7.rate - moe.seg.other.act7.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
       ret30: moe && moe.seg.organic.ret30 ? [pct1(moe.seg.organic.ret30.rate), moe.seg.other.ret30 ? moe.seg.organic.ret30.rate - moe.seg.other.ret30.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
@@ -1115,7 +1217,7 @@
     };
     const owners = s.owners || {};
     const stages = ['Visibility', 'Traffic', 'Signups', 'Engagement', 'Leads', 'Pipeline & revenue'];
-    const link = { Visibility: '#visibility', Traffic: '#ga4', Signups: '#ga4', Engagement: '#ga4', Leads: '#ga4', 'Pipeline & revenue': null };
+    const link = { Visibility: '#visibility', Traffic: '#ga4', Signups: '#acquisition', Engagement: '#ga4', Leads: '#ga4', 'Pipeline & revenue': null };
     const card = mt => {
       const v = V2[mt.id];
       const st = mt.later ? 'later' : v ? v[2] : mt.src === 'MoEngage' ? 'none' : mt.src === 'Cost input' ? 'input' : 'none';
@@ -1201,6 +1303,7 @@
         <fieldset class="field"><span>URL clusters with a clear conversion path (register, apply, post a job, book a demo)</span>${(() => { const ps = s.pathSections || U.DEFAULT_PATH_SECTIONS; return U.makeSectioner(s.sections).sections.filter(x => x.id !== 'other').map(x => `<label class="check"><input type="checkbox" data-path="${esc(x.id)}" ${ps.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join(''); })()}</fieldset>
         <div>
           <label class="field"><span>Monthly SEO cost in ₹ (content, agency, tools, team share)</span><input type="text" id="un-cost" inputmode="decimal" value="${esc(s.monthlyCost)}" placeholder="e.g. 450000"></label>
+          <label class="field"><span>Employer / recruiter share of that cost (%), for cost per employer signup</span><input type="number" id="un-cost-emp" min="0" max="100" value="${esc(s.empCostShare == null ? '' : s.empCostShare)}" placeholder="e.g. 30"></label>
           <label class="field"><span>Profile counts as complete at (%)</span><input type="number" id="un-moe-th" min="1" max="100" value="${esc(s.moeThreshold)}"></label>
           <label class="field"><span>Extra organic source words for MoEngage (optional)</span><input type="text" id="un-orgsrc" value="${esc(s.organicSources)}" placeholder="google, bing, organic, seo"></label>
         </div>
@@ -1225,7 +1328,7 @@
         n.aiSources = document.getElementById('un-ai').value.split(',').map(x => x.trim()).filter(Boolean);
         n.ga4Property = document.getElementById('un-prop').value.trim().replace(/^properties\//, '');
         n.pathSections = [...f.querySelectorAll('[data-path]')].filter(i => i.checked).map(i => i.dataset.path);
-        n.monthlyCost = document.getElementById('un-cost').value.trim();
+        n.monthlyCost = document.getElementById('un-cost').value.trim(); n.empCostShare = document.getElementById('un-cost-emp').value.trim();
         n.moeThreshold = +document.getElementById('un-moe-th').value || 80;
         n.organicSources = document.getElementById('un-orgsrc').value.trim();
         const owners = {}; f.querySelectorAll('[data-owner]').forEach(i => { const def = U.METRICS.find(x => x.id === i.dataset.owner); if (i.value.trim() && def && i.value.trim() !== def.owner) owners[i.dataset.owner] = i.value.trim(); }); n.owners = owners;

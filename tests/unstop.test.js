@@ -168,4 +168,12 @@ test('GA4: page type × device, × state, URL clusters and conversion-path cover
   const hk = M.sections.find(x => x.id === 'hackathons'); assert.equal(hk.path, true); assert.equal(hk.dSessions, 50);
   assert.equal(M.sections.find(x => x.id === 'blog').path, false);
 });
+
+test('quality verdict: any measure where organic is worse means volume alone is not a win', () => {
+  const ok = U.qualityVerdict({ profile: { organic: 58, other: 41 }, ret30: { organic: 21, other: 20.5 } });
+  assert.equal(ok.ok, true); assert.equal(ok.rows[1].state, 'level');
+  const bad = U.qualityVerdict({ ret30: { organic: 12, other: 18 }, act7: { organic: 40, other: 30 } });
+  assert.equal(bad.ok, false); assert.equal(bad.worse, 1);
+  assert.equal(U.qualityVerdict({}), null);
+});
 report('unstop');

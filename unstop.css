@@ -89,3 +89,8 @@
 .un-scope-or{color:var(--muted);align-self:center;font-size:12px}
 .un-go{font-size:11px;font-weight:600;white-space:nowrap}
 @media print{.un-scope{display:none}}
+.un-tabs a{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--ink-2);text-decoration:none}
+.un-tabs a.on{background:var(--signal);border-color:var(--signal);color:#fff}
+.un-st.bad{background:var(--risk-soft,#fde8e8);color:var(--risk-ink,var(--risk))}
+.un-verdict.ok{border-left:4px solid var(--good)}
+.un-verdict.bad{border-left:4px solid var(--risk)}

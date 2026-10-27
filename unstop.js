@@ -677,6 +677,14 @@
     };
   }
 
+  // Organic vs other channels on each quality metric ({ organic, other } rates in %). A gap within ±tol
+  // points counts as level. Worse on any metric means volume alone is not a win.
+  function qualityVerdict(pairs, tol = 1) {
+    const rows = Object.entries(pairs || {}).filter(([, v]) => v && v.organic != null && v.other != null).map(([k, v]) => ({ k, organic: v.organic, other: v.other, gap: v.organic - v.other, state: v.organic - v.other > tol ? 'better' : v.organic - v.other < -tol ? 'worse' : 'level' }));
+    if (!rows.length) return null;
+    const worse = rows.filter(r => r.state === 'worse'), better = rows.filter(r => r.state === 'better');
+    return { rows, worse: worse.length, better: better.length, ok: !worse.length, label: worse.length ? 'Organic is worse' : better.length === rows.length ? 'Organic is better' : 'Organic is level or better' };
+  }
   // ── metric registry for the funnel dashboard (owner, source, definition, cadence) ──
   const METRICS = [
     { stage: 'Visibility', id: 'impr', label: 'Impressions', src: 'GSC', owner: 'SEO', cadence: 'Weekly', def: 'Times a unstop.com URL appeared in Google results (web search), whole property.' },
@@ -692,8 +700,11 @@
     { stage: 'Traffic', id: 'pathCov', label: 'Sessions on pages with a conversion path', src: 'GA4', owner: 'SEO + CRO/Product', cadence: 'Monthly', def: 'Share of organic landing sessions on URL clusters marked as having a clear conversion path (register, apply, post a job, book a demo); set in Funnel setup.' },
     { stage: 'Signups', id: 'stu', label: 'Organic student signups', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Student signup events (Funnel setup) in organic sessions.' },
     { stage: 'Signups', id: 'emp', label: 'Organic employer signups', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Employer / recruiter signup events in organic sessions.' },
-    { stage: 'Signups', id: 'cvr', label: 'Signup conversion rate', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Organic signups ÷ organic sessions.' },
-    { stage: 'Signups', id: 'cps', label: 'Cost per organic signup', src: 'Cost input', owner: 'SEO Lead + Finance', cadence: 'Monthly', def: 'Monthly SEO cost (Funnel setup) ÷ organic signups for a 30-day period.' },
+    { stage: 'Signups', id: 'cvrStu', label: 'Student signup CVR (organic)', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Student signups ÷ organic sessions that landed on student-facing pages (every page type except Employer-facing).' },
+    { stage: 'Signups', id: 'cvrEmp', label: 'Employer signup CVR (organic)', src: 'GA4', owner: 'B2B SEO + Product Analytics', cadence: 'Monthly', def: 'Employer / recruiter signups ÷ organic sessions that landed on Employer-facing pages.' },
+    { stage: 'Signups', id: 'cpsStu', label: 'Cost per organic student signup', src: 'Cost input', owner: 'SEO Lead + Finance', cadence: 'Monthly', def: 'Student share of the monthly SEO cost ÷ organic student signups per 30 days. Cost and the employer share are set in Funnel setup.' },
+    { stage: 'Signups', id: 'cpsEmp', label: 'Cost per organic employer signup', src: 'Cost input', owner: 'SEO Lead + Finance', cadence: 'Monthly', def: 'Employer share of the monthly SEO cost ÷ organic employer / recruiter signups per 30 days.' },
+    { stage: 'Signups', id: 'qcheck', label: 'Quality check: organic vs other channels', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly cohort', def: 'Profile completion, 7-day activation and 30-day retention of organic signups against other channels. If organic is worse, signup volume alone does not count as a win.' },
     { stage: 'Signups', id: 'moeSignups', label: 'Organic signups (MoEngage)', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly', def: 'Signups attributed to organic search in MoEngage (live dashboard chart mapped on Signup quality). A second view of signups that does not depend on GA4 events.' },
     { stage: 'Signups', id: 'profile', label: 'Profile completion (organic)', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly cohort', def: 'Organic signups whose profile completion is at or above the threshold.' },
     { stage: 'Signups', id: 'act7', label: '7-day activation (organic)', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly cohort', def: 'First registration or application within 7 days of signup.' },
@@ -712,6 +723,6 @@
 
   const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
-    moeHeaderMap, moeQuality, organicTest, toDate, METRICS, chg };
+    moeHeaderMap, moeQuality, qualityVerdict, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;
 })(typeof window !== 'undefined' ? window : globalThis);
