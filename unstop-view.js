@@ -1369,6 +1369,207 @@
     return { html, mount };
   };
 
+  // ════════════════════════════ WORKSTREAM SCORECARDS ════════════════════════════
+  // Technical SEO, content & programmatic pages, link building, content refreshes, visibility in AI answers.
+  // Uploads stay in this tab; PageSpeed and URL Inspection runs are kept in this browser so weeks can be compared.
+  const SC = window.UN_SC;
+  const SCD = new Map(); // site → { crawl, pub, links, ai, psi, insp, refresh } (tab memory)
+  const scd = site => { if (!SCD.has(site)) SCD.set(site, {}); return SCD.get(site); };
+  const TKEY = site => 'un:tech:' + site;
+  const techHist = site => { try { const v = JSON.parse(localStorage.getItem(TKEY(site))); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+  const techSave = (site, entry) => { try { const h = techHist(site).concat([entry]).slice(-26); localStorage.setItem(TKEY(site), JSON.stringify(h)); } catch (e) { } };
+  // one representative page per cluster (most clicks) plus the key pages from Funnel setup
+  function techUrls(A, D) {
+    const so = sectioner(D), s = settings(D.site), best = new Map();
+    (A.P || []).forEach(r => { const id = so(r.p); if (['util', 'other'].includes(id)) return; const b = best.get(id); if (!b || r.clicks > b.clicks) best.set(id, r); });
+    const host = (A.P && A.P[0] && (A.P[0].p.match(/^https?:\/\/[^/]+/) || [])[0]) || 'https://unstop.com';
+    const urls = [...best.values()].sort((a, b) => b.clicks - a.clicks).map(r => r.p);
+    (s.keyPages || []).forEach(p => { const u = /^https?:/.test(p) ? p : host + U.pathOnly(p); if (!urls.includes(u)) urls.push(u); });
+    return urls.slice(0, 30);
+  }
+  async function runPsi(A, D) {
+    const X = scd(D.site), s = settings(D.site), urls = techUrls(A, D);
+    X.psi = { status: 'loading', done: 0, total: urls.length, results: [] }; rerender();
+    let i = 0;
+    const worker = async () => { while (i < urls.length) { const u = urls[i++]; try { const r = await fetch(SC.psiUrl(u, s.psiKey)); const j = await r.json(); if (!r.ok) throw new Error((j.error && j.error.message) || r.statusText); X.psi.results.push(SC.psiParse(u, j)); } catch (e) { X.psi.results.push({ url: u, error: /quota|429/i.test(e.message) ? 'PageSpeed quota reached: add a free API key in Funnel setup' : e.message }); } X.psi.done++; const p = document.getElementById('un-psi-prog'); if (p) p.textContent = `Testing pages with PageSpeed Insights… ${X.psi.done} of ${X.psi.total}`; } };
+    await Promise.all([worker(), worker()]);
+    X.psi.status = 'done'; X.psi.at = Date.now(); X.psi.sum = SC.cwvSummary(X.psi.results);
+    techSave(D.site, { at: X.psi.at, kind: 'psi', passRate: X.psi.sum.passRate, perf: X.psi.sum.medianPerf, lcp: X.psi.sum.medianLcp, tested: X.psi.sum.tested });
+    rerender();
+  }
+  async function runInspect(A, D, perCluster) {
+    const X = scd(D.site), src = window.CW_SOURCE, so = sectioner(D), SURF = window.CW_SURF;
+    if (!src || !src.gsc || !src.gsc.inspect) return;
+    const by = new Map(); (A.P || []).slice().sort((a, b) => b.impr - a.impr).forEach(r => { const id = so(r.p); if (['util', 'other'].includes(id)) return; const l = by.get(id) || []; if (l.length < perCluster) l.push(r.p); by.set(id, l); });
+    // spread the sample: most-seen pages first, then the weakest ones in each cluster
+    const urls = [...by.entries()].flatMap(([id, l]) => l.map(u => ({ id, u })));
+    X.insp = { status: 'loading', done: 0, total: urls.length, rows: [] }; rerender();
+    let i = 0;
+    const worker = async () => { while (i < urls.length) { const x = urls[i++]; try { const d = await src.gsc.inspect(x.u); const r = SURF.inspection(x.u, d.inspectionResult); X.insp.rows.push({ ...r, id: x.id, cluster: so.label(x.id) }); } catch (e) { X.insp.rows.push({ url: x.u, id: x.id, cluster: so.label(x.id), error: e.message }); } X.insp.done++; const p = document.getElementById('un-insp-prog'); if (p) p.textContent = `Inspecting URLs… ${X.insp.done} of ${X.insp.total}`; } };
+    await Promise.all([worker(), worker(), worker()]);
+    X.insp.status = 'done'; X.insp.at = Date.now();
+    const ok = X.insp.rows.filter(r => !r.error);
+    techSave(D.site, { at: X.insp.at, kind: 'inspect', indexedPct: ok.length ? ok.filter(r => r.indexed).length / ok.length * 100 : null, n: ok.length });
+    rerender();
+  }
+  // ── sample data for the sample site ──
+  function scSamples(A, D) {
+    const X = scd(D.site); if (D.sampleOf !== 'unstop' || X.sampled) return; X.sampled = true;
+    let seed = 41; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const so = sectioner(D), urls = techUrls(A, D);
+    X.psi = { status: 'done', sample: true, at: Date.now(), results: urls.map(u => { const id = so(u), slow = /hackathons|competitions/.test(id) && R() < .5; const lcp = Math.round((slow ? 2600 : 1700) + R() * 1400), cls = +(R() * (slow ? .18 : .09)).toFixed(2), inp = Math.round(100 + R() * 140); return { url: u, perf: Math.round(45 + R() * 45), field: { lcp, inp, cls }, lab: { lcp: lcp + 400, cls }, hasField: true, pass: lcp <= 2500 && cls <= .1 && inp <= 200 }; }) };
+    X.psi.sum = SC.cwvSummary(X.psi.results);
+    const ins = []; (A.P || []).slice(0, 400).forEach((r, i) => { if (i % 3) return; const id = so(r.p); if (['util', 'other'].includes(id)) return; const bad = R() < (/orgpages|jobs/.test(id) ? .32 : .1); ins.push({ url: r.p, id, cluster: so.label(id), indexed: !bad, key: bad ? (R() < .6 ? 'crawled' : 'discovered') : 'ok', label: bad ? (R() < .6 ? 'Crawled – currently not indexed' : 'Discovered – currently not indexed') : 'Indexed' }); });
+    X.insp = { status: 'done', sample: true, at: Date.now(), rows: ins };
+    const crawl = [['Address', 'Content Type', 'Status Code', 'Indexability', 'Indexability Status', 'Response Time']];
+    (A.P || []).forEach(r => { const x = R(); crawl.push([r.p, 'text/html; charset=utf-8', x < .025 ? 404 : x < .03 ? 500 : x < .07 ? 301 : 200, x > .07 && R() < .04 ? 'Non-Indexable' : 'Indexable', '', +(0.2 + R() * 1.4).toFixed(2)]); });
+    X.crawl = { name: 'Sample crawl', sample: true, at: Date.now(), res: SC.crawlModel(crawl, so) };
+    const end = new Date(D.end + 'T00:00:00Z'), pub = [['URL', 'Publish date', 'Template']];
+    (A.P || []).forEach(r => { const id = so(r.p); if (!['blog', 'resources', 'internships', 'jobs', 'orgpages', 'empjobboard', 'hackathons', 'competitions'].includes(id)) return; const d = new Date(end); d.setUTCDate(d.getUTCDate() - Math.floor(R() * 270)); pub.push([r.p, d.toISOString().slice(0, 10), /internship\/|job\/|hire-/.test(r.p) ? 'Programmatic: ' + so.label(id).split(' › ').pop() : so.label(id)]); });
+    for (let i = 0; i < 160; i++) { const d = new Date(end); d.setUTCDate(d.getUTCDate() - Math.floor(R() * 270)); pub.push([`https://unstop.com/internship/new-role-${i}-internship`, d.toISOString().slice(0, 10), 'Programmatic: Internships']); }
+    X.pub = { name: 'Sample publishing log', sample: true, at: Date.now(), rows: pub };
+    const tg = (A.P || []).filter(r => /employers|blog|internship$|hackathons$/.test(r.p)).slice(0, 25).map(r => r.p), doms = ['careers360', 'shiksha', 'indiatoday', 'thehindu', 'yourstory', 'inc42', 'economictimes', 'medium', 'dev.to', 'collegedunia', 'jagranjosh', 'livemint', 'naukri', 'iimjobs', 'linkedin', 'quora', 'reddit', 'hashnode', 'analyticsvidhya', 'geeksforgeeks'];
+    const ln = [['Referring domain', 'Domain rating', 'First seen', 'Target URL', 'Link type']];
+    for (let i = 0; i < 140; i++) { const dom = doms[i % doms.length] + (i >= doms.length ? '-' + i + '.in' : '.com'); const d = new Date(end); d.setUTCDate(d.getUTCDate() - Math.floor(R() * 180)); ln.push([dom, Math.round(i < 20 ? 55 + R() * 35 : R() * 60), d.toISOString().slice(0, 10), tg[i % tg.length], R() < .25 ? 'nofollow' : 'dofollow']); }
+    X.links = { name: 'Sample backlinks', sample: true, at: Date.now(), rows: ln };
+    const qs = ['best platform for hackathons in india', 'where to find internships for college students', 'case competitions for mba students', 'how to prepare for tcs nqt', 'campus hiring platform for companies', 'best ats for campus recruitment', 'online assessment tools for hiring freshers', 'free coding practice platform', 'how to host a hackathon for hiring', 'internship websites for engineering students', 'college fests in india 2026', 'scholarships for engineering students', 'quiz competitions for students', 'fresher jobs off campus drive', 'resume tips for freshers', 'top companies hiring freshers'];
+    const engines = ['ChatGPT', 'Perplexity', 'Google AI Overviews', 'Gemini'], ai = [['Query', 'Engine', 'Mentioned', 'Cited', 'Cited URL', 'Date', 'Cluster']];
+    ['2026-08-15', '2026-09-15', '2026-10-15'].forEach((dt, k) => qs.forEach((q, i) => engines.forEach((e, j) => { const p = .35 + (i % 4) * .1 + k * .05 + (e === 'Perplexity' ? .12 : e === 'Gemini' ? -.08 : 0); const m = R() < p, c = m && R() < (e === 'ChatGPT' ? .45 : .7); ai.push([q, e, m ? 'yes' : 'no', c ? 'yes' : 'no', c ? 'https://unstop.com' + (/hackathon/.test(q) ? '/hackathons' : /intern/.test(q) ? '/internship' : /ats|assessment|hiring platform|campus hiring/.test(q) ? '/employers/ats-software' : '/blog/' + q.replace(/\s+/g, '-')) : '', dt, /ats|assessment|campus hiring|host/.test(q) ? 'Employer' : 'Student']); })));
+    X.ai = { name: 'Sample prompt tracker', sample: true, at: Date.now(), rows: ai };
+  }
+  // demo refreshes: blog pages "refreshed" 40–100 days ago (tab only)
+  function refreshList(A, D) {
+    const FXV = window.CW_FIXVIEW; const saved = FXV ? FXV.load(D.site).list : [];
+    if (saved.length || D.sampleOf !== 'unstop') return { list: saved, sample: false };
+    const blog = (A.P || []).filter(r => /\/blog\//.test(r.p)).slice(0, 6);
+    return { sample: true, list: blog.map((r, i) => { const d = new Date(D.end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - (40 + i * 11)); return { id: 's' + i, url: r.p, date: d.toISOString().slice(0, 10), what: 'Content refresh (sample)', scope: 'page' }; }) };
+  }
+  async function measureRefreshes(A, D) {
+    const X = scd(D.site), S = window.CW_SOURCE, FX = window.CW_FIXES; if (!S || !FX) return;
+    const { list, sample } = refreshList(A, D);
+    X.refresh = { status: 'loading', rows: [], sample }; rerender();
+    for (const f of list.slice(0, 30)) {
+      try {
+        const start = FX.add(f.date, -90), end = S.latest && S.latest < FX.add(f.date, 90) ? S.latest : FX.add(f.date, 90);
+        const rows = f.scope === 'site' ? await S.siteDaily(start, end) : await S.pageDaily(f.url, start, end);
+        const w = [28, 56, 90].map(n => FX.measure(f, rows, null, S.latest, S.earliest, { window: n }));
+        X.refresh.rows.push({ f, w });
+      } catch (e) { X.refresh.rows.push({ f, error: e.message }); }
+    }
+    X.refresh.status = 'done'; X.refresh.at = Date.now(); rerender();
+  }
+
+  const SC_TABS = [['overview', 'Overview'], ['tech', 'Technical SEO'], ['content', 'Content & programmatic'], ['links', 'Link building'], ['refresh', 'Content refreshes'], ['ai', 'AI answers']];
+  V.scorecards = (A, D) => {
+    demoFill(D); scSamples(A, D);
+    window.CW_LAST_A = A;
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-sc')).forEach(k => delete TABLES[k]);
+    const X = scd(D.site), so = sectioner(D), s = settings(D.site), tab = fParams().get('w') || 'overview';
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
+    const upl = (id, label, tpl) => `<div class="un-row"><label class="btn-primary sm un-file">${esc(label)}<input type="file" id="un-sc-${id}" accept=".csv,.xlsx,.xls" hidden></label>${tpl ? `<button class="btn-quiet" type="button" id="un-sc-${id}-tpl">Download column template</button>` : ''}${X[id] ? `<button class="btn-quiet" type="button" id="un-sc-${id}-clear">Remove file</button> <span class="hint">${esc(X[id].name)}${X[id].sample ? ' (sample)' : ''}</span>` : ''}</div>`;
+    const crawl = X.crawl && X.crawl.res && X.crawl.res.ok ? X.crawl.res : null;
+    const pub = X.pub ? SC.publishingModel(X.pub.rows, A.P, so, D.end) : null;
+    const links = X.links ? SC.linksModel(X.links.rows, A, D, so) : null;
+    const ai = X.ai ? SC.aiModel(X.ai.rows) : null;
+    const M = gaModel(D);
+    const aiS = M ? M.ai.reduce((a, r) => a + r.sessions, 0) : null, aiY = M ? M.ai.reduce((a, r) => a + r.ySessions, 0) : null;
+    const insOk = X.insp ? X.insp.rows.filter(r => !r.error) : [];
+    const idxPct = insOk.length ? insOk.filter(r => r.indexed).length / insOk.length * 100 : null;
+    const hist = techHist(D.site);
+    const intro = head('Workstream scorecards', 'Each workstream gets its own scorecard: technical SEO, content & programmatic pages, link building, content refreshes and visibility in AI answers.');
+    let html = intro + `<div class="un-tabs" role="tablist">${SC_TABS.map(([k, l]) => `<a role="tab" class="${k === tab ? 'on' : ''}" href="#scorecards?w=${k}">${l}</a>`).join('')}</div>`;
+    const sampleNote = D.sampleOf === 'unstop' ? '<div class="note"><b>Sample data.</b> Generated for the sample site. Upload your own exports or run the checks on real data.</div>' : '';
+    if (tab === 'overview') {
+      const R2 = X.refresh && X.refresh.rows ? X.refresh.rows.filter(r => r.w && r.w[0].status === 'measured' && r.w[0].window.L >= 28) : [];
+      const card = (title, href, owner, cadence, items) => `<section class="un-sc"><h3><a href="${href}">${esc(title)}</a></h3>${items.map(([l, v, sub]) => `<div class="un-sc-r"><span>${esc(l)}</span><b>${v}</b>${sub ? `<small>${sub}</small>` : ''}</div>`).join('')}<div class="un-m-foot"><span>${esc(owner)}</span><span>${esc(cadence)}</span></div></section>`;
+      html += sampleNote + `<div class="un-scs">
+        ${card('Technical SEO', '#scorecards?w=tech', 'Technical SEO + Engineering', 'Weekly', [['Crawl errors (4xx / 5xx)', crawl ? fmtN(crawl.errors4 + crawl.errors5) : '—', crawl ? pct1((crawl.errors4 + crawl.errors5) / crawl.urls * 100) + ' of crawled pages' : 'upload a crawl'], ['Core Web Vitals pass rate', X.psi && X.psi.sum ? pct1(X.psi.sum.passRate) : '—', X.psi && X.psi.sum ? `${X.psi.sum.withField} pages with field data` : 'run PageSpeed'], ['Indexed (URL Inspection sample)', pct1(idxPct), insOk.length ? fmtN(insOk.length) + ' URLs inspected' : 'run on live data'], ['Median performance score', X.psi && X.psi.sum && X.psi.sum.medianPerf != null ? X.psi.sum.medianPerf : '—', 'mobile, lab']])}
+        ${card('Content & programmatic', '#scorecards?w=content', 'Programmatic SEO + Content + Engineering', 'Monthly cohort', [['Pages published', pub && pub.ok ? fmtN(pub.total.published) : '—', pub && pub.ok ? '' : 'upload a publishing log'], ['Pages indexed (getting impressions)', pub && pub.ok ? pct1(pub.total.visibleRate) : '—', pub && pub.ok ? fmtN(pub.total.visible) + ' pages' : ''], ['With traffic after 90 days', pub && pub.ok ? pct1(pub.total.traffic90Rate) : '—', pub && pub.ok ? `of ${fmtN(pub.total.old)} pages 90+ days old` : ''], ['Clicks per page', pub && pub.ok && pub.total.perPage != null ? pub.total.perPage.toFixed(1) : '—', 'in the analysed period']])}
+        ${card('Link building', '#scorecards?w=links', 'SEO + Digital PR / Outreach', 'Monthly', [['Referring domains gained', links && links.ok ? fmtN(links.domains) : '—', links && links.ok ? fmtN(links.follow) + ' followed' : 'upload a backlink export'], ['Quality: DR 50+', links && links.ok ? fmtN(links.tiers[0].domains) : '—', links && links.ok && links.avgDr != null ? 'average DR ' + links.avgDr.toFixed(0) : ''], ['Target pages that moved up', links && links.ok ? `${fmtN(links.improved)} of ${fmtN(links.measured)}` : '—', links && links.ok ? fmtN(links.declined) + ' moved down' : '']])}
+        ${card('Content refreshes', '#scorecards?w=refresh', 'Content SEO', 'Monthly; 28 / 56 / 90-day checks', [['Refreshes tracked', fmtN(refreshList(A, D).list.length), refreshList(A, D).sample ? 'sample' : '<a href="#fixes">add in Fix tracker</a>'], ['Measured at 28 days', R2.length ? fmtN(R2.length) : '—', R2.length ? `${R2.filter(r => /improved/.test(r.w[0].verdict)).length} improved · ${R2.filter(r => /declined/.test(r.w[0].verdict)).length} declined` : 'open the tab to measure']])}
+        ${card('AI answers', '#scorecards?w=ai', 'SEO + Analytics', 'Monthly', [['Mentioned in AI answers', ai && ai.ok ? pct1(ai.total.mention) : '—', ai && ai.ok ? `${fmtN(ai.total.queries)} core queries · ${ai.engines.length} engines` : 'upload the prompt tracker'], ['Cited (linked)', ai && ai.ok ? pct1(ai.total.cite) : '—', ''], ['AI referral sessions', aiS != null ? fmtN(Math.round(aiS)) : '—', aiS != null ? dchip(U.chg(aiS, aiY)) + ' vs last year' : 'connect GA4']])}
+      </div>`;
+    }
+    if (tab === 'tech') {
+      const P = X.psi, sum = P && P.sum;
+      html += sampleNote + `<div class="un-kpis">
+        ${kp('Crawl errors', crawl ? fmtN(crawl.errors4 + crawl.errors5) : '—', '', crawl ? `${fmtN(crawl.errors4)} 4xx · ${fmtN(crawl.errors5)} 5xx · ${fmtN(crawl.redirects)} redirects` : 'upload a crawl below')}
+        ${kp('Core Web Vitals pass rate', sum ? pct1(sum.passRate) : '—', '', sum ? `${sum.withField} of ${sum.tested} pages have field data` : 'run PageSpeed below')}
+        ${kp('Indexed (inspection sample)', pct1(idxPct), '', insOk.length ? fmtN(insOk.length) + ' URLs' : live ? 'run URL Inspection below' : 'needs Search Console')}
+        ${kp('Page speed', sum && sum.medianLcp != null ? (sum.medianLcp / 1000).toFixed(1) + ' s' : '—', '', sum && sum.medianPerf != null ? 'median LCP · performance ' + sum.medianPerf : '')}
+      </div>`;
+      // CWV
+      html += `<section class="panel"><div class="panel-h"><h2>Core Web Vitals and page speed</h2><p>PageSpeed Insights (mobile) on the top page of each cluster plus the key pages from Funnel setup. Pass = field data (real Chrome users, 75th percentile) with LCP ≤ 2.5 s, INP ≤ 200 ms and CLS ≤ 0.1. Pages without enough traffic have lab data only and are left out of the pass rate.</p></div>
+        <div class="panel-b"><div class="un-row"><button class="btn-primary sm" type="button" id="un-psi-go">${P ? 'Run again' : 'Test ' + techUrls(A, D).length + ' pages'}</button><span class="progress" id="un-psi-prog">${P && P.status === 'loading' ? `Testing… ${P.done} of ${P.total}` : P && P.at ? 'Tested ' + when(P.at) + (P.sample ? ' (sample)' : '') : ''}</span>${s.psiKey ? '' : '<span class="hint">Without an API key Google allows only a few tests a minute; add a free key in Funnel setup.</span>'}</div></div>
+        ${P && P.results.length ? table('t-un-scp', [{ k: 'url', l: 'Page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: U.pathOnly(r.url) }))}">${esc(U.pathOnly(r.url))}</a>`, csv: r => r.url }, { k: 'cluster', l: 'Cluster' }, { k: 'pass', l: 'CWV', f: r => r.error ? `<span class="un-st bad">Error</span> <small>${esc(r.error)}</small>` : r.pass == null ? '<span class="un-st none">No field data</span>' : r.pass ? '<span class="un-st live">Pass</span>' : '<span class="un-st bad">Fail</span>', csv: r => r.error ? 'error' : r.pass == null ? 'no field data' : r.pass ? 'pass' : 'fail' }, { k: 'lcp', l: 'LCP', r: 1, f: r => r.field && r.field.lcp != null ? (r.field.lcp / 1000).toFixed(1) + ' s' : r.lab && r.lab.lcp != null ? (r.lab.lcp / 1000).toFixed(1) + ' s (lab)' : '—' }, { k: 'inp', l: 'INP', r: 1, f: r => r.field && r.field.inp != null ? r.field.inp + ' ms' : '—' }, { k: 'cls', l: 'CLS', r: 1, f: r => r.field && r.field.cls != null ? r.field.cls.toFixed(2) : '—' }, { k: 'perf', l: 'Performance', r: 1, f: r => r.perf == null ? '—' : r.perf }],
+          withCluster(D, P.results, r => r.url).map(r => ({ ...r, lcp: r.field ? r.field.lcp : null, inp: r.field ? r.field.inp : null, cls: r.field ? r.field.cls : null })), { search: false, file: 'unstop-core-web-vitals', pageSize: 30 }) : ''}</section>`;
+      // indexation
+      const ib = new Map(); insOk.forEach(r => { const o = ib.get(r.cluster) || { cluster: r.cluster, n: 0, idx: 0, issues: new Map() }; o.n++; if (r.indexed) o.idx++; else o.issues.set(r.label, (o.issues.get(r.label) || 0) + 1); ib.set(r.cluster, o); });
+      html += `<section class="panel"><div class="panel-h"><h2>Indexation</h2><p>URL Inspection on a sample of pages per cluster (Search Console allows 2,000 inspections a day). For sitemap totals see <a href="#visibility">Visibility › Indexation by page type</a>; for programmatic cohorts see Content & programmatic.</p></div>
+        <div class="panel-b"><div class="un-row">${live ? `<button class="btn-primary sm" type="button" id="un-insp-go">Inspect 10 URLs per cluster</button>` : '<span class="hint">Needs a Search Console connection.</span>'}<span class="progress" id="un-insp-prog">${X.insp && X.insp.status === 'loading' ? `Inspecting… ${X.insp.done} of ${X.insp.total}` : X.insp && X.insp.at ? 'Inspected ' + when(X.insp.at) + (X.insp.sample ? ' (sample)' : '') : ''}</span></div></div>
+        ${ib.size ? `<div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Cluster</th><th class="r">Inspected</th><th class="r">Indexed</th><th>Not indexed because</th></tr></thead><tbody>${[...ib.values()].sort((a, b) => a.idx / a.n - b.idx / b.n).map(o => `<tr><td><b>${esc(o.cluster)}</b></td><td class="r">${o.n}</td><td class="r">${pct1(o.idx / o.n * 100)}</td><td><small>${[...o.issues.entries()].map(([k, v]) => `${esc(k)} (${v})`).join(' · ') || '—'}</small></td></tr>`).join('')}</tbody></table></div></div>` : ''}</section>`;
+      // crawl
+      html += `<section class="panel"><div class="panel-h"><h2>Crawl errors</h2><p>Upload the Internal (HTML) export of a site crawl from Screaming Frog, Sitebulb or similar: URL, status code, indexability, response time.</p></div><div class="panel-b">${upl('crawl', 'Upload crawl export')}${X.crawl && !crawl ? `<p class="start-error">${esc(X.crawl.res.error)}</p>` : ''}</div>
+        ${crawl ? table('t-un-scc', [{ k: 'cluster', l: 'Cluster', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'urls', l: 'Pages crawled', r: 1, f: r => fmtN(r.urls) }, { k: 'c4', l: '4xx', r: 1, f: r => fmtN(r.c4) }, { k: 'c5', l: '5xx', r: 1, f: r => fmtN(r.c5) }, { k: 'errorRate', l: 'Error rate', r: 1, f: r => pct1(r.errorRate) }, { k: 'redirect', l: 'Redirects', r: 1, f: r => fmtN(r.redirect) }, { k: 'nonIndexable', l: 'Non-indexable 200s', r: 1, f: r => fmtN(r.nonIndexable) }, { k: 'medianTime', l: 'Median response', r: 1, f: r => r.medianTime == null ? '—' : r.medianTime.toFixed(2) + ' s' }], crawl.clusters, { search: false, sort: 'c4', file: 'unstop-crawl-by-cluster', pageSize: 30 }) + (crawl.errorList.length ? `<details class="un-det"><summary>${fmtN(crawl.errorList.length)} error URLs</summary>${table('t-un-sce', [{ k: 'url', l: 'URL', cls: 'u' }, { k: 'status', l: 'Status' }, { k: 'cluster', l: 'Cluster' }], crawl.errorList, { file: 'unstop-crawl-errors', pageSize: 20, placeholder: 'Filter URLs' })}</details>` : '') : ''}</section>`;
+      if (hist.length) html += `<section class="panel"><div class="panel-h"><h2>History in this browser</h2><p>Each PageSpeed and URL Inspection run is kept here so weekly reviews can compare.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Run</th><th>Check</th><th class="r">Result</th></tr></thead><tbody>${hist.slice().reverse().map(h => `<tr><td>${when(h.at)}</td><td>${h.kind === 'psi' ? 'PageSpeed' : 'URL Inspection'}</td><td class="r">${h.kind === 'psi' ? `CWV pass ${pct1(h.passRate)} · perf ${h.perf == null ? '—' : h.perf} · ${h.tested} pages` : `indexed ${pct1(h.indexedPct)} of ${h.n}`}</td></tr>`).join('')}</tbody></table></div></div></section>`;
+    }
+    if (tab === 'content') {
+      html += sampleNote + `<section class="panel"><div class="panel-h"><h2>Publishing log</h2><p>One row per page: URL, publish (go-live) date and, optionally, the template. Joined with Search Console for the analysed period: “indexed” = the page got impressions (Search Console only reports pages it shows); “traffic after 90 days” counts pages published 90+ days ago that got clicks.</p></div><div class="panel-b">${upl('pub', 'Upload publishing log', true)}${pub && !pub.ok ? `<p class="start-error">${esc(pub.error)}</p>` : ''}</div></section>`;
+      if (pub && pub.ok) {
+        const t = pub.total;
+        html += `<div class="un-kpis">${kp('Pages published', fmtN(t.published), '', '')}${kp('Pages indexed', pct1(t.visibleRate), '', fmtN(t.visible) + ' getting impressions')}${kp('Traffic after 90 days', pct1(t.traffic90Rate), '', `${fmtN(t.traffic90)} of ${fmtN(t.old)} pages 90+ days old`)}${kp('Clicks per page', t.perPage != null ? t.perPage.toFixed(1) : '—', '', 'analysed period')}</div>`;
+        const cols = first => [first, { k: 'published', l: 'Published', r: 1, f: r => fmtN(r.published) }, { k: 'visible', l: 'Indexed (impressions)', r: 1, f: r => fmtN(r.visible) }, { k: 'visibleRate', l: 'Indexed %', r: 1, f: r => pct1(r.visibleRate) }, { k: 'old', l: '90+ days old', r: 1, f: r => fmtN(r.old) }, { k: 'traffic90Rate', l: 'With traffic after 90 days', r: 1, f: r => pct1(r.traffic90Rate) }, { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'perPage', l: 'Clicks per page', r: 1, f: r => r.perPage == null ? '—' : r.perPage.toFixed(1) }];
+        html += `<section class="panel"><div class="panel-h"><h2>By template</h2><p>Programmatic templates and content types are judged on outcomes, not on page count.</p></div>${table('t-un-sct', cols({ k: 'key', l: 'Template', f: r => `<b>${esc(r.key)}</b>` }), pub.byTemplate, { search: false, sort: 'published', file: 'unstop-content-by-template', pageSize: 30 })}</section>
+          <section class="panel"><div class="panel-h"><h2>By publication month (cohorts)</h2></div>${table('t-un-scm', cols({ k: 'key', l: 'Published in' }), pub.byMonth, { search: false, sort: 'key', dir: 1, file: 'unstop-content-cohorts', pageSize: 24 })}</section>`;
+      } else if (!pub) html += '<div class="note">Without a publishing log, see pages with impressions and clicks per page by cluster on <a href="#urlclusters">Clusters</a> and <a href="#visibility">Visibility</a>.</div>';
+    }
+    if (tab === 'links') {
+      html += sampleNote + `<section class="panel"><div class="panel-h"><h2>Referring domains</h2><p>Upload the “new referring domains” or backlinks export from Ahrefs, Semrush or Moz: referring domain, domain rating (DR / Authority Score / DA), first seen, target URL and link type. Ranking movement compares each target page’s Search Console position now with the previous period.</p></div><div class="panel-b">${upl('links', 'Upload backlink export', true)}${links && !links.ok ? `<p class="start-error">${esc(links.error)}</p>` : ''}</div></section>`;
+      if (links && links.ok) {
+        html += `<div class="un-kpis">${kp('Referring domains', fmtN(links.domains), '', fmtN(links.follow) + ' followed')}${kp('Average rating', links.avgDr != null ? links.avgDr.toFixed(0) : '—', '', 'DR / AS / DA as exported')}${links.tiers.slice(0, 2).map(t => kp('Quality: ' + t.tier, fmtN(t.domains), '', '')).join('')}${kp('Target pages up in position', `${fmtN(links.improved)} of ${fmtN(links.measured)}`, '', fmtN(links.declined) + ' down · vs previous period')}</div>
+          <div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Gained per month</h2></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Month</th><th class="r">Domains</th><th class="r">Followed</th><th class="r">DR 50+</th></tr></thead><tbody>${links.months.map(m => `<tr><td>${esc(m.month)}</td><td class="r">${m.domains}</td><td class="r">${m.follow}</td><td class="r">${m.high}</td></tr>`).join('')}</tbody></table></div></div></section>
+          <section class="panel"><div class="panel-h"><h2>Quality</h2></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Rating</th><th class="r">Domains</th><th class="r">Share</th></tr></thead><tbody>${links.tiers.map(t => `<tr><td>${esc(t.tier)}</td><td class="r">${t.domains}</td><td class="r">${pct1(links.domains ? t.domains / links.domains * 100 : null)}</td></tr>`).join('')}</tbody></table></div></div></section></div>
+          <section class="panel"><div class="panel-h"><h2>Target pages: links gained and ranking movement</h2></div>${table('t-un-scl', [{ k: 'path', l: 'Target page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }, { k: 'domains', l: 'Domains', r: 1 }, { k: 'high', l: 'DR 50+', r: 1 }, { k: 'pos', l: 'Position now', r: 1, f: r => r.pos ? posTag(r.pos) : '—' }, { k: 'posChange', l: 'Moved', r: 1, f: r => r.posChange == null ? '—' : `<span class="un-d ${r.posChange > 0 ? 'up' : r.posChange < 0 ? 'down' : 'flat'}">${r.posChange > 0 ? '▲ ' : r.posChange < 0 ? '▼ ' : ''}${Math.abs(r.posChange).toFixed(1)}</span>`, csv: r => r.posChange }, { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + dchip(r.dClicks) }], links.targets, { sort: 'domains', file: 'unstop-link-targets', pageSize: 20, placeholder: 'Filter pages' })}</section>
+          <section class="panel"><div class="panel-h"><h2>Domains</h2></div>${table('t-un-scd', [{ k: 'domain', l: 'Referring domain' }, { k: 'dr', l: 'Rating', r: 1, f: r => r.dr == null ? '—' : r.dr }, { k: 'tier', l: 'Quality' }, { k: 'date', l: 'First seen' }, { k: 'nofollow', l: 'Link', f: r => r.nofollow ? 'nofollow' : 'followed', csv: r => r.nofollow ? 'nofollow' : 'followed' }, { k: 'targets', l: 'Targets', cls: 'u' }], links.list, { sort: 'date', file: 'unstop-referring-domains', pageSize: 20, placeholder: 'Filter domains' })}</section>`;
+      }
+    }
+    if (tab === 'refresh') {
+      const RL = refreshList(A, D), RF = X.refresh;
+      html += `<section class="panel"><div class="panel-h"><h2>Content refreshes: before vs after</h2><p>Each refresh is a dated change in the <a href="#fixes">Fix tracker</a> (record the URL and the day it went live). Clicks per day and average position are compared over the same number of days before and after, at 28, 56 and 90 days, against daily noise. ${RL.sample ? '<b>Sample refreshes</b> on the sample site.' : ''}</p></div>
+        <div class="panel-b"><div class="un-row"><button class="btn-primary sm" type="button" id="un-rf-go" ${RL.list.length ? '' : 'disabled'}>${RF ? 'Measure again' : 'Measure ' + RL.list.length + ' refresh' + (RL.list.length === 1 ? '' : 'es')}</button><a class="btn-quiet" href="#fixes">Add a refresh</a><span class="progress">${RF && RF.status === 'loading' ? 'Measuring…' : RF && RF.at ? 'Measured ' + when(RF.at) : ''}</span></div></div>
+        ${RF && RF.rows.length ? `<div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Refreshed</th>${[28, 56, 90].map(n => `<th class="r">${n} days: clicks / day</th><th class="r">${n} days: position</th>`).join('')}<th>Verdict (longest window)</th></tr></thead><tbody>${RF.rows.map(r => { if (r.error) return `<tr><td class="u">${esc(U.pathOnly(r.f.url || ''))}</td><td>${esc(r.f.date)}</td><td colspan="7" class="start-error">${esc(r.error)}</td></tr>`; const last = r.w.slice().reverse().find((x, k) => x.status === 'measured' && x.window.L >= [90, 56, 28][k]); return `<tr><td class="u" style="min-width:220px"><a href="${esc(focusHref({ u: U.pathOnly(r.f.url) }))}">${esc(U.pathOnly(r.f.url))}</a></td><td style="white-space:nowrap">${esc(r.f.date)}</td>${r.w.map((x, wi) => x.status === 'measured' && x.window.L >= [28, 56, 90][wi] ? `<td class="r">${x.before.perDay.toFixed(1)} → ${x.after.perDay.toFixed(1)} ${dchip(x.change.clicks)}</td><td class="r">${x.before.pos != null ? x.before.pos.toFixed(1) : '—'} → ${x.after.pos != null ? x.after.pos.toFixed(1) : '—'}</td>` : `<td class="r" colspan="2"><small>${x.status === 'too-little' ? 'too few clicks' : x.status === 'no-before' ? 'not enough data before' : `needs ${[28, 56, 90][wi]} days each side`}</small></td>`).join('')}<td>${last ? esc(window.CW_FIXES.VERDICT[last.verdict] || last.verdict) : esc(window.CW_FIXES.label(r.w[0]))}</td></tr>`; }).join('')}</tbody></table></div><p class="hint" style="padding:0 16px 12px">A window shows only once that many days exist on both sides of the refresh. Before vs after cannot rule out seasons or Google updates; the Fix tracker also compares with the whole site.</p></div>` : ''}</section>`;
+    }
+    if (tab === 'ai') {
+      html += sampleNote + `<section class="panel"><div class="panel-h"><h2>Visibility in AI answers</h2><p>Upload the results of a fixed set of core queries run through ChatGPT, Perplexity, Google AI Overviews and Gemini (for example the team’s prompt tracker): query, engine, mentioned (yes / no), cited (yes / no), cited URL, run date and an optional cluster. Keep the query set and method the same every month.</p></div><div class="panel-b">${upl('ai', 'Upload AI answer results', true)}${ai && !ai.ok ? `<p class="start-error">${esc(ai.error)}</p>` : ''}<p class="hint">Google’s own numbers for AI Overviews and AI Mode appearances: <a href="#genai">Generative AI report</a>.</p></div></section>`;
+      if (ai && ai.ok) {
+        const engs = ai.engines.map(e => e.engine);
+        html += `<div class="un-kpis">${kp('Mentioned', pct1(ai.total.mention), '', `${fmtN(ai.total.runs)} answers checked · ${fmtN(ai.total.queries)} queries`)}${kp('Cited (linked to unstop.com)', pct1(ai.total.cite), '', '')}${ai.engines.slice(0, 4).map(e => kp(e.engine, pct1(e.mention), '', 'mentioned · cited ' + pct1(e.cite))).join('')}</div>
+          <section class="panel"><div class="panel-h"><h2>Trend by month</h2><p>Mention rate per engine.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Month</th><th class="r">Answers</th><th class="r">Mentioned</th><th class="r">Cited</th>${engs.map(e => `<th class="r">${esc(e)}</th>`).join('')}</tr></thead><tbody>${ai.trend.map(t => `<tr><td>${esc(t.month)}</td><td class="r">${fmtN(t.runs)}</td><td class="r">${pct1(t.mention)}</td><td class="r">${pct1(t.cite)}</td>${engs.map(e => `<td class="r">${pct1(t.byEngine[e])}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></section>
+          ${ai.clusters.length ? `<section class="panel"><div class="panel-h"><h2>By cluster</h2></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Cluster</th><th class="r">Queries</th><th class="r">Mentioned</th><th class="r">Cited</th></tr></thead><tbody>${ai.clusters.map(c => `<tr><td><b>${esc(c.cluster)}</b></td><td class="r">${c.queries}</td><td class="r">${pct1(c.mention)}</td><td class="r">${pct1(c.cite)}</td></tr>`).join('')}</tbody></table></div></div></section>` : ''}
+          <section class="panel"><div class="panel-h"><h2>Core queries</h2><p>Lowest mention rate first: these are the gaps.</p></div>${table('t-un-scq', [{ k: 'q', l: 'Query', cls: 'q' }, { k: 'cluster', l: 'Cluster' }, { k: 'mention', l: 'Mentioned', r: 1, f: r => pct1(r.mention) }, { k: 'cite', l: 'Cited', r: 1, f: r => pct1(r.cite) }, { k: 'engines', l: 'Mentioned by' }, { k: 'citedBy', l: 'Cited by' }], ai.queries, { sort: 'mention', dir: 1, file: 'unstop-ai-queries', pageSize: 20, placeholder: 'Filter queries' })}</section>
+          ${ai.urls.length ? `<section class="panel"><div class="panel-h"><h2>Unstop pages cited</h2></div>${table('t-un-scu', [{ k: 'path', l: 'Page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'n', l: 'Citations', r: 1 }], ai.urls, { search: false, file: 'unstop-ai-cited-pages', pageSize: 15 })}</section>` : ''}`;
+      }
+      html += M ? `<section class="panel"><div class="panel-h"><h2>Referral traffic from AI assistants (GA4)</h2><p>All channels, vs the same dates last year. Sources matched: ${esc(s.aiSources.slice(0, 8).join(', '))}…</p></div>${table('t-un-scr', [{ k: 'source', l: 'Assistant', f: r => `<b>${esc(r.source)}</b>` }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSessions) }, { k: 'engRate', l: 'Engagement rate', r: 1, f: r => pct1(r.engRate) }, { k: 'keyEvents', l: 'Key events', r: 1, f: r => fmtN(Math.round(r.keyEvents)) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(Math.round(r.newUsers)) }], M.ai, { search: false, file: 'unstop-ai-referrals', pageSize: 15 })}</section>` : '<div class="note"><a href="#ga4">Connect GA4</a> for referral traffic from AI assistants.</div>';
+    }
+    const mount = () => {
+      ['t-un-scp', 't-un-scc', 't-un-sce', 't-un-sct', 't-un-scm', 't-un-scl', 't-un-scd', 't-un-scq', 't-un-scu', 't-un-scr'].forEach(drawTable);
+      const $ = id => document.getElementById(id);
+      const bind = (id, model) => {
+        const f = $('un-sc-' + id); if (f) f.addEventListener('change', async () => { const file = f.files[0]; if (!file) return; try { const rows = await readSheet(file); X[id] = { rows, name: file.name, at: Date.now(), res: model ? model(rows) : null }; } catch (e) { X[id] = { rows: [], name: file.name, res: { ok: false, error: e.message } }; } rerender(); });
+        const c = $('un-sc-' + id + '-clear'); if (c) c.addEventListener('click', () => { delete X[id]; rerender(); });
+      };
+      bind('crawl', rows => SC.crawlModel(rows, sectioner(D))); bind('pub'); bind('links'); bind('ai');
+      const T = { pub: 'URL,Publish date,Template\nhttps://unstop.com/internship/data-analyst-internship,2026-06-12,Programmatic: Internships\nhttps://unstop.com/blog/tcs-nqt-exam-pattern,2026-07-01,Blog\n', links: 'Referring domain,Domain rating,First seen,Target URL,Link type\nexample-news.com,62,2026-09-14,https://unstop.com/employers/ats-software,dofollow\n', ai: 'Query,Engine,Mentioned,Cited,Cited URL,Date,Cluster\nbest platform for hackathons in india,ChatGPT,yes,no,,2026-10-15,Student\nbest platform for hackathons in india,Perplexity,yes,yes,https://unstop.com/hackathons,2026-10-15,Student\n' };
+      Object.keys(T).forEach(k => { const b = $('un-sc-' + k + '-tpl'); if (b) b.addEventListener('click', () => download(k + '-template.csv', T[k])); });
+      const pg = $('un-psi-go'); if (pg) pg.addEventListener('click', () => runPsi(A, D));
+      const ig = $('un-insp-go'); if (ig) ig.addEventListener('click', () => runInspect(A, D, 10));
+      const rg = $('un-rf-go'); if (rg) rg.addEventListener('click', () => measureRefreshes(A, D));
+      if (tab === 'refresh' && !X.refresh && refreshList(A, D).list.length) measureRefreshes(A, D);
+    };
+    return { html, mount };
+  };
+
   // ════════════════════════════ FULL FUNNEL ════════════════════════════
   V.funnel = (A, D) => {
     demoFill(D);
@@ -1474,6 +1675,7 @@
         <section class="panel"><div class="panel-h"><h2>2. What share of organic signups comes from non-branded searches?</h2><p>Estimate: each landing page’s signups × the non-branded share of its Search Console clicks.</p></div><div class="panel-b">${q2 ? `<div class="un-big"><b>${pct1(q2.share)}</b><span>estimated non-branded share of organic signups</span></div><p class="hint">${fmtN(Math.round(q2.nb))} of ${fmtN(q2.matched)} signups on pages found in Search Console query × page rows (${pct1(q2.coverage)} of organic signups). ${fmtN(q2.unmatched)} signups landed on pages without query data and are left out. Search Console never ties a query to a signup, so treat this as a labelled proxy.</p>` : `<p class="empty">${!ga ? '<a href="#ga4">Connect GA4</a> and ' : ''}${!(D.QP && D.QP.length) ? 'connect Search Console (query × page rows are needed)' : 'load signup events'} to estimate this.</p>`}</div></section>
       </div>` +
       `<section class="panel"><div class="panel-h"><h2>3. How much pipeline can we trace to organic?</h2><p>First touch and organic-in-the-journey are reported separately, never added.</p></div><div class="panel-b">${CR ? `<div class="un-kpis"><div class="un-kpi"><span>Organic first touch</span><b>${inr(CR.res.ft.pipeline)}</b><small>${fmtN(CR.res.ft.opps)} opportunities · ${inr(CR.res.ft.revenue)} closed won</small></div><div class="un-kpi"><span>Organic in the journey (assisted)</span><b>${CR.res.hasJourney ? inr(CR.res.assisted.pipeline) : '—'}</b><small>${CR.res.hasJourney ? fmtN(CR.res.assisted.opps) + ' opportunities · ' + inr(CR.res.assisted.revenue) + ' closed won' : 'needs a journey column in the export'}</small></div><div class="un-kpi"><span>Attribution coverage</span><b>${pct1(CR.res.coverage.source)}</b><small>of leads have an original source${CR.res.coverage.source < 80 ? ' · too low to report yet' : ''}</small></div></div><p class="hint"><a href="#leads">Leads & revenue</a> has channels, months and first pages.</p>` : '<p class="empty"><a href="#leads">Upload the CRM export</a> (lead ID, original source, journey, lifecycle stage, deal amount and stage) to answer this. Validate attribution coverage before sharing.</p>'}</div></section>` +
+      `<section class="panel"><div class="panel-h"><h2>Activity scorecards</h2><p>Every activity should connect to a number on the chain above. Each workstream has its own scorecard.</p></div><div class="panel-b"><div class="un-tabs">${SC_TABS.slice(1).map(([k, l]) => `<a href="#scorecards?w=${k}">${l}</a>`).join('')}</div></div></section>` +
       `<p class="un-row"><button class="btn-quiet" type="button" id="un-f-export">Download funnel metrics (CSV)</button><span class="hint">Metric, stage, value, change, status, source, owner, cadence, definition and last refresh.</span></p>`;
     const mount = () => {
       drawTable('t-un-fc');
@@ -1523,6 +1725,7 @@
           <label class="field"><span>Monthly SEO cost in ₹ (content, agency, tools, team share)</span><input type="text" id="un-cost" inputmode="decimal" value="${esc(s.monthlyCost)}" placeholder="e.g. 450000"></label>
           <label class="field"><span>Employer / recruiter share of that cost (%), for cost per employer signup</span><input type="number" id="un-cost-emp" min="0" max="100" value="${esc(s.empCostShare == null ? '' : s.empCostShare)}" placeholder="e.g. 30"></label>
           <label class="field"><span>Profile counts as complete at (%)</span><input type="number" id="un-moe-th" min="1" max="100" value="${esc(s.moeThreshold)}"></label>
+          <label class="field"><span>PageSpeed Insights API key (optional, free from Google Cloud; kept in this browser)</span><input type="text" id="un-psi-key" value="${esc(s.psiKey || '')}" autocomplete="off" spellcheck="false"></label>
           <label class="field"><span>Key pages for scroll depth (one path per line; empty = 25 most viewed)</span><textarea id="un-keypages" rows="4" spellcheck="false" placeholder="/internship&#10;/hackathons&#10;/blog/tcs-nqt-exam-pattern">${esc((s.keyPages || []).join('\n'))}</textarea></label>
           <label class="field"><span>Extra organic source words for MoEngage (optional)</span><input type="text" id="un-orgsrc" value="${esc(s.organicSources)}" placeholder="google, bing, organic, seo"></label>
         </div>
@@ -1549,7 +1752,7 @@
         n.pathSections = [...f.querySelectorAll('[data-path]')].filter(i => i.checked).map(i => i.dataset.path);
         n.monthlyCost = document.getElementById('un-cost').value.trim(); n.empCostShare = document.getElementById('un-cost-emp').value.trim();
         n.moeThreshold = +document.getElementById('un-moe-th').value || 80;
-        n.organicSources = document.getElementById('un-orgsrc').value.trim();
+        n.organicSources = document.getElementById('un-orgsrc').value.trim(); n.psiKey = document.getElementById('un-psi-key').value.trim();
         n.keyPages = document.getElementById('un-keypages').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 200);
         const owners = {}; f.querySelectorAll('[data-owner]').forEach(i => { const def = U.METRICS.find(x => x.id === i.dataset.owner); if (i.value.trim() && def && i.value.trim() !== def.owner) owners[i.dataset.owner] = i.value.trim(); }); n.owners = owners;
         save(D.site, n);

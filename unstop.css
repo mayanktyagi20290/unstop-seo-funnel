@@ -95,3 +95,9 @@
 .un-verdict.ok{border-left:4px solid var(--good)}
 .un-verdict.bad{border-left:4px solid var(--risk)}
 .note.un-warn{border-left:4px solid var(--risk);background:var(--risk-soft)}
+/* workstream scorecards */
+.un-scs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:14px}
+.un-sc{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:grid;gap:8px;align-content:start}
+.un-sc h3{margin:0 0 4px;font:700 14px/1.3 var(--display)}.un-sc h3 a{color:inherit;text-decoration:none}.un-sc h3 a:hover{color:var(--signal-ink)}
+.un-sc-r{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:baseline;border-top:1px solid var(--line-soft);padding-top:6px}
+.un-sc-r span{font-size:12px;color:var(--ink-2)}.un-sc-r b{font-size:16px}.un-sc-r small{grid-column:1/-1;color:var(--muted);font-size:11px}
