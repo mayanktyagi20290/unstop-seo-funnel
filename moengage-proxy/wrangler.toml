@@ -1,0 +1,13 @@
+name = "unstop-moengage-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-15"
+
+[vars]
+MOE_DC = "01"
+ALLOWED_ORIGINS = "https://mayanktyagi20290.github.io,http://localhost:8080"
+GSC_PROPERTY = "sc-domain:unstop.com"
+GA4_PROPERTY = ""
+
+# Secrets (never put them in this file):
+#   npx wrangler secret put MOE_WORKSPACE_ID
+#   npx wrangler secret put MOE_API_KEY
