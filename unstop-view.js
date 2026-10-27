@@ -13,7 +13,7 @@
   // ── per-site settings ──
   const KEY = site => 'un:funnel:' + site;
   const DEF = () => ({
-    types: null, rootArticles: true, clusters: null,
+    types: null, sections: null, rootArticles: true, clusters: null,
     events: JSON.parse(JSON.stringify(CFG.events || {})),
     ga4Property: CFG.ga4PropertyId || '', pricingPaths: (CFG.pricingPaths || []).slice(), aiSources: (CFG.aiSources || []).slice(),
     pathTypes: ['opp', 'emp', 'org'], owners: {}, monthlyCost: '', moeThreshold: 80, organicSources: ''
@@ -65,7 +65,7 @@
     const prevNote = D.prevStart ? `Changes compare with ${fmtD(D.prevStart)} – ${fmtD(D.prevEnd)}.` : 'Turn on “Compare with the previous period” to see changes.';
     const qpNote = vis.hasQP ? `Branded split from ${fmtN(vis.qpRows)} query × page rows (the first 25,000 Search Console returns), applied to each page type’s totals.` : (D.pending && D.pending.qp ? 'Loading query × page rows for the branded split…' : 'The branded split by page type needs query × page rows, which come only from a Search Console connection.');
     const html = head('Visibility by page type', `Search Console impressions, clicks, CTR and position for each Unstop page type, branded vs non-branded, with keyword ranking buckets and indexation. ${prevNote}`) +
-      `<div class="note">${qpNote} Page types follow the rules in <a href="#funnelsetup">Funnel setup</a>.</div>` +
+      `<div class="note">${qpNote} Page types follow the rules in <a href="#funnelsetup">Funnel setup</a>. For exact branded vs non-branded numbers per URL cluster (internships, jobs, hackathons, blog, employers…), open <a href="#urlclusters">Clusters: branded vs non-branded</a>.</div>` +
       `<section class="panel"><div class="panel-h"><h2>Page types</h2><p>Totals from the page report. “Non-branded (est.)” applies the branded share of each type’s query × page rows to its totals.</p></div>
         ${table('t-un-vt', [
         { k: 'name', l: 'Page type', f: r => `<b>${esc(r.name)}</b>` },
@@ -203,6 +203,132 @@
       rerender();
     });
   }
+
+  // ════════════════════════════ URL CLUSTERS: BRANDED VS NON-BRANDED ════════════════════════════
+  // With Search Console connected every cluster is queried on its own (page regex filter), so totals are
+  // exact: all queries, branded only and non-branded only, plus the cluster's query list for ranking
+  // buckets. Anonymised queries sit in the total but in neither split. Uploads and sample data fall back to
+  // page totals × the branded share of query × page rows (marked as estimates).
+  const CL = new Map(); // key → { status, done, total, models: Map, error, at }
+  const clKey = D => [D.site, D.start, D.end, D.prevStart || '', D.scope || '', JSON.stringify(settings(D.site).sections || null)].join('|');
+  function sectioner(D) { const s = settings(D.site); return U.makeSectioner(s.sections, { rootArticles: s.rootArticles }); }
+  async function loadClusters(D, A) {
+    const src = window.CW_SOURCE, k = clKey(D);
+    if (!src || !src.gsc || !A.brandRx) return;
+    const secOf = sectioner(D), list = secOf.sections.filter(x => x.id !== 'other' && x.rules.length);
+    const st = { status: 'loading', done: 0, total: list.length, models: new Map(), raw: new Map(), at: null };
+    CL.set(k, st); rerender();
+    const { clusterOf } = tools(D), isB = brandOf(A);
+    const agg = (rx, s, e, brand) => {
+      const f = [{ dimension: 'page', operator: 'includingRegex', expression: rx }];
+      if (brand != null) f.push({ dimension: 'query', operator: brand ? 'includingRegex' : 'excludingRegex', expression: A.brandRx });
+      return src.gsc.query({ startDate: s, endDate: e, type: 'web', rowLimit: 1, dimensionFilterGroups: [{ groupType: 'and', filters: f }] }).then(d => (d.rows || [])[0] || null);
+    };
+    const qs = (rx, s, e) => src.gsc.query({ startDate: s, endDate: e, type: 'web', dimensions: ['query'], rowLimit: 25000, dimensionFilterGroups: [{ groupType: 'and', filters: [{ dimension: 'page', operator: 'includingRegex', expression: rx }] }] })
+      .then(d => (d.rows || []).map(r => ({ q: r.keys[0], clicks: r.clicks, impr: r.impressions, pos: r.position })));
+    let i = 0;
+    const errors = [];
+    const worker = async () => {
+      while (i < list.length) {
+        const sec = list[i++];
+        const rx = U.sectionRegex(sec, null);
+        try {
+          const cur = await Promise.all([agg(rx, D.start, D.end), agg(rx, D.start, D.end, true), agg(rx, D.start, D.end, false), qs(rx, D.start, D.end)]);
+          const prev = D.prevStart ? await Promise.all([agg(rx, D.prevStart, D.prevEnd), agg(rx, D.prevStart, D.prevEnd, true), agg(rx, D.prevStart, D.prevEnd, false), qs(rx, D.prevStart, D.prevEnd)]) : [];
+          const o = { tot: cur[0], b: cur[1], nb: cur[2], queries: cur[3], capped: cur[3].length >= 25000, prevTot: prev[0], prevB: prev[1], prevNb: prev[2], prevQueries: prev[3] || null };
+          st.models.set(sec.id, U.sectionModel(o, isB, clusterOf));
+        } catch (e) { errors.push(sec.name + ': ' + e.message); }
+        st.done++;
+        const p = document.getElementById('un-cl-prog'); if (p) p.textContent = `Loading clusters from Search Console… ${st.done} of ${st.total}`;
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    st.status = errors.length && !st.models.size ? 'error' : 'done'; st.error = errors.join(' · '); st.at = Date.now();
+    if (CL.get(k) === st) rerender();
+  }
+  function clustersData(A, D) {
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    if (live) { const st = CL.get(clKey(D)); return { live: true, st, models: st ? st.models : new Map() }; }
+    const { clusterOf } = tools(D);
+    return { live: false, st: { status: 'done' }, models: U.sectionsFromRows(A, D, sectioner(D), brandOf(A), clusterOf) };
+  }
+  const sumM = list => { const o = { clicks: 0, impr: 0, posW: 0 }; list.forEach(x => { o.clicks += x.clicks; o.impr += x.impr; o.posW += x.pos * x.impr; }); return { clicks: o.clicks, impr: o.impr, ctr: o.impr ? o.clicks / o.impr * 100 : 0, pos: o.impr ? o.posW / o.impr : 0 }; };
+
+  V.urlclusters = (A, D) => {
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-cl')).forEach(k => delete TABLES[k]);
+    window.CW_LAST_A = A;
+    const secOf = sectioner(D), { typeOf } = tools(D);
+    const X = clustersData(A, D), st = X.st;
+    const intro = head('Clusters: branded vs non-branded', `Clicks, impressions, CTR and position for every Unstop URL cluster, always split into branded and non-branded searches, with keyword counts in the top 3, top 10 and positions 11–20. ${D.prevStart ? `Changes compare with ${fmtD(D.prevStart)} – ${fmtD(D.prevEnd)}.` : 'Turn on “Compare with the previous period” to see changes.'}`);
+    if (X.live && (!st || st.status === 'loading')) {
+      return { html: intro + `<div class="note"><span id="un-cl-prog">${st ? `Loading clusters from Search Console… ${st.done} of ${st.total}` : 'Starting…'}</span><br><small>Each cluster is queried separately (${D.prevStart ? 8 : 4} Search Console calls per cluster) so branded and non-branded totals are exact. Takes about a minute.</small></div>`, mount: () => { if (!st) loadClusters(D, A); } };
+    }
+    const typeName = id => id === 'other' ? 'Other' : typeOf.label(id);
+    const rows = secOf.sections.map(sec => { const m = X.models.get(sec.id); return m && (m.tot.impr || m.tot.clicks) ? { id: sec.id, name: sec.name, type: sec.type, typeName: typeName(sec.type), m } : null; }).filter(Boolean);
+    const order = id => U.CORE.includes(id) ? U.CORE.indexOf(id) : 10 + ['prod', 'home', 'util', 'other'].indexOf(id);
+    rows.sort((a, b) => order(a.type) - order(b.type) || b.m.tot.clicks - a.m.tot.clicks);
+    // page-type rollup
+    const tmap = new Map(); rows.forEach(r => { const t = tmap.get(r.type) || { type: r.type, name: r.typeName, list: [] }; t.list.push(r.m); tmap.set(r.type, t); });
+    const trows = [...tmap.values()].sort((a, b) => order(a.type) - order(b.type)).map(t => ({ name: t.name, n: t.list.length, tot: sumM(t.list.map(m => m.tot)), b: sumM(t.list.map(m => m.b)), nb: sumM(t.list.map(m => m.nb)), anon: t.list.reduce((a, m) => a + m.anon.clicks, 0), n10: t.list.reduce((a, m) => a + m.buckets.n.top10, 0), n11: t.list.reduce((a, m) => a + m.buckets.n.p11, 0) }));
+    const hasPrev = rows.some(r => r.m.prevBuckets);
+    const typeFilter = [{ key: 'typeName', label: 'Page type', options: [...new Set(rows.map(r => r.typeName))].map(n => [n, n]), test: (r, v) => r.typeName === v }];
+    const note = X.live ? `<div class="note">Exact Search Console totals per cluster (page filter per cluster). <b>Anonymised</b> = clicks Google reports for the cluster without a query; they belong to neither branded nor non-branded. Brand terms are set in Settings. Loaded ${when(st.at)}.${st.error ? `<br><span class="start-error">Some clusters failed: ${esc(st.error)}</span>` : ''} <button class="btn-quiet sm" type="button" id="un-cl-reload">Reload</button></div>`
+      : `<div class="note"><b>Estimate.</b> ${D.source === 'demo' ? 'Sample site, so the Unstop clusters mostly fall under Other. ' : ''}Without a Search Console connection, cluster totals come from the page report and the branded split from query × page rows. Connect Search Console for exact branded / non-branded totals per cluster.</div>`;
+    const bar = (b, n) => { const t = b + n; return t ? `<span class="un-bar" title="Non-branded ${pct1(n / t * 100)}"><i style="width:${(n / t * 100).toFixed(1)}%"></i></span>` : ''; };
+    const html = intro + note +
+      `<section class="panel"><div class="panel-h"><h2>By page type</h2><p>Sum of the clusters below. Never read the sitewide total on its own.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page type</th><th class="r">Clusters</th><th class="r">All clicks</th><th class="r">Non-branded clicks</th><th class="r">NB impr.</th><th class="r">NB CTR</th><th class="r">NB position</th><th class="r">Branded clicks</th><th class="r">Branded CTR</th>${X.live ? '<th class="r">Anonymised</th>' : ''}<th class="r">NB top 10</th><th class="r">NB 11–20</th><th>Non-branded share</th></tr></thead><tbody>
+        ${trows.map(t => `<tr><td><b>${esc(t.name)}</b></td><td class="r">${t.n}</td><td class="r">${fmtN(t.tot.clicks)}</td><td class="r">${fmtN(Math.round(t.nb.clicks))}</td><td class="r">${fmtN(Math.round(t.nb.impr))}</td><td class="r">${pct1(t.nb.ctr)}</td><td class="r">${t.nb.impr ? posTag(t.nb.pos) : '—'}</td><td class="r">${fmtN(Math.round(t.b.clicks))}</td><td class="r">${pct1(t.b.ctr)}</td>${X.live ? `<td class="r">${fmtN(t.anon)}</td>` : ''}<td class="r">${fmtN(t.n10)}</td><td class="r">${fmtN(t.n11)}</td><td>${bar(t.b.clicks, t.nb.clicks)}</td></tr>`).join('')}
+      </tbody></table></div></div></section>` +
+      `<section class="panel"><div class="panel-h"><h2>Clusters: clicks, impressions, CTR, position</h2><p>Non-branded first. ${X.live ? '' : 'Branded / non-branded are estimates.'}</p></div>
+        ${table('t-un-clv', [
+        { k: 'typeName', l: 'Page type' },
+        { k: 'name', l: 'Cluster', f: r => `<a href="#un-cl-${esc(r.id)}" data-cl="${esc(r.id)}"><b>${esc(r.name)}</b></a>` },
+        { k: 'clicks', l: 'All clicks', r: 1, f: r => fmtN(r.m.tot.clicks) + ' ' + dchip(r.m.d && r.m.d.clicks), csv: r => r.m.tot.clicks },
+        { k: 'impr', l: 'All impr.', r: 1, f: r => fmtN(r.m.tot.impr), csv: r => r.m.tot.impr },
+        { k: 'nbClicks', l: 'NB clicks', r: 1, f: r => fmtN(Math.round(r.m.nb.clicks)) + ' ' + dchip(r.m.d && r.m.d.nbClicks), csv: r => Math.round(r.m.nb.clicks) },
+        { k: 'nbImpr', l: 'NB impr.', r: 1, f: r => fmtN(Math.round(r.m.nb.impr)) + ' ' + dchip(r.m.d && r.m.d.nbImpr), csv: r => Math.round(r.m.nb.impr) },
+        { k: 'nbCtr', l: 'NB CTR', r: 1, f: r => pct1(r.m.nb.ctr), csv: r => r.m.nb.ctr },
+        { k: 'nbPos', l: 'NB position', r: 1, f: r => r.m.nb.impr ? posTag(r.m.nb.pos) + ' ' + dchip(r.m.d && r.m.d.nbPos, true, 'pos') : '—', csv: r => r.m.nb.pos },
+        { k: 'bClicks', l: 'Branded clicks', r: 1, f: r => fmtN(Math.round(r.m.b.clicks)) + ' ' + dchip(r.m.d && r.m.d.bClicks), csv: r => Math.round(r.m.b.clicks) },
+        { k: 'bImpr', l: 'Branded impr.', r: 1, f: r => fmtN(Math.round(r.m.b.impr)), csv: r => Math.round(r.m.b.impr) },
+        { k: 'bCtr', l: 'Branded CTR', r: 1, f: r => pct1(r.m.b.ctr), csv: r => r.m.b.ctr },
+        { k: 'bPos', l: 'Branded position', r: 1, f: r => r.m.b.impr ? posTag(r.m.b.pos) : '—', csv: r => r.m.b.pos },
+        ...(X.live ? [{ k: 'anon', l: 'Anonymised clicks', r: 1, f: r => fmtN(r.m.anon.clicks), csv: r => r.m.anon.clicks }] : []),
+        { k: 'bShare', l: 'Branded share', r: 1, f: r => r.m.bShare == null ? '—' : pct1(r.m.bShare), csv: r => r.m.bShare }
+      ], rows.map(r => ({ ...r, clicks: r.m.tot.clicks, impr: r.m.tot.impr, nbClicks: r.m.nb.clicks, nbImpr: r.m.nb.impr, nbCtr: r.m.nb.ctr, nbPos: r.m.nb.impr ? r.m.nb.pos : 999, bClicks: r.m.b.clicks, bImpr: r.m.b.impr, bCtr: r.m.b.ctr, bPos: r.m.b.impr ? r.m.b.pos : 999, anon: r.m.anon.clicks, bShare: r.m.bShare })),
+        { search: false, file: 'unstop-clusters-branded-vs-nonbranded', pageSize: 40, filters: typeFilter })}</section>` +
+      `<section class="panel"><div class="panel-h"><h2>Keyword ranking buckets by cluster</h2><p>Queries counted once per cluster at the cluster’s average position for that query. ${hasPrev ? 'Change vs the previous period in brackets.' : ''}${rows.some(r => r.m.capped) ? ' Clusters marked * have more than 25,000 queries; counts cover the 25,000 with most clicks.' : ''}</p></div>
+        ${table('t-un-clr', [
+        { k: 'typeName', l: 'Page type' },
+        { k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>${r.m.capped ? ' *' : ''}` },
+        { k: 'n3', l: 'NB top 3', r: 1, f: r => cnt(r.n3, r.m.prevBuckets && r.m.prevBuckets.n.top3, !!r.m.prevBuckets) },
+        { k: 'n10', l: 'NB top 10', r: 1, f: r => cnt(r.n10, r.m.prevBuckets && r.m.prevBuckets.n.top10, !!r.m.prevBuckets) },
+        { k: 'n11', l: 'NB 11–20 (quick wins)', r: 1, f: r => cnt(r.n11, r.m.prevBuckets && r.m.prevBuckets.n.p11, !!r.m.prevBuckets) },
+        { k: 'nt', l: 'NB queries', r: 1, f: r => fmtN(r.nt) },
+        { k: 'b3', l: 'Branded top 3', r: 1, f: r => cnt(r.b3, r.m.prevBuckets && r.m.prevBuckets.b.top3, !!r.m.prevBuckets) },
+        { k: 'b10', l: 'Branded top 10', r: 1, f: r => cnt(r.b10, r.m.prevBuckets && r.m.prevBuckets.b.top10, !!r.m.prevBuckets) },
+        { k: 'b11', l: 'Branded 11–20', r: 1, f: r => fmtN(r.b11) },
+        { k: 'bt', l: 'Branded queries', r: 1, f: r => fmtN(r.bt) }
+      ], rows.map(r => ({ ...r, n3: r.m.buckets.n.top3, n10: r.m.buckets.n.top10, n11: r.m.buckets.n.p11, nt: r.m.buckets.n.total, b3: r.m.buckets.b.top3, b10: r.m.buckets.b.top10, b11: r.m.buckets.b.p11, bt: r.m.buckets.b.total })),
+        { search: false, file: 'unstop-cluster-ranking-buckets', pageSize: 40, filters: typeFilter })}</section>` +
+      `<section class="panel"><div class="panel-h"><h2>Inside a cluster: query clusters and quick wins</h2><p>Pick a cluster to see its non-branded searches by query cluster (rules in Funnel setup) and its non-branded queries in positions 11–20.</p></div><div class="panel-b">
+        <label class="field"><span>Cluster</span><select id="un-cl-pick">${rows.map(r => `<option value="${esc(r.id)}">${esc(r.typeName)} › ${esc(r.name)}</option>`).join('')}</select></label>
+        <div id="un-cl-detail"></div></div></section>`;
+    const detail = id => {
+      const r = rows.find(x => x.id === id); const el = document.getElementById('un-cl-detail'); if (!r || !el) return;
+      const m = r.m;
+      el.innerHTML = `<div class="grid-2 even"><div><h3 class="un-sub">${esc(r.name)}: query clusters</h3><div class="tw"><table class="un-mini"><thead><tr><th>Query cluster</th><th class="r">NB clicks</th><th class="r">NB impr.</th><th class="r">NB CTR</th><th class="r">NB pos.</th><th class="r">Top 3</th><th class="r">Top 10</th><th class="r">11–20</th><th class="r">Branded clicks</th></tr></thead><tbody>${m.byQueryCluster.length ? m.byQueryCluster.map(c => `<tr><td><b>${esc(c.name)}</b></td><td class="r">${fmtN(c.nb.clicks)}</td><td class="r">${fmtN(c.nb.impr)}</td><td class="r">${pct1(c.nb.ctr)}</td><td class="r">${c.nb.impr ? posTag(c.nb.pos) : '—'}</td><td class="r">${fmtN(c.n3)}</td><td class="r">${fmtN(c.n10)}</td><td class="r">${fmtN(c.n11)}</td><td class="r">${fmtN(c.b.clicks)}</td></tr>`).join('') : '<tr><td colspan="9" class="empty">No query rows for this cluster.</td></tr>'}</tbody></table></div></div>
+        <div><h3 class="un-sub">${esc(r.name)}: non-branded queries in positions 11–20</h3><div class="tw"><table class="un-mini"><thead><tr><th>Query</th><th class="r">Impr.</th><th class="r">Clicks</th><th class="r">Position</th></tr></thead><tbody>${m.quick.length ? m.quick.slice(0, 25).map(q => `<tr><td class="q">${esc(q.q)}</td><td class="r">${fmtN(q.impr)}</td><td class="r">${fmtN(q.clicks)}</td><td class="r">${posTag(q.pos)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">None in this period.</td></tr>'}</tbody></table></div></div></div>`;
+    };
+    const mount = () => {
+      ['t-un-clv', 't-un-clr'].forEach(drawTable);
+      const pick = document.getElementById('un-cl-pick');
+      if (pick) { pick.addEventListener('change', () => detail(pick.value)); detail(pick.value); }
+      const tv = document.getElementById('t-un-clv'); if (tv) tv.addEventListener('click', e => { const a = e.target.closest('[data-cl]'); if (!a || !pick) return; e.preventDefault(); pick.value = a.dataset.cl; detail(a.dataset.cl); pick.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+      const rl = document.getElementById('un-cl-reload'); if (rl) rl.addEventListener('click', () => { CL.delete(clKey(D)); loadClusters(D, A); });
+    };
+    return { html, mount };
+  };
 
   // ════════════════════════════ GA4 ════════════════════════════
   let gaToken = null, gaExp = 0, gaClient = null;
@@ -809,6 +935,10 @@
         <label class="check"><input type="checkbox" id="un-rootart" ${s.rootArticles ? 'checked' : ''}> Treat root-level article slugs (one folder, 4+ hyphens) as Blog & guides</label>
         ${unc.length ? `<p class="hint">Folders in this data that no rule covers (counted as Other), by clicks: ${unc.map(([k, c]) => `<code>${esc(k)}</code> ${fmtN(c)}`).join(' · ')}</p>` : '<p class="hint">Every page in this data matches a rule.</p>'}
       </div></section>
+      <section class="panel"><div class="panel-h"><h2>URL clusters</h2><p>The finer split inside each page type, used on <a href="#urlclusters">Clusters: branded vs non-branded</a>. One cluster per line: <code>Name | Page type: /folder, /prefix-*, =/exact</code>. First match wins, so put narrower rules (e.g. <code>/employers/hire-*</code>) above wider ones (<code>/employers</code>).</p></div><div class="panel-b">
+        <textarea id="un-sections" rows="12" spellcheck="false">${esc(U.sectionsText(s.sections, s.types))}</textarea>
+        ${(() => { const so = U.makeSectioner(s.sections, { rootArticles: s.rootArticles }); const o = new Map(); (A.P || []).forEach(r => { if (so(r.p) !== 'other') return; const seg = '/' + (U.pathOnly(r.p).split('/')[1] || ''); o.set(seg, (o.get(seg) || 0) + (+r.clicks || 0)); }); const u = [...o.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20); return u.length ? `<p class="hint">Folders no cluster covers, by clicks: ${u.map(([k, c]) => `<code>${esc(k)}</code> ${fmtN(c)}`).join(' · ')}</p>` : '<p class="hint">Every page in this data matches a cluster.</p>'; })()}
+      </div></section>
       <section class="panel"><div class="panel-h"><h2>Query clusters</h2><p>One cluster per line: <code>Name: word, phrase, word</code>. First match wins.</p></div><div class="panel-b"><textarea id="un-clusters" rows="9" spellcheck="false">${esc(U.clustersText(s.clusters || U.DEFAULT_CLUSTERS))}</textarea></div></section>
       <section class="panel"><div class="panel-h"><h2>GA4 event names</h2><p>Comma-separated, exact GA4 event names. The GA4 screen lists every event recorded in organic sessions.</p></div><div class="panel-b un-grid2">
         ${evRow('studentSignup', 'Student signup')}${evRow('employerSignup', 'Employer / recruiter signup')}${evRow('demoRequest', 'Demo request')}${evRow('contactSubmit', 'Contact form submission')}${evRow('opportunityAction', 'Opportunity register / apply')}${evRow('productClick', 'Product click (blog → product)')}${evRow('scroll', 'Scroll')}
@@ -837,6 +967,7 @@
         const types = U.parseTypes(document.getElementById('un-types').value);
         const cl = U.parseClusters(document.getElementById('un-clusters').value);
         n.types = types.length ? types : null; n.clusters = cl.length ? cl : null;
+        const secs = U.parseSections(document.getElementById('un-sections').value, n.types || U.DEFAULT_TYPES); n.sections = secs.length ? secs : null;
         n.rootArticles = document.getElementById('un-rootart').checked;
         f.querySelectorAll('[data-ev]').forEach(i => { n.events[i.dataset.ev] = i.value.split(',').map(x => x.trim()).filter(Boolean); });
         n.pricingPaths = document.getElementById('un-pricing').value.split(',').map(x => x.trim()).filter(Boolean);

@@ -40,7 +40,7 @@ window.CW_CONFIG = {
       scroll: ['scroll']
     },
     // Page paths treated as the employer pricing page
-    pricingPaths: ['/employers/pricing', '/pricing'],
+    pricingPaths: ['/saas-pricing', '/employers/pricing', '/pricing'],
     // Sources counted as AI assistants / answer engines in GA4 referral traffic
     aiSources: ['chatgpt', 'openai', 'perplexity', 'gemini', 'bard', 'copilot', 'claude', 'deepseek', 'meta.ai', 'you.com', 'phind', 'grok']
   },

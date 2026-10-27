@@ -77,3 +77,6 @@
 .un-map select,.un-map input{min-width:90px}
 .un-map td.r{min-width:110px;white-space:normal;line-height:1.3}
 .un-map td.r .un-n{display:block}
+/* URL clusters */
+.un-bar{display:inline-block;width:90px;height:8px;border-radius:999px;background:var(--line);overflow:hidden;vertical-align:middle}
+.un-bar i{display:block;height:100%;background:var(--signal)}

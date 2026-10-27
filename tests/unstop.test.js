@@ -122,4 +122,35 @@ test('sitemaps map to page types by file name', () => {
   const r = U.sitemapTypes([{ path: 'https://unstop.com/sitemap-c.xml', contents: [{ submitted: '10' }] }, { path: 'https://unstop.com/sitemap-hackathons-2.xml' }, { path: 'https://unstop.com/sitemap-misc.xml' }], typeOf);
   assert.equal(JSON.stringify(r.map(x => x.type)), JSON.stringify(['org', 'opp', null])); assert.equal(r[0].submitted, 10);
 });
+
+test('URL clusters: user-named folders land in their own cluster and roll up to page types', () => {
+  const f = U.makeSectioner();
+  const cases = { 'https://unstop.com/internship': ['internships', 'opp'], 'https://unstop.com/job': ['jobs', 'opp'], 'https://unstop.com/hackathons': ['hackathons', 'opp'],
+    'https://unstop.com/competitions/x-1': ['competitions', 'opp'], 'https://unstop.com/blog/x': ['blog', 'blog'], 'https://unstop.com/resources': ['resources', 'blog'],
+    'https://unstop.com/employers/hire-java-developers': ['empjobboard', 'emp'], 'https://unstop.com/employers/ats-software': ['empb2b', 'emp'], 'https://unstop.com/saas-pricing': ['empb2b', 'emp'],
+    'https://unstop.com/c/tcs-1': ['orgpages', 'org'], 'https://unstop.com/tcs-nqt-exam-pattern-sections-and-preparation-guide': ['blog', 'blog'], 'https://unstop.com/': ['home', 'home'] };
+  Object.entries(cases).forEach(([u, [id, t]]) => { assert.equal(f(u), id, u); assert.equal(f.typeOf(f(u)), t, u); });
+});
+test('URL clusters: text round-trip keeps ids, names and page types', () => {
+  const p = U.parseSections(U.sectionsText());
+  assert.equal(p.length, U.DEFAULT_SECTIONS.length);
+  p.forEach((x, i) => { assert.equal(x.id, U.DEFAULT_SECTIONS[i].id); assert.equal(x.type, U.DEFAULT_SECTIONS[i].type); assert.equal(x.rules.join(), U.DEFAULT_SECTIONS[i].rules.join()); });
+  const c = U.parseSections('Placements | Opportunity & competition: /placements\nMisc: /misc');
+  assert.equal(c[0].type, 'opp'); assert.equal(c[1].type, 'other');
+});
+test('URL cluster regex matches the folder but not look-alike folders', () => {
+  const rx = new RegExp(U.sectionRegex(U.DEFAULT_SECTIONS.find(x => x.id === 'jobs')));
+  assert.ok(rx.test('https://unstop.com/jobs/x-1')); assert.ok(rx.test('https://unstop.com/job')); assert.ok(!rx.test('https://unstop.com/jobsearch'));
+});
+test('cluster model: exact branded / non-branded / anonymised and ranking buckets', () => {
+  const m = U.sectionModel({ tot: { clicks: 100, impressions: 1000, position: 5 }, b: { clicks: 60, impressions: 300, position: 1.5 }, nb: { clicks: 30, impressions: 600, position: 8 },
+    queries: [{ q: 'unstop internship', clicks: 60, impr: 300, pos: 1.2 }, { q: 'summer internship 2026', clicks: 20, impr: 300, pos: 2 }, { q: 'data analyst internship', clicks: 9, impr: 200, pos: 8 }, { q: 'internship for freshers', clicks: 1, impr: 100, pos: 14 }],
+    prevTot: { clicks: 80, impressions: 900, position: 6 }, prevB: { clicks: 50, impressions: 300, position: 1.5 }, prevNb: { clicks: 25, impressions: 500, position: 9 },
+    prevQueries: [{ q: 'summer internship 2026', clicks: 5, impr: 100, pos: 12 }] }, isB, U.makeClusterer());
+  assert.equal(m.anon.clicks, 10); assert.equal(m.bShare.toFixed(1), '66.7');
+  assert.equal(m.buckets.n.top3, 1); assert.equal(m.buckets.n.top10, 2); assert.equal(m.buckets.n.p11, 1); assert.equal(m.buckets.b.top3, 1);
+  assert.equal(m.prevBuckets.n.p11, 1); assert.equal(m.d.nbClicks, 20);
+  assert.equal(m.quick[0].q, 'internship for freshers');
+  assert.equal(m.byQueryCluster[0].name, 'Internships');
+});
 report('unstop');
