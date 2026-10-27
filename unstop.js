@@ -147,6 +147,8 @@
     { id: 'home', name: 'Home page', type: 'home', rules: ['=/'] },
     { id: 'util', name: 'Login, account & utility', type: 'util', rules: ['/auth', '/user', '/organiser-panel', '/manage', '/app', '/api', '/submissions-round', '/post-now', '/legal', '/faq', '/contact-us', '/refer-and-earn', '/about', '/notifications', '/home', '/certificate-preview', '/f'] }
   ];
+  // Clusters whose pages carry a clear conversion path (register, apply, post a job, book a demo) by default.
+  const DEFAULT_PATH_SECTIONS = ['hackathons', 'competitions', 'internships', 'jobs', 'quizzes', 'fests', 'workshops', 'scholarships', 'awards', 'ambassador', 'oppother', 'empjobboard', 'empb2b', 'practice'];
   // The section whose id is 'blog' also takes root-level article slugs, like the Blog & guides type.
   function makeSectioner(sections, opt = {}) {
     const list = (sections && sections.length ? sections : DEFAULT_SECTIONS).map(x => ({ ...x, tests: (x.rules || []).map(ruleTest).filter(Boolean) }));
@@ -387,7 +389,10 @@
       landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, limit: 100000 },
       device: { dateRanges: both, dimensions: [{ name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }, { name: 'engagedSessions' }], dimensionFilter: org, limit: 50 },
       country: { dateRanges: both, dimensions: [{ name: 'country' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 300 },
-      region: { dateRanges: [cur], dimensions: [{ name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), limit: 60, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }] },
+      region: { dateRanges: both, dimensions: [{ name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), limit: 120 },
+      // page type × device and page type × state, so device and geography are never only sitewide
+      landingDevice: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 250000 },
+      landingRegion: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), limit: 250000 },
       daily: { dateRanges: both, dimensions: [{ name: 'date' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 1000 },
       events: { dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, limit: 250000 },
       eventsYoy: { dateRanges: [yoy], dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, limit: 2000 },
@@ -416,7 +421,7 @@
   const inSet = (list) => { const s = new Set((list || []).map(x => String(x).trim().toLowerCase()).filter(Boolean)); return n => s.has(String(n || '').toLowerCase()); };
 
   // Organic funnel from GA4 rows: totals, YoY, by page type, device, geography, events, AI referrals.
-  function ga4Model(raw, typeOf, ev) {
+  function ga4Model(raw, typeOf, ev, opt = {}) {
     const R = {}; Object.keys(raw || {}).forEach(k => { R[k] = gaRows(raw[k]); });
     const L = R.landing || [], cur = L.filter(r => r.range === 'cur'), yoy = L.filter(r => r.range === 'yoy');
     const tot = rows => ({ sessions: sum(rows, 'sessions'), newUsers: sum(rows, 'newUsers'), engaged: sum(rows, 'engagedSessions'), views: sum(rows, 'screenPageViews'), dur: sum(rows, 'userEngagementDuration'), keyEvents: sum(rows, 'keyEvents') });
@@ -462,7 +467,23 @@
     };
     const device = split(R.device || [], 'deviceCategory');
     const country = split(R.country || [], 'country');
-    const region = (R.region || []).map(r => ({ key: r.region, sessions: r.sessions, newUsers: r.newUsers })).sort((a, b) => b.sessions - a.sessions);
+    const region = split(R.region || [], 'region');
+    // page type × another dimension, with last year
+    const cross = (rows, dim) => {
+      const m = new Map();
+      rows.forEach(r => { const t = typeOf(r.landingPage), k = t + '|' + (r[dim] || '(not set)'); const o = m.get(k) || { type: t, typeName: typeOf.label(t), key: r[dim] || '(not set)', sessions: 0, ySessions: 0, newUsers: 0, yNewUsers: 0 }; if (r.range === 'yoy') { o.ySessions += r.sessions; o.yNewUsers += r.newUsers; } else { o.sessions += r.sessions; o.newUsers += r.newUsers; } m.set(k, o); });
+      return [...m.values()].map(o => ({ ...o, dSessions: chg(o.sessions, o.ySessions), dNewUsers: chg(o.newUsers, o.yNewUsers) }));
+    };
+    const typeDevice = cross(R.landingDevice || [], 'deviceCategory'), typeRegion = cross(R.landingRegion || [], 'region');
+    // URL clusters and the share of organic sessions landing on clusters with a clear conversion path
+    let sections = null, pathCov = null;
+    if (opt.sectionOf) {
+      const so = opt.sectionOf, paths = new Set(opt.pathSections || []), sm = new Map();
+      pages.forEach(p => { const id = so(p.path); const o = sm.get(id) || { id, name: so.label(id), type: so.typeOf(id), typeName: so.typeOf(id) === 'other' ? 'Other' : typeOf.label(so.typeOf(id)), path: paths.has(id), landings: 0, sessions: 0, ySessions: 0, newUsers: 0, yNewUsers: 0, engaged: 0, stu: 0, emp: 0, opp: 0, demo: 0, contact: 0, prodClick: 0 }; o.landings += p.sessions > 0 ? 1 : 0; ['sessions', 'ySessions', 'newUsers', 'yNewUsers', 'engaged', 'stu', 'emp', 'opp', 'demo', 'contact', 'prodClick'].forEach(k => { o[k] += p[k]; }); sm.set(id, o); });
+      sections = [...sm.values()].map(o => ({ ...o, signups: o.stu + o.emp, cvr: o.sessions ? (o.stu + o.emp) / o.sessions * 100 : null, engRate: o.sessions ? o.engaged / o.sessions * 100 : null, dSessions: chg(o.sessions, o.ySessions), dNewUsers: chg(o.newUsers, o.yNewUsers), share: T.sessions ? o.sessions / T.sessions * 100 : 0 })).sort((a, b) => b.sessions - a.sessions);
+      const on = sections.filter(x => x.path), cs = sum(on, 'sessions'), ys = sum(on, 'ySessions'), yt = sum(sections, 'ySessions');
+      pathCov = { share: T.sessions ? cs / T.sessions * 100 : null, sessions: cs, yShare: yt ? ys / yt * 100 : null, sections: on.length };
+    }
     // daily trend with last year aligned by day index
     const D = R.daily || [];
     const dc = D.filter(r => r.range === 'cur').sort((a, b) => a.date.localeCompare(b.date)), dy = D.filter(r => r.range === 'yoy').sort((a, b) => a.date.localeCompare(b.date));
@@ -494,7 +515,7 @@
       ok: cur.length > 0 || E.length > 0,
       total: { ...T, engRate: T.sessions ? T.engaged / T.sessions * 100 : null, pps: T.sessions ? T.views / T.sessions : null, avgEngSec: T.sessions ? T.dur / T.sessions : null },
       yoy: TY, dSessions: TY ? chg(T.sessions, TY.sessions) : null, dNewUsers: TY ? chg(T.newUsers, TY.newUsers) : null,
-      pages, types, device, country, region, daily, ai, aiPages,
+      pages, types, device, country, region, typeDevice, typeRegion, sections, pathCov, daily, ai, aiPages,
       events: [...evTot.values()].sort((a, b) => b.count - a.count),
       ev: { stu: evSum('stu'), emp: evSum('emp'), demo: evSum('demo'), contact: evSum('contact'), opp: evSum('opp'), prodClick: evSum('prodClick'), scroll: evSum('scroll'), yStu: yEv('studentSignup'), yEmp: yEv('employerSignup'), yDemo: yEv('demoRequest'), yContact: yEv('contactSubmit'), yOpp: yEv('opportunityAction') },
       returning: { cur: ret('cur'), yoy: ret('yoy') }, pricing, channels
@@ -651,7 +672,7 @@
     { stage: 'Visibility', id: 'indexed', label: 'Pages getting impressions', src: 'GSC', owner: 'Technical SEO + Engineering', cadence: 'Weekly', def: 'URLs with at least one impression in the period (proxy for indexed and visible pages).' },
     { stage: 'Traffic', id: 'sessions', label: 'Organic sessions', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'GA4 sessions with Default channel group = Organic Search.' },
     { stage: 'Traffic', id: 'newUsers', label: 'Organic new users', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'First-time users whose session channel is Organic Search.' },
-    { stage: 'Traffic', id: 'pathCov', label: 'Sessions on pages with a conversion path', src: 'GA4', owner: 'SEO + CRO/Product', cadence: 'Monthly', def: 'Share of organic landing sessions on page types marked as having a clear CTA (set in Funnel setup).' },
+    { stage: 'Traffic', id: 'pathCov', label: 'Sessions on pages with a conversion path', src: 'GA4', owner: 'SEO + CRO/Product', cadence: 'Monthly', def: 'Share of organic landing sessions on URL clusters marked as having a clear conversion path (register, apply, post a job, book a demo); set in Funnel setup.' },
     { stage: 'Signups', id: 'stu', label: 'Organic student signups', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Student signup events (Funnel setup) in organic sessions.' },
     { stage: 'Signups', id: 'emp', label: 'Organic employer signups', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Employer / recruiter signup events in organic sessions.' },
     { stage: 'Signups', id: 'cvr', label: 'Signup conversion rate', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Organic signups ÷ organic sessions.' },
@@ -672,7 +693,7 @@
     { stage: 'Pipeline & revenue', id: 'mql', label: 'MQLs, pipeline, closed revenue', src: 'CRM', owner: 'CRM Ops + Finance + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Next phase: needs the CRM export joined on lead ID.', later: true }
   ];
 
-  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, makeSectioner, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
+  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
     moeHeaderMap, moeQuality, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;

@@ -16,7 +16,7 @@
     types: null, sections: null, rootArticles: true, clusters: null,
     events: JSON.parse(JSON.stringify(CFG.events || {})),
     ga4Property: CFG.ga4PropertyId || '', pricingPaths: (CFG.pricingPaths || []).slice(), aiSources: (CFG.aiSources || []).slice(),
-    pathTypes: ['opp', 'emp', 'org'], owners: {}, monthlyCost: '', moeThreshold: 80, organicSources: ''
+    pathTypes: ['opp', 'emp', 'org'], pathSections: null, owners: {}, monthlyCost: '', moeThreshold: 80, organicSources: ''
   });
   function settings(site) { let s = null; try { s = JSON.parse(localStorage.getItem(KEY(site))); } catch (e) { } const d = DEF(); return s ? { ...d, ...s, events: { ...d.events, ...(s.events || {}) } } : d; }
   function save(site, s) { try { localStorage.setItem(KEY(site), JSON.stringify(s)); } catch (e) { } }
@@ -391,8 +391,8 @@
   function gaModel(D) {
     const g = GA.get(D.site); if (!g) return null;
     const { typeOf, s } = tools(D);
-    const sig = JSON.stringify([s.events, s.types, s.rootArticles]);
-    if (!g.model || g.sig !== sig) { g.model = U.ga4Model(g.raw, typeOf, s.events); g.sig = sig; }
+    const sig = JSON.stringify([s.events, s.types, s.rootArticles, s.sections, s.pathSections]);
+    if (!g.model || g.sig !== sig) { g.model = U.ga4Model(g.raw, typeOf, s.events, { sectionOf: sectioner(D), pathSections: s.pathSections || U.DEFAULT_PATH_SECTIONS }); g.sig = sig; }
     return g.model;
   }
 
@@ -451,9 +451,10 @@
         { k: 'prodClick', l: 'Product clicks', r: 1, f: r => fmtN(r.prodClick) },
         { k: 'leads', l: 'Demo + contact', r: 1, f: r => fmtN(r.demo + r.contact), csv: r => r.demo + r.contact }
       ], M.types.map(r => ({ ...r, leads: r.demo + r.contact })), { search: false, file: 'unstop-ga4-by-page-type', pageSize: 30 })}</section>` +
+      gaPathBlock(M, s) + gaCrossBlocks(M, D) +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Device</h2></div>${splitTable('t-un-gd', 'Device', M.device)}</section>
         <section class="panel"><div class="panel-h"><h2>Country</h2></div>${splitTable('t-un-gc', 'Country', M.country)}</section></div>` +
-      (M.region.length ? `<section class="panel"><div class="panel-h"><h2>Indian states and regions</h2></div>${table('t-un-gr', [{ k: 'key', l: 'Region' }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) }], M.region, { search: false, file: 'unstop-ga4-regions', pageSize: 15 })}</section>` : '') +
+      (M.region.length ? `<section class="panel"><div class="panel-h"><h2>Indian states and regions</h2><p>All organic sessions in India, vs the same dates last year.</p></div>${table('t-un-gr', [{ k: 'key', l: 'Region' }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) }], M.region, { search: false, file: 'unstop-ga4-regions', pageSize: 15 })}</section>` : '') +
       `<section class="panel"><div class="panel-h"><h2>Blog → product journeys</h2><p>Organic sessions that landed on Blog & guides and fired a product-click event (events in Funnel setup).</p></div>
         ${table('t-un-gb', [
         { k: 'path', l: 'Blog landing page', cls: 'u' }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) },
@@ -485,7 +486,7 @@
       `<div class="note"><b>How to read this.</b> Events are counted in the session’s channel and landing page, so a signup made later in an organic session counts for the page that session started on. GA4’s returning-user split is not a strict 30-day return window. Branded vs non-branded is not visible in GA4; the Full funnel screen gives a labelled estimate using Search Console.</div>`;
     const mount = () => {
       gaMount(D);
-      ['t-un-gt', 't-un-gd', 't-un-gc', 't-un-gr', 't-un-gb', 't-un-ge', 't-un-gch', 't-un-gai', 't-un-gaip', 't-un-gp', 't-un-gev'].forEach(drawTable);
+      ['t-un-gt', 't-un-gpc', 't-un-gd', 't-un-gc', 't-un-gr', 't-un-gb', 't-un-ge', 't-un-gch', 't-un-gai', 't-un-gaip', 't-un-gp', 't-un-gev'].forEach(drawTable);
       chart('un-ga-daily', { type: 'line', data: { labels: M.daily.map(d => fmtD(d.d)), datasets: [
         { label: 'Organic sessions', data: M.daily.map(d => d.sessions), borderColor: cssVar('--signal'), backgroundColor: cssVar('--signal'), tension: .25, pointRadius: 0, borderWidth: 2 },
         { label: 'Same dates last year', data: M.daily.map(d => d.ySessions), borderColor: cssVar('--muted'), borderDash: [5, 4], tension: .25, pointRadius: 0, borderWidth: 1.5 }
@@ -495,6 +496,40 @@
   };
   const STEP_LABEL = { studentSignup: 'Student signup', employerSignup: 'Employer signup', demoRequest: 'Demo request', contactSubmit: 'Contact submission', opportunityAction: 'Register / apply', productClick: 'Product click', scroll: 'Scroll' };
   function stepOf(name, ev) { const n = String(name).toLowerCase(); const hit = Object.keys(STEP_LABEL).filter(k => (ev[k] || []).some(x => String(x).toLowerCase() === n)); return hit.map(k => STEP_LABEL[k]).join(', ') || '—'; }
+
+  // conversion-path coverage and organic traffic by URL cluster
+  function gaPathBlock(M, s) {
+    if (!M.sections) return '';
+    const c = M.pathCov || {};
+    return `<section class="panel"><div class="panel-h"><h2>By URL cluster and conversion-path coverage</h2><p>Share of organic landing sessions on clusters with a clear conversion path (register, apply, post a job, book a demo). Choose the clusters in <a href="#funnelsetup">Funnel setup</a>.</p></div>
+      <div class="panel-b"><div class="un-big"><b>${pct1(c.share)}</b><span>of organic sessions land on pages with a clear conversion path${c.yShare != null ? ` · ${pct1(c.yShare)} the same dates last year` : ''} · ${fmtN(Math.round(c.sessions || 0))} sessions across ${c.sections || 0} clusters</span></div></div>
+      ${table('t-un-gpc', [
+      { k: 'typeName', l: 'Page type' }, { k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>` },
+      { k: 'pathL', l: 'Conversion path', f: r => r.path ? '<span class="un-st live">Yes</span>' : '<span class="un-st none">No</span>', csv: r => r.path ? 'yes' : 'no' },
+      { k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'share', l: 'Share', r: 1, f: r => pct1(r.share) },
+      { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) + ' ' + dchip(r.dNewUsers) },
+      { k: 'engRate', l: 'Eng. rate', r: 1, f: r => pct1(r.engRate) }, { k: 'signups', l: 'Signups', r: 1, f: r => fmtN(r.signups) }, { k: 'cvr', l: 'Signup CVR', r: 1, f: r => pct1(r.cvr) }, { k: 'opp', l: 'Register / apply', r: 1, f: r => fmtN(r.opp) }
+    ], M.sections.filter(x => x.sessions > 0 || x.ySessions > 0).map(x => ({ ...x, pathL: x.path ? 1 : 0 })), { search: false, file: 'unstop-ga4-by-cluster', pageSize: 30, sort: 'sessions',
+      filters: [{ key: 'p', label: 'Conversion path', options: [['y', 'Yes'], ['n', 'No']], test: (r, v) => v === 'y' ? r.path : !r.path }] })}</section>`;
+  }
+  // device and state inside each page type, both against last year
+  function gaCrossBlocks(M, D) {
+    if (!M.typeDevice.length && !M.typeRegion.length) return '';
+    const { typeOf } = tools(D);
+    const types = typeOf.types.filter(t => M.typeDevice.some(r => r.type === t.id) || M.typeRegion.some(r => r.type === t.id));
+    const order = id => U.CORE.includes(id) ? U.CORE.indexOf(id) : 10 + types.findIndex(t => t.id === id);
+    types.sort((a, b) => order(a.id) - order(b.id));
+    const cell = (rows, type, key) => { const r = rows.find(x => x.type === type && x.key === key); return r ? `${fmtN(Math.round(r.sessions))} ${dchip(r.dSessions)}` : '—'; };
+    const devs = ['mobile', 'desktop', 'tablet'].filter(d => M.typeDevice.some(r => r.key === d));
+    const dev = M.typeDevice.length ? `<section class="panel"><div class="panel-h"><h2>Page type × device</h2><p>Organic sessions, vs the same dates last year.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page type</th>${devs.map(d => `<th class="r">${esc(d.charAt(0).toUpperCase() + d.slice(1))}</th>`).join('')}<th class="r">Mobile share</th></tr></thead><tbody>
+      ${types.map(t => { const rs = M.typeDevice.filter(r => r.type === t.id), tot = rs.reduce((a, r) => a + r.sessions, 0), mob = rs.filter(r => r.key === 'mobile').reduce((a, r) => a + r.sessions, 0); return `<tr><td><b>${esc(t.name)}</b></td>${devs.map(d => `<td class="r">${cell(M.typeDevice, t.id, d)}</td>`).join('')}<td class="r">${tot ? pct1(mob / tot * 100) : '—'}</td></tr>`; }).join('')}</tbody></table></div></div></section>` : '';
+    const stTot = new Map(); M.typeRegion.forEach(r => stTot.set(r.key, (stTot.get(r.key) || 0) + r.sessions));
+    const states = [...stTot.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(x => x[0]);
+    const core = types.filter(t => U.CORE.includes(t.id));
+    const reg = M.typeRegion.length ? `<section class="panel"><div class="panel-h"><h2>Page type × Indian state</h2><p>Top 12 states by organic sessions, core page types, vs the same dates last year.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>State</th>${core.map(t => `<th class="r">${esc(t.name)}</th>`).join('')}</tr></thead><tbody>
+      ${states.map(st => `<tr><td><b>${esc(st)}</b></td>${core.map(t => `<td class="r">${cell(M.typeRegion, t.id, st)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></section>` : '';
+    return dev + reg;
+  }
   function splitTable(id, label, rows) {
     return table(id, [{ k: 'key', l: label }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) + ' ' + dchip(r.dSessions) }, { k: 'share', l: 'Share', r: 1, f: r => pct1(r.share) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(r.newUsers) }], rows, { search: false, file: 'unstop-ga4-' + label.toLowerCase(), pageSize: 10 });
   }
@@ -548,12 +583,16 @@
     const daily = []; for (let i = 0; i < days; i++) { const d = new Date(D.start + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + i); const k = d.toISOString().slice(0, 10).replace(/-/g, ''); const wk = [1, 1.05, 1.04, 1.02, .95, .8, .78][(d.getUTCDay() + 6) % 7]; daily.push({ d: [k, 'cur'], m: [sumCur / days * wk * (.9 + R() * .2), sumCur / days * .6 * wk] }); const y = new Date(d); y.setUTCFullYear(y.getUTCFullYear() - 1); daily.push({ d: [y.toISOString().slice(0, 10).replace(/-/g, ''), 'yoy'], m: [sumY / days * wk * (.9 + R() * .2), sumY / days * .6 * wk] }); }
     const split = (vals) => vals.flatMap(([k, sh]) => [{ d: [k, 'cur'], m: [sumCur * sh, sumCur * sh * .6, sumCur * sh * .55] }, { d: [k, 'yoy'], m: [sumY * sh * (.9 + R() * .2), sumY * sh * .62, sumY * sh * .5] }]);
     const evTot = name => events.filter(e => e.d[1] === name).reduce((a, e) => a + e.m[0], 0);
+    const STATES = [['Uttar Pradesh', .14], ['Maharashtra', .12], ['Tamil Nadu', .09], ['Karnataka', .08], ['Delhi', .07], ['Telangana', .07], ['West Bengal', .06], ['Andhra Pradesh', .05], ['Rajasthan', .045], ['Madhya Pradesh', .04], ['Gujarat', .035], ['Kerala', .03], ['Punjab', .025], ['Haryana', .025]];
+    const DEV = [['mobile', .74], ['desktop', .245], ['tablet', .015]];
     const chans = [['Organic Search', 1], ['Direct', .55], ['Organic Social', .18], ['Paid Search', .12], ['Referral', .08], ['Email', .05]];
     return {
       landing: mk(['landingPage'], ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'], land, true),
       device: mk(['deviceCategory'], ['sessions', 'newUsers', 'engagedSessions'], split([['mobile', .71], ['desktop', .27], ['tablet', .02]]), true),
       country: mk(['country'], ['sessions', 'newUsers'], split([['India', .93], ['United States', .015], ['Nepal', .008], ['Bangladesh', .006], ['United Arab Emirates', .005]]).map(r => ({ d: r.d, m: r.m.slice(0, 2) })), true),
-      region: mk(['region'], ['sessions', 'newUsers'], [['Uttar Pradesh', .14], ['Maharashtra', .12], ['Tamil Nadu', .09], ['Karnataka', .08], ['Delhi', .07], ['Telangana', .07], ['West Bengal', .06], ['Andhra Pradesh', .05]].map(([k, sh]) => ({ d: [k], m: [sumCur * .93 * sh, sumCur * .55 * sh] })), false),
+      region: mk(['region'], ['sessions', 'newUsers'], STATES.flatMap(([k, sh]) => [{ d: [k, 'cur'], m: [sumCur * .93 * sh, sumCur * .55 * sh] }, { d: [k, 'yoy'], m: [sumY * .93 * sh * (.8 + R() * .35), sumY * .55 * sh * .85] }]), true),
+      landingDevice: mk(['landingPage', 'deviceCategory'], ['sessions', 'newUsers'], land.flatMap(r => DEV.map(([dv, sh]) => { const f = sh * (r.d[1] === 'yoy' ? (dv === 'mobile' ? .95 : 1.08) : 1); return { d: [r.d[0], dv, r.d[1]], m: [r.m[0] * f, r.m[1] * f] }; })), true),
+      landingRegion: mk(['landingPage', 'region'], ['sessions', 'newUsers'], land.flatMap(r => STATES.map(([st, sh], i) => { const tilt = 1 + ((r.d[0].length + i) % 5 - 2) * .12; const f = .93 * sh * tilt * (r.d[1] === 'yoy' ? .8 + (i % 4) * .08 : 1); return { d: [r.d[0], st, r.d[1]], m: [r.m[0] * f, r.m[1] * f] }; })), true),
       daily: mk(['date'], ['sessions', 'newUsers'], daily, true),
       events: mk(['landingPage', 'eventName'], ['eventCount', 'totalUsers'], events, false),
       eventsYoy: mk(['eventName'], ['eventCount', 'totalUsers'], [...new Set(events.map(e => e.d[1]))].map(n => ({ d: [n], m: [evTot(n) * (.75 + R() * .2), evTot(n) * .7] })), false),
@@ -863,8 +902,7 @@
     const days = ga && g ? Math.round((new Date(g.end) - new Date(g.start)) / 864e5) + 1 : null;
     const demoCost = D.sampleOf === 'unstop' && !String(s.monthlyCost || '').trim();
     const cost = demoCost ? 450000 : parseFloat(String(s.monthlyCost).replace(/[^0-9.]/g, ''));
-    const pathTypes = new Set(s.pathTypes || []);
-    const pathCov = ga && ga.total.sessions ? ga.types.filter(t => pathTypes.has(t.id)).reduce((a, t) => a + t.sessions, 0) / ga.total.sessions * 100 : null;
+    const pathCov = ga && ga.pathCov ? ga.pathCov.share : null;
     const blogT = ga && ga.types.find(t => t.id === 'blog');
     const ret = ga && ga.returning.cur;
     const aiS = ga ? ga.ai.reduce((a, r) => a + r.sessions, 0) : null, aiY = ga ? ga.ai.reduce((a, r) => a + r.ySessions, 0) : null;
@@ -879,7 +917,7 @@
       indexed: [fmtN(visUrls), prevUrls ? U.chg(visUrls, prevUrls) : null, gscSt, gscAt, null, A.coverage && A.coverage.rowLimit ? 'capped by row limit' : ''],
       sessions: ga ? [fmtN(ga.total.sessions), ga.dSessions, gaSt, g.at, null, 'vs last year'] : null,
       newUsers: ga ? [fmtN(ga.total.newUsers), ga.dNewUsers, gaSt, g.at, null, 'vs last year'] : null,
-      pathCov: ga ? [pct1(pathCov), null, gaSt, g.at] : null,
+      pathCov: ga ? [pct1(pathCov), ga.pathCov && ga.pathCov.yShare != null && pathCov != null ? pathCov - ga.pathCov.yShare : null, gaSt, g.at, 'pp', 'vs last year'] : null,
       stu: ga ? [fmtN(ga.ev.stu), U.chg(ga.ev.stu, ga.ev.yStu), gaSt, g.at, null, 'vs last year'] : null,
       emp: ga ? [fmtN(ga.ev.emp), U.chg(ga.ev.emp, ga.ev.yEmp), gaSt, g.at, null, 'vs last year'] : null,
       cvr: ga ? [pct1(ga.total.sessions ? sigs / ga.total.sessions * 100 : null), null, gaSt, g.at] : null,
@@ -983,7 +1021,7 @@
         <label class="field"><span>GA4 property ID</span><input type="text" id="un-prop" inputmode="numeric" value="${esc(s.ga4Property)}"></label>
       </div></section>
       <section class="panel"><div class="panel-h"><h2>Conversion paths, cost and MoEngage</h2></div><div class="panel-b un-grid2">
-        <fieldset class="field"><span>Page types with a clear conversion path (CTA to register, apply or book a demo)</span>${typeOf.types.map(t => `<label class="check"><input type="checkbox" data-path="${esc(t.id)}" ${(s.pathTypes || []).includes(t.id) ? 'checked' : ''}> ${esc(t.name)}</label>`).join('')}</fieldset>
+        <fieldset class="field"><span>URL clusters with a clear conversion path (register, apply, post a job, book a demo)</span>${(() => { const ps = s.pathSections || U.DEFAULT_PATH_SECTIONS; return U.makeSectioner(s.sections).sections.filter(x => x.id !== 'other').map(x => `<label class="check"><input type="checkbox" data-path="${esc(x.id)}" ${ps.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join(''); })()}</fieldset>
         <div>
           <label class="field"><span>Monthly SEO cost in ₹ (content, agency, tools, team share)</span><input type="text" id="un-cost" inputmode="decimal" value="${esc(s.monthlyCost)}" placeholder="e.g. 450000"></label>
           <label class="field"><span>Profile counts as complete at (%)</span><input type="number" id="un-moe-th" min="1" max="100" value="${esc(s.moeThreshold)}"></label>
@@ -1009,7 +1047,7 @@
         n.pricingPaths = document.getElementById('un-pricing').value.split(',').map(x => x.trim()).filter(Boolean);
         n.aiSources = document.getElementById('un-ai').value.split(',').map(x => x.trim()).filter(Boolean);
         n.ga4Property = document.getElementById('un-prop').value.trim().replace(/^properties\//, '');
-        n.pathTypes = [...f.querySelectorAll('[data-path]')].filter(i => i.checked).map(i => i.dataset.path);
+        n.pathSections = [...f.querySelectorAll('[data-path]')].filter(i => i.checked).map(i => i.dataset.path);
         n.monthlyCost = document.getElementById('un-cost').value.trim();
         n.moeThreshold = +document.getElementById('un-moe-th').value || 80;
         n.organicSources = document.getElementById('un-orgsrc').value.trim();

@@ -153,4 +153,19 @@ test('cluster model: exact branded / non-branded / anonymised and ranking bucket
   assert.equal(m.quick[0].q, 'internship for freshers');
   assert.equal(m.byQueryCluster[0].name, 'Internships');
 });
+
+test('GA4: page type × device, × state, URL clusters and conversion-path coverage, all with last year', () => {
+  const mk = (dims, mets, rows) => ({ dimensionHeaders: dims.map(name => ({ name })), metricHeaders: mets.map(name => ({ name })), rows: rows.map(r => ({ dimensionValues: r[0].map(value => ({ value })), metricValues: r[1].map(v => ({ value: String(v) })) })) });
+  const raw = {
+    landing: mk(['landingPage', 'dateRange'], ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'], [[['/hackathons/x-1', 'cur'], [600, 300, 400, 900, 1, 0]], [['/hackathons/x-1', 'yoy'], [400, 200, 0, 0, 0, 0]], [['/blog/a', 'cur'], [400, 300, 200, 500, 1, 0]], [['/blog/a', 'yoy'], [500, 350, 0, 0, 0, 0]]]),
+    landingDevice: mk(['landingPage', 'deviceCategory', 'dateRange'], ['sessions', 'newUsers'], [[['/hackathons/x-1', 'mobile', 'cur'], [500, 250]], [['/hackathons/x-1', 'mobile', 'yoy'], [250, 120]], [['/blog/a', 'desktop', 'cur'], [100, 80]]]),
+    landingRegion: mk(['landingPage', 'region', 'dateRange'], ['sessions', 'newUsers'], [[['/hackathons/x-1', 'Delhi', 'cur'], [200, 100]], [['/hackathons/x-1', 'Delhi', 'yoy'], [100, 50]]])
+  };
+  const M = U.ga4Model(raw, typeOf, {}, { sectionOf: U.makeSectioner(), pathSections: U.DEFAULT_PATH_SECTIONS });
+  const md = M.typeDevice.find(r => r.type === 'opp' && r.key === 'mobile'); assert.equal(md.sessions, 500); assert.equal(md.dSessions, 100);
+  const dl = M.typeRegion.find(r => r.type === 'opp' && r.key === 'Delhi'); assert.equal(dl.dSessions, 100);
+  assert.equal(M.pathCov.share, 60); assert.equal(M.pathCov.yShare.toFixed(1), '44.4');
+  const hk = M.sections.find(x => x.id === 'hackathons'); assert.equal(hk.path, true); assert.equal(hk.dSessions, 50);
+  assert.equal(M.sections.find(x => x.id === 'blog').path, false);
+});
 report('unstop');
