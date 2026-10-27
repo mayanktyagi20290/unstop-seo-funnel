@@ -402,6 +402,8 @@
     const org = GA.organicFilter;
     const aiRx = (o.aiSources || []).map(esc).join('|') || 'chatgpt';
     const pricing = (o.pricingPaths || []).map(esc).join('|') || 'pricing';
+    const scrollEv = ((o.events && o.events.scroll) || ['scroll']).slice(0, 20);
+    const blogRx = '/(blog|blog-series|category|bites|resources|prep-zone)(/|$)';
     const R = {
       landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, limit: 100000 },
       device: { dateRanges: both, dimensions: [{ name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }, { name: 'engagedSessions' }], dimensionFilter: org, limit: 50 },
@@ -417,9 +419,88 @@
       pricing: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'sessions' }, { name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: GA.and(org, GA.regex('pagePath', pricing)), limit: 200 },
       channels: { dateRanges: [cur], dimensions: [{ name: 'sessionDefaultChannelGroup' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })), limit: 50 },
       channelEvents: { dateRanges: [cur], dimensions: [{ name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], limit: 5000 },
+      // engagement: page views and scroll events by page, users per event, totals, blog → product page views
+      pageViews: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: org, limit: 100000 },
+      scrollPages: { dateRanges: [cur], dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', scrollEv)), limit: 100000 },
+      scrollDepth: { optional: true, dateRanges: [cur], dimensions: [{ name: 'pagePath' }, { name: 'customEvent:percent_scrolled' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', scrollEv)), limit: 100000 },
+      eventUsers: { dateRanges: both, dimensions: [{ name: 'eventName' }], metrics: [{ name: 'totalUsers' }, { name: 'eventCount' }], dimensionFilter: org, limit: 2000 },
+      totals: { dateRanges: both, metrics: ['totalUsers', 'activeUsers', 'sessions', 'engagedSessions', 'screenPageViews'].map(name => ({ name })), dimensionFilter: org, limit: 10 },
+      blogNext: { dateRanges: both, dimensions: [{ name: 'pagePath' }, { name: 'pageReferrer' }], metrics: [{ name: 'screenPageViews' }], dimensionFilter: GA.and(org, GA.regex('pageReferrer', blogRx)), limit: 100000 },
+      cohorts: cohortReq(o.end, 0), cohortsYoy: cohortReq(o.end, 1),
       ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 }
     };
     return R;
+  }
+  // Return visits: weekly cohorts (Sunday–Saturday) of new organic users, measured for the 4 weeks after the
+  // week they arrived. The last cohort ends 28 days before the period end so every week is complete.
+  // yearsBack = 1 gives the same weeks a year earlier.
+  function cohortWeeks(end, yearsBack = 0, n = 4) {
+    const e = new Date(end + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() - 28);
+    if (yearsBack) e.setUTCFullYear(e.getUTCFullYear() - yearsBack);
+    const sat = new Date(e); sat.setUTCDate(sat.getUTCDate() - ((sat.getUTCDay() + 1) % 7)); // last Saturday on or before
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) { const en = new Date(sat); en.setUTCDate(en.getUTCDate() - 7 * i); const st = new Date(en); st.setUTCDate(st.getUTCDate() - 6); out.push({ name: 'w' + (n - i), startDate: st.toISOString().slice(0, 10), endDate: en.toISOString().slice(0, 10) }); }
+    return out;
+  }
+  function cohortReq(end, yearsBack) {
+    return { cohortSpec: { cohorts: cohortWeeks(end, yearsBack).map(c => ({ name: c.name, dimension: 'firstSessionDate', dateRange: { startDate: c.startDate, endDate: c.endDate } })), cohortsRange: { granularity: 'WEEKLY', startOffset: 0, endOffset: 4 } },
+      dimensions: [{ name: 'cohort' }, { name: 'cohortNthWeek' }], metrics: [{ name: 'cohortActiveUsers' }, { name: 'cohortTotalUsers' }],
+      dimensionFilter: { filter: { fieldName: 'firstUserDefaultChannelGroup', stringFilter: { matchType: 'EXACT', value: 'Organic Search' } } }, limit: 1000 };
+  }
+  // Engagement for the Engagement tab. Needs the ga4Model output (pages with events) plus the extra reports.
+  function engagementModel(raw, M, sectionOf, ev, opt = {}) {
+    const R = {}; Object.keys(raw || {}).forEach(k => { R[k] = gaRows(raw[k]); });
+    const is = {}; Object.keys(ev || {}).forEach(k => { is[k] = inSet(ev[k]); });
+    const L = R.landing || [];
+    const eng = rg => sum(L.filter(r => r.range === rg), 'engagedSessions');
+    const T = rg => (R.totals || []).find(r => r.range === rg) || null;
+    const tc = T('cur'), ty = T('yoy');
+    const engaged = eng('cur'), yEngaged = eng('yoy');
+    const ses = M.total.sessions, ySes = M.yoy ? M.yoy.sessions : null;
+    const views = tc ? tc.screenPageViews : M.total.views, yViews = ty ? ty.screenPageViews : null;
+    // users who fired each event family (not de-duplicated across events in a family: the largest is shown)
+    const EU = R.eventUsers || [];
+    const users = rg => { const t = T(rg); return t ? t.totalUsers : null; };
+    const fam = (k, rg) => { if (!is[k]) return null; const rows = EU.filter(r => r.range === rg && is[k](r.eventName)); if (!rows.length) return { users: 0, events: 0, top: null }; const top = rows.slice().sort((a, b) => b.totalUsers - a.totalUsers)[0]; return { users: top.totalUsers, events: sum(rows, 'eventCount'), top: top.eventName, n: rows.length }; };
+    const share = (k, rg) => { const f = fam(k, rg), u = users(rg); return f && u ? { ...f, share: f.users / u * 100 } : f; };
+    const actions = { oppClick: share('oppClick', 'cur'), yOppClick: share('oppClick', 'yoy'), opp: share('opportunityAction', 'cur'), yOpp: share('opportunityAction', 'yoy') };
+    // return visits: weekly cohorts
+    const coh = rows => { if (!rows || !rows.length) return null; const by = new Map(); rows.forEach(r => { const w = +r.cohortNthWeek; const o = by.get(w) || { active: 0 }; o.active += r.cohortActiveUsers; by.set(w, o); }); const base = (by.get(0) || {}).active || 0; if (!base) return null; return { users: base, weeks: [1, 2, 3, 4].map(w => ({ w, rate: ((by.get(w) || {}).active || 0) / base * 100 })) }; };
+    const ret = coh(R.cohorts), yRet = coh(R.cohortsYoy);
+    // pages: views, scroll rate, depth
+    const PV = new Map();
+    (R.pageViews || []).forEach(r => { const k = pathOnly(r.pagePath); const o = PV.get(k) || { path: k, views: 0, yViews: 0, users: 0, scroll: 0, depth: {} }; if (r.range === 'yoy') o.yViews += r.screenPageViews; else { o.views += r.screenPageViews; o.users += r.activeUsers; } PV.set(k, o); });
+    (R.scrollPages || []).forEach(r => { const o = PV.get(pathOnly(r.pagePath)); if (o) o.scroll += r.eventCount; });
+    const depthRows = R.scrollDepth || [];
+    depthRows.forEach(r => { const o = PV.get(pathOnly(r.pagePath)); const d = parseInt(r['customEvent:percent_scrolled'], 10); if (o && isFinite(d)) o.depth[d] = (o.depth[d] || 0) + r.eventCount; });
+    const pages = [...PV.values()].map(o => ({ ...o, scrollRate: o.views ? Math.min(100, o.scroll / o.views * 100) : null, depthPct: Object.fromEntries(Object.entries(o.depth).map(([d, c]) => [d, o.views ? Math.min(100, c / o.views * 100) : null])), dViews: chg(o.views, o.yViews) }));
+    if (sectionOf) pages.forEach(p => { p.cluster = sectionOf.label(sectionOf(p.path)); p.sectionId = sectionOf(p.path); p.folder = sectionOf.folderOf(p.path); });
+    const keySet = new Set((opt.keyPages || []).map(x => pathOnly(x).toLowerCase()));
+    const key = (keySet.size ? pages.filter(p => keySet.has(p.path.toLowerCase())) : pages.slice().sort((a, b) => b.views - a.views).slice(0, 25)).sort((a, b) => b.views - a.views);
+    const depths = [...new Set(depthRows.map(r => parseInt(r['customEvent:percent_scrolled'], 10)).filter(isFinite))].sort((a, b) => a - b);
+    // blog → product page views (page referrer is a blog page; destination is not)
+    const blogId = opt.blogSections || ['blog', 'resources'];
+    const BN = (R.blogNext || []);
+    const dest = new Map(), src = new Map();
+    let toProduct = 0, yToProduct = 0;
+    BN.forEach(r => {
+      const to = pathOnly(r.pagePath); let from = ''; try { from = pathOnly(new URL(r.pageReferrer).pathname); } catch (e) { from = pathOnly(r.pageReferrer); }
+      const toId = sectionOf ? sectionOf(to) : 'x';
+      if (blogId.includes(toId) || ['util', 'home', 'other'].includes(toId)) return; // stays in content, or not a product page
+      if (r.range === 'yoy') { yToProduct += r.screenPageViews; return; }
+      toProduct += r.screenPageViews;
+      const d = dest.get(toId) || { id: toId, cluster: sectionOf ? sectionOf.label(toId) : toId, views: 0 }; d.views += r.screenPageViews; dest.set(toId, d);
+      const s2 = src.get(from) || { path: from, views: 0 }; s2.views += r.screenPageViews; src.set(from, s2);
+    });
+    const blogPages = pages.filter(p => blogId.includes(p.sectionId));
+    const blogViews = sum(blogPages, 'views'), yBlogViews = sum(blogPages, 'yViews');
+    src.forEach(v => { const bp = PV.get(v.path); v.blogViews = bp ? bp.views : 0; v.rate = v.blogViews ? v.views / v.blogViews * 100 : null; });
+    const blog = { toProduct, yToProduct, blogViews, yBlogViews, rate: blogViews ? toProduct / blogViews * 100 : null, yRate: yBlogViews ? yToProduct / yBlogViews * 100 : null, dest: [...dest.values()].sort((a, b) => b.views - a.views), src: [...src.values()].sort((a, b) => b.views - a.views), events: sectionOf ? M.pages.filter(p => blogId.includes(sectionOf(p.path))).reduce((a, p) => a + (p.prodClick || 0), 0) : M.ev.prodClick };
+    return {
+      engaged, yEngaged, dEngaged: chg(engaged, yEngaged), engRate: ses ? engaged / ses * 100 : null, yEngRate: ySes ? yEngaged / ySes * 100 : null,
+      pps: ses ? views / ses : null, yPps: ySes && yViews ? yViews / ySes : null, users: users('cur'), yUsers: users('yoy'),
+      actions, ret, yRet, pages, key, depths, blog, hasExtra: !!(R.totals || R.pageViews)
+    };
   }
   function shiftYear(d) { const x = new Date(d + 'T00:00:00Z'); x.setUTCFullYear(x.getUTCFullYear() - 1); return x.toISOString().slice(0, 10); }
   // Turn a runReport response into plain objects: { dims..., metrics..., range: 'cur'|'yoy' }.
@@ -709,11 +790,14 @@
     { stage: 'Signups', id: 'profile', label: 'Profile completion (organic)', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly cohort', def: 'Organic signups whose profile completion is at or above the threshold.' },
     { stage: 'Signups', id: 'act7', label: '7-day activation (organic)', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly cohort', def: 'First registration or application within 7 days of signup.' },
     { stage: 'Signups', id: 'ret30', label: '30-day retention (organic)', src: 'MoEngage', owner: 'Product Analytics + SEO', cadence: 'Monthly cohort', def: 'Seen again 30 or more days after signup.' },
+    { stage: 'Engagement', id: 'engaged', label: 'Engaged sessions', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'Organic sessions that lasted 10+ seconds, had a key event or 2+ page views (GA4 definition), vs the same dates last year.' },
     { stage: 'Engagement', id: 'engRate', label: 'Engagement rate', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'Engaged organic sessions ÷ organic sessions.' },
+    { stage: 'Engagement', id: 'scrollKey', label: 'Scroll depth on key pages', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'Scroll events ÷ page views on the key pages (GA4 enhanced measurement fires scroll at 90%). Key pages are set in Funnel setup; by default the 25 most viewed organic pages.' },
     { stage: 'Engagement', id: 'pps', label: 'Pages per session', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'Views ÷ organic sessions.' },
-    { stage: 'Engagement', id: 'returning', label: 'Returning users share', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'Organic active users who are returning (GA4 new vs returning; not a strict 30-day window).' },
-    { stage: 'Engagement', id: 'opp', label: 'Register / apply actions', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Opportunity register / apply events in organic sessions.' },
-    { stage: 'Engagement', id: 'prodClick', label: 'Blog → product clicks', src: 'GA4', owner: 'Content SEO + Analytics', cadence: 'Monthly', def: 'Product-click events in organic sessions that landed on Blog & guides.' },
+    { stage: 'Engagement', id: 'return4w', label: 'Return visits within 30 days', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'New organic users (weekly cohorts) active again in week 4 after their first visit; the Engagement tab shows weeks 1–4.' },
+    { stage: 'Engagement', id: 'oppClickShare', label: 'Visitors who click into an opportunity', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Organic users who fired an opportunity-click event (Funnel setup) ÷ organic users.' },
+    { stage: 'Engagement', id: 'oppShare', label: 'Visitors who register or apply', src: 'GA4', owner: 'SEO + Product Analytics', cadence: 'Monthly', def: 'Organic users who fired a register / apply event ÷ organic users.' },
+    { stage: 'Engagement', id: 'blogRate', label: 'Blog → product click-through', src: 'GA4', owner: 'Content SEO + Analytics', cadence: 'Monthly', def: 'Page views of product pages (opportunities, employer, practice…) whose referrer is a blog or guide page ÷ blog and guide page views, in organic sessions.' },
     { stage: 'Leads', id: 'demo', label: 'Organic demo requests', src: 'GA4', owner: 'B2B SEO + Demand Gen + Analytics', cadence: 'Monthly', def: 'Demo-request events in organic sessions.' },
     { stage: 'Leads', id: 'contact', label: 'Organic contact submissions', src: 'GA4', owner: 'B2B SEO + Demand Gen + Analytics', cadence: 'Monthly', def: 'Contact-form events in organic sessions.' },
     { stage: 'Leads', id: 'pricing', label: 'Organic pricing-page sessions', src: 'GA4', owner: 'B2B SEO + Demand Gen', cadence: 'Monthly', def: 'Organic sessions that viewed a pricing path.' },
@@ -721,7 +805,7 @@
     { stage: 'Pipeline & revenue', id: 'mql', label: 'MQLs, pipeline, closed revenue', src: 'CRM', owner: 'CRM Ops + Finance + Demand Gen', cadence: 'Monthly / Quarterly', def: 'Next phase: needs the CRM export joined on lead ID.', later: true }
   ];
 
-  const api = { DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
+  const api = { cohortWeeks, engagementModel, DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
     moeHeaderMap, moeQuality, qualityVerdict, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;

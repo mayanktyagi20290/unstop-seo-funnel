@@ -91,7 +91,7 @@ test('GA4 model: events by landing page type, YoY and channels', () => {
 test('GA4 requests: two named date ranges, organic filter, valid limits', () => {
   const R = U.ga4Requests({ start: '2026-09-20', end: '2026-10-20', aiSources: ['chatgpt'], pricingPaths: ['/pricing'] });
   assert.equal(R.landing.dateRanges[1].startDate, '2025-09-20');
-  assert.ok(Object.values(R).every(b => b.limit <= 250000 && b.dateRanges.length <= 4));
+  assert.ok(Object.values(R).every(b => b.limit <= 250000 && (b.cohortSpec ? !b.dateRanges && b.cohortSpec.cohorts.length === 4 : b.dateRanges.length <= 4)));
   assert.equal(R.landing.dimensionFilter.filter.stringFilter.value, 'Organic Search');
 });
 test('non-branded signup share estimate uses each page’s GSC click mix', () => {
@@ -175,5 +175,31 @@ test('quality verdict: any measure where organic is worse means volume alone is 
   const bad = U.qualityVerdict({ ret30: { organic: 12, other: 18 }, act7: { organic: 40, other: 30 } });
   assert.equal(bad.ok, false); assert.equal(bad.worse, 1);
   assert.equal(U.qualityVerdict({}), null);
+});
+
+test('engagement: weekly return cohorts align to Sunday–Saturday and end 28 days before the period end', () => {
+  const w = U.cohortWeeks('2026-10-24');
+  assert.equal(w.length, 4); assert.equal(new Date(w[0].startDate + 'T00:00:00Z').getUTCDay(), 0); assert.equal(new Date(w[3].endDate + 'T00:00:00Z').getUTCDay(), 6);
+  assert.ok(w[3].endDate <= '2026-09-26');
+});
+test('engagement model: engaged sessions YoY, opportunity shares, return weeks, blog → product', () => {
+  const mk = (dims, mets, rows) => ({ dimensionHeaders: dims.map(name => ({ name })), metricHeaders: mets.map(name => ({ name })), rows: rows.map(r => ({ dimensionValues: r[0].map(value => ({ value })), metricValues: r[1].map(v => ({ value: String(v) })) })) });
+  const raw = {
+    landing: mk(['landingPage', 'dateRange'], ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'], [[['/blog/a', 'cur'], [100, 50, 60, 200, 1, 0]], [['/blog/a', 'yoy'], [80, 40, 40, 150, 1, 0]], [['/hackathons/x', 'cur'], [100, 50, 70, 220, 1, 0]]]),
+    totals: mk(['dateRange'], ['totalUsers', 'activeUsers', 'sessions', 'engagedSessions', 'screenPageViews'], [[['cur'], [150, 140, 200, 130, 420]], [['yoy'], [100, 95, 80, 40, 150]]]),
+    eventUsers: mk(['eventName', 'dateRange'], ['totalUsers', 'eventCount'], [[['opportunity_click', 'cur'], [30, 60]], [['view_item', 'cur'], [10, 20]], [['apply', 'cur'], [15, 15]]]),
+    pageViews: mk(['pagePath', 'dateRange'], ['screenPageViews', 'activeUsers'], [[['/blog/a', 'cur'], [200, 90]], [['/hackathons/x', 'cur'], [220, 90]]]),
+    scrollPages: mk(['pagePath'], ['eventCount'], [[['/blog/a'], [100]]]),
+    blogNext: mk(['pagePath', 'pageReferrer', 'dateRange'], ['screenPageViews'], [[['/hackathons/x', 'https://unstop.com/blog/a', 'cur'], [20]], [['/blog/b', 'https://unstop.com/blog/a', 'cur'], [50]]]),
+    cohorts: mk(['cohort', 'cohortNthWeek'], ['cohortActiveUsers', 'cohortTotalUsers'], [[['w1', '0000'], [100, 100]], [['w1', '0004'], [10, 100]]])
+  };
+  const ev = { oppClick: ['opportunity_click', 'view_item'], opportunityAction: ['apply'], scroll: ['scroll'], productClick: [] };
+  const M = U.ga4Model(raw, typeOf, ev);
+  const E = U.engagementModel(raw, M, U.makeSectioner(), ev);
+  assert.equal(E.engaged, 130); assert.equal(E.dEngaged, 225);
+  assert.equal(E.actions.oppClick.share, 20); assert.equal(E.actions.opp.share, 10);
+  assert.equal(E.ret.weeks[3].rate, 10);
+  assert.equal(E.blog.toProduct, 20); assert.equal(E.blog.rate, 10);
+  assert.equal(E.pages.find(p => p.path === '/blog/a').scrollRate, 50);
 });
 report('unstop');

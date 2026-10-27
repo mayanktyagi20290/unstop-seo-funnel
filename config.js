@@ -37,6 +37,7 @@ window.CW_CONFIG = {
       contactSubmit: ['contact_form_submit', 'form_submit'],
       opportunityAction: ['register', 'apply', 'opportunity_register', 'apply_now'],
       productClick: ['select_content', 'opportunity_click', 'cta_click'],
+      oppClick: ['opportunity_click', 'view_opportunity', 'select_item', 'opportunity_view'],
       scroll: ['scroll']
     },
     // Page paths treated as the employer pricing page

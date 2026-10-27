@@ -546,11 +546,12 @@
   }
   async function loadGa4(D, o) {
     const s = settings(D.site);
-    const reqs = U.ga4Requests({ start: o.start, end: o.end, aiSources: s.aiSources, pricingPaths: s.pricingPaths });
+    const reqs = U.ga4Requests({ start: o.start, end: o.end, aiSources: s.aiSources, pricingPaths: s.pricingPaths, events: s.events });
     const keys = Object.keys(reqs), raw = {}, failed = [];
+    const opt = new Set(keys.filter(k => reqs[k].optional)); keys.forEach(k => { delete reqs[k].optional; });
     let done = 0;
     const prog = document.getElementById('un-ga-prog');
-    await Promise.all(keys.map(k => runReport(o.property, reqs[k]).then(r => { raw[k] = r; }, e => { failed.push(k + ': ' + e.message); }).finally(() => { done++; if (prog) prog.textContent = `Loading GA4 reports… ${done} of ${keys.length}`; })));
+    await Promise.all(keys.map(k => runReport(o.property, reqs[k]).then(r => { raw[k] = r; }, e => { if (!opt.has(k)) failed.push(k + ': ' + e.message); }).finally(() => { done++; if (prog) prog.textContent = `Loading GA4 reports… ${done} of ${keys.length}`; })));
     if (!raw.landing && failed.length) throw new Error(failed[0].replace(/^\w+: /, ''));
     GA.set(D.site, { raw, property: o.property, propertyName: o.propertyName || o.property, start: o.start, end: o.end, at: Date.now(), failed, sample: false });
   }
@@ -660,7 +661,7 @@
     };
     return { html, mount };
   };
-  const STEP_LABEL = { studentSignup: 'Student signup', employerSignup: 'Employer signup', demoRequest: 'Demo request', contactSubmit: 'Contact submission', opportunityAction: 'Register / apply', productClick: 'Product click', scroll: 'Scroll' };
+  const STEP_LABEL = { oppClick: 'Click into an opportunity', studentSignup: 'Student signup', employerSignup: 'Employer signup', demoRequest: 'Demo request', contactSubmit: 'Contact submission', opportunityAction: 'Register / apply', productClick: 'Product click', scroll: 'Scroll' };
   function stepOf(name, ev) { const n = String(name).toLowerCase(); const hit = Object.keys(STEP_LABEL).filter(k => (ev[k] || []).some(x => String(x).toLowerCase() === n)); return hit.map(k => STEP_LABEL[k]).join(', ') || '—'; }
 
   // conversion-path coverage and organic traffic by URL cluster
@@ -741,6 +742,33 @@
   }
 
   // Sample GA4 responses built from the loaded Search Console pages (for previewing the screens).
+  // extra engagement reports for the sample (same shapes as GA4)
+  function sampleEngagement(D, land, events, mk, R, ev) {
+    const cur = land.filter(r => r.d[1] === 'cur'), yoy = land.filter(r => r.d[1] === 'yoy');
+    const sum = (l, i) => l.reduce((a, r) => a + r.m[i], 0);
+    const pv = cur.flatMap(r => { const y = yoy.find(x => x.d[0] === r.d[0]); return [{ d: [r.d[0], 'cur'], m: [r.m[3], r.m[1] * 1.1] }].concat(y ? [{ d: [r.d[0], 'yoy'], m: [y.m[3], y.m[1] * 1.1] }] : []); });
+    const so = sectioner(D);
+    const scrollP = cur.map(r => { const id = so(r.d[0]); const rate = id === 'blog' || id === 'resources' ? .48 : /hackathons|competitions|internships|jobs/.test(id) ? .36 : .27; return { d: [r.d[0]], m: [r.m[3] * rate * (.75 + R() * .5)] }; });
+    const depth = cur.flatMap(r => { const id = so(r.d[0]), base = id === 'blog' ? .9 : .78; return [[25, base], [50, base * .72], [75, base * .55], [90, base * .4]].map(([d, f]) => ({ d: [r.d[0], String(d)], m: [r.m[3] * f * (.8 + R() * .3)] })); });
+    const users = sum(cur, 1) * 1.15, yUsers = sum(yoy, 1) * 1.12;
+    const evTot = name => events.filter(e => e.d[1] === name).reduce((a, e) => a + e.m[0], 0);
+    const names = [...new Set(events.map(e => e.d[1]))];
+    const eu = names.flatMap(n => [{ d: [n, 'cur'], m: [Math.min(users * .9, evTot(n) * .62), evTot(n)] }, { d: [n, 'yoy'], m: [Math.min(yUsers * .9, evTot(n) * .55), evTot(n) * .8] }]);
+    const sessions = sum(cur, 0), ySessions = sum(yoy, 0);
+    const blogs = cur.filter(r => ['blog', 'resources'].includes(so(r.d[0]))), dests = cur.filter(r => !['blog', 'resources', 'home', 'util', 'other'].includes(so(r.d[0]))).sort((a, b) => b.m[0] - a.m[0]).slice(0, 40);
+    const bn = []; blogs.forEach((b, i) => { for (let j = 0; j < 4; j++) { const t = dests[(i * 3 + j * 7) % dests.length]; if (!t) continue; const v = b.m[3] * (.012 + R() * .02); bn.push({ d: [t.d[0], 'https://unstop.com' + b.d[0], 'cur'], m: [v] }, { d: [t.d[0], 'https://unstop.com' + b.d[0], 'yoy'], m: [v * (.7 + R() * .2)] }); } });
+    const coh = (k) => ['w1', 'w2', 'w3', 'w4'].flatMap((c, i) => { const base = sessions * .14 * (1 + i * .03) * k; return [1, .21, .14, .11, .095].map((f, w) => ({ d: [c, String(w).padStart(4, '0')], m: [base * f * (w ? (k < 1 ? .85 : 1) : 1), base] })); });
+    return {
+      pageViews: mk(['pagePath'], ['screenPageViews', 'activeUsers'], pv, true),
+      scrollPages: mk(['pagePath'], ['eventCount'], scrollP, false),
+      scrollDepth: mk(['pagePath', 'customEvent:percent_scrolled'], ['eventCount'], depth, false),
+      eventUsers: mk(['eventName'], ['totalUsers', 'eventCount'], eu, true),
+      totals: mk([], ['totalUsers', 'activeUsers', 'sessions', 'engagedSessions', 'screenPageViews'], [{ d: ['cur'], m: [users, users * .97, sessions, sum(cur, 2), sum(cur, 3)] }, { d: ['yoy'], m: [yUsers, yUsers * .97, ySessions, sum(yoy, 2), sum(yoy, 3)] }], true),
+      blogNext: mk(['pagePath', 'pageReferrer'], ['screenPageViews'], bn, true),
+      cohorts: mk(['cohort', 'cohortNthWeek'], ['cohortActiveUsers', 'cohortTotalUsers'], coh(1), false),
+      cohortsYoy: mk(['cohort', 'cohortNthWeek'], ['cohortActiveUsers', 'cohortTotalUsers'], coh(.9), false)
+    };
+  }
   function sampleGa(D) {
     let seed = 7; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     const s = settings(D.site), ev = s.events, { typeOf } = tools(D);
@@ -753,6 +781,7 @@
       const r = { opp: [.002, .018, .06], emp: [.001, .004, .01], blog: [.004, .012, .015], org: [.002, .01, .02] }[p.type] || [.002, .006, .01];
       const e = (name, rate) => { const c = ses * rate * (.6 + R() * .8); if (c >= 1 && name) events.push({ d: [p.path, name], m: [c, c * .9] }); };
       e(ev.studentSignup[0], r[2]); e(ev.opportunityAction[0], r[1] * 3); e(ev.productClick[0], p.type === 'blog' ? .09 : .02); e(ev.scroll[0], .4); e('page_view', 1.8); e('session_start', 1); e('user_engagement', .7);
+      if (ev.oppClick && ev.oppClick[0] && p.type !== 'emp') e(ev.oppClick[0], p.type === 'opp' ? .22 : .08);
       if (p.type === 'emp') { e(ev.demoRequest[0], .02); e(ev.contactSubmit[0], .008); e(ev.employerSignup[0], .01); }
     });
     const sumCur = land.filter(r => r.d[1] === 'cur').reduce((a, r) => a + r.m[0], 0), sumY = land.filter(r => r.d[1] === 'yoy').reduce((a, r) => a + r.m[0], 0);
@@ -777,6 +806,7 @@
       pricing: mk(['pagePath'], ['sessions', 'screenPageViews', 'activeUsers'], [{ d: [s.pricingPaths[0] || '/pricing', 'cur'], m: [sumCur * .002, sumCur * .003, sumCur * .0018] }, { d: [s.pricingPaths[0] || '/pricing', 'yoy'], m: [sumY * .0016, sumY * .0024, sumY * .0014] }], true),
       channels: mk(['sessionDefaultChannelGroup'], ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'], chans.map(([c, f]) => ({ d: [c], m: [sumCur * f, sumCur * f * (c === 'Direct' ? .3 : .6), sumCur * f * .55, sumCur * f * .03] })), false),
       channelEvents: mk(['sessionDefaultChannelGroup', 'eventName'], ['eventCount'], chans.flatMap(([c, f]) => [ev.studentSignup[0], ev.employerSignup[0], ev.demoRequest[0], ev.contactSubmit[0]].map(n => ({ d: [c, n], m: [evTot(n) * f * (c === 'Organic Search' ? 1 : .5 + R())] }))), false),
+      ...sampleEngagement(D, land, events, mk, R, ev),
       ai: mk(['sessionSource', 'landingPage'], ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'], [['chatgpt.com', .006], ['perplexity.ai', .0015], ['gemini.google.com', .0012], ['copilot.microsoft.com', .0004]].flatMap(([src, sh]) => pages.slice(0, 8).flatMap(p => [{ d: [src, p.path, 'cur'], m: [sumCur * sh / 8, sumCur * sh / 8 * .7, sumCur * sh / 8 * .04, sumCur * sh / 8 * .6] }, { d: [src, p.path, 'yoy'], m: [sumY * sh / 8 * .35, sumY * sh / 8 * .25, 0, sumY * sh / 8 * .2] }])), true)
     };
   }
@@ -1162,6 +1192,77 @@
     return { html, mount };
   };
 
+  // ════════════════════════════ ENGAGEMENT ════════════════════════════
+  function engModel(D) {
+    const g = GA.get(D.site), M = gaModel(D); if (!g || !M) return null;
+    const s = settings(D.site), sig = JSON.stringify([s.events, s.sections, s.keyPages, g.at]);
+    if (!g.eng || g.engSig !== sig) { g.eng = U.engagementModel(g.raw, M, sectioner(D), s.events, { keyPages: s.keyPages || [] }); g.engSig = sig; }
+    return g.eng;
+  }
+  V.engagement = (A, D) => {
+    demoFill(D);
+    window.CW_LAST_A = A;
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-en')).forEach(k => delete TABLES[k]);
+    const g = GA.get(D.site), M = gaModel(D), E = engModel(D), s = settings(D.site);
+    const intro = head('Engagement', 'Engaged sessions, scroll depth on key pages, pages per session, return visits within 30 days and the share of organic visitors who click into an opportunity, register or apply. For blog and guide pages, the clicks from the content into product pages.');
+    if (!g || !M || !E) return { html: intro + scopePicker(A, D) + '<div class="note"><a href="#ga4">Connect GA4</a> to see engagement.</div>', mount: () => scopeMount(D) };
+    const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
+    const pts = (a, b) => a == null || b == null ? '' : `<span class="un-d ${a - b > 0 ? 'up' : a - b < 0 ? 'down' : 'flat'}">${a - b > 0 ? '+' : ''}${(a - b).toFixed(1)} pts</span>`;
+    const keyScroll = E.key.length ? E.key.reduce((a, p) => a + p.scroll, 0) / Math.max(1, E.key.reduce((a, p) => a + p.views, 0)) * 100 : null;
+    const w4 = E.ret ? E.ret.weeks[3].rate : null, yw4 = E.yRet ? E.yRet.weeks[3].rate : null;
+    const A1 = E.actions;
+    const evs = k => (s.events[k] || []).join(', ') || 'none set';
+    let html = intro + scopePicker(A, D) + (g.sample ? '<div class="note"><b>Sample numbers.</b> Connect GA4 for real data.</div>' : '') +
+      `<div class="un-kpis">
+        ${kp('Engaged sessions', fmtN(Math.round(E.engaged)), dchip(E.dEngaged), 'vs last year')}
+        ${kp('Engagement rate', pct1(E.engRate), pts(E.engRate, E.yEngRate), 'vs last year')}
+        ${kp('Pages per session', E.pps ? E.pps.toFixed(2) : '—', E.pps && E.yPps ? dchip(U.chg(E.pps, E.yPps)) : '', 'vs last year')}
+        ${kp('Scroll depth on key pages', pct1(keyScroll), '', `of views reach 90% (scroll events) · ${E.key.length} key pages`)}
+        ${kp('Return within 30 days', pct1(w4), pts(w4, yw4), E.ret ? `active in week 4 · week 1: ${pct1(E.ret.weeks[0].rate)}` : 'needs GA4 cohort data')}
+        ${kp('Click into an opportunity', A1.oppClick && A1.oppClick.share != null ? pct1(A1.oppClick.share) : '—', A1.oppClick && A1.yOppClick && A1.yOppClick.share != null ? pts(A1.oppClick.share, A1.yOppClick.share) : '', 'of organic users')}
+        ${kp('Register or apply', A1.opp && A1.opp.share != null ? pct1(A1.opp.share) : '—', A1.opp && A1.yOpp && A1.yOpp.share != null ? pts(A1.opp.share, A1.yOpp.share) : '', 'of organic users')}
+        ${kp('Blog → product click-through', pct1(E.blog.rate), pts(E.blog.rate, E.blog.yRate), `${fmtN(Math.round(E.blog.toProduct))} product page views from blog`)}
+      </div>`;
+    // by cluster / folder / page type / landing page
+    const so = sectioner(D);
+    const grp = keyFn => { const m = new Map(); M.pages.forEach(p => { const k = keyFn(p); const o = m.get(k.id) || { ...k, sessions: 0, ySessions: 0, engaged: 0, views: 0, opp: 0, prodClick: 0, scroll: 0 }; ['sessions', 'ySessions', 'engaged', 'views', 'opp', 'prodClick', 'scroll'].forEach(x => { o[x] += p[x] || 0; }); m.set(k.id, o); }); return [...m.values()].filter(o => o.sessions > 0).map(o => ({ ...o, engRate: o.engaged / o.sessions * 100, pps: o.views / o.sessions, oppRate: o.opp / o.sessions * 100, prodRate: o.prodClick / o.sessions * 100, dSessions: U.chg(o.sessions, o.ySessions) })); };
+    const cols = first => first.concat([
+      { k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSessions) },
+      { k: 'engaged', l: 'Engaged sessions', r: 1, f: r => fmtN(Math.round(r.engaged)) }, { k: 'engRate', l: 'Eng. rate', r: 1, f: r => pct1(r.engRate) },
+      { k: 'pps', l: 'Pages / session', r: 1, f: r => r.pps.toFixed(2) },
+      { k: 'oppRate', l: 'Register / apply per 100 sessions', r: 1, f: r => r.oppRate.toFixed(1) }, { k: 'prodRate', l: 'Product clicks per 100 sessions', r: 1, f: r => r.prodRate.toFixed(1) }]);
+    const tabs = [['cluster', 'By cluster'], ['folder', 'By folder'], ['type', 'By page type'], ['page', 'By landing page']];
+    const tab = fParams().get('by') || 'cluster';
+    let tbl;
+    if (tab === 'type') tbl = table('t-un-ent', cols([{ k: 'name', l: 'Page type', f: r => `<b>${esc(r.name)}</b>` }]), grp(p => ({ id: p.type, name: p.typeName })), { search: false, sort: 'sessions', file: 'unstop-engagement-by-page-type', pageSize: 30 });
+    else if (tab === 'folder') tbl = table('t-un-ent', cols([{ k: 'cluster', l: 'Cluster', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder }]), grp(p => { const id = so(p.path), f = so.folderOf(p.path); return { id: id + '|' + f, cluster: so.label(id), folder: f }; }), { sort: 'sessions', file: 'unstop-engagement-by-folder', pageSize: 40, searchKeys: ['cluster', 'folder'], placeholder: 'Filter clusters or folders', filters: [clusterFilter(D)] });
+    else if (tab === 'page') tbl = table('t-un-ent', cols([{ k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }]), withCluster(D, grp(p => ({ id: p.path, path: p.path })), r => r.path), { sort: 'sessions', file: 'unstop-engagement-by-landing-page', pageSize: 25, searchKeys: ['path', 'cluster'], placeholder: 'Filter URLs', filters: [clusterFilter(D)] });
+    else tbl = table('t-un-ent', cols([{ k: 'name', l: 'Cluster', f: r => `<a href="${esc(focusHref({ c: r.id }))}"><b>${esc(r.name)}</b></a>`, csv: r => r.name }]), grp(p => { const id = so(p.path); return { id, name: so.label(id) }; }), { search: false, sort: 'sessions', file: 'unstop-engagement-by-cluster', pageSize: 30 });
+    html += `<section class="panel"><div class="panel-h"><h2>Engagement by section</h2><p>Organic sessions credited to the page they landed on.</p></div><div class="panel-b"><div class="un-tabs" role="tablist">${tabs.map(([k, l]) => `<a role="tab" class="${k === tab ? 'on' : ''}" href="#engagement?by=${k}">${l}</a>`).join('')}</div></div>${tbl}</section>`;
+    // scroll depth on key pages
+    const dcols = E.depths.length ? E.depths.map(d => ({ k: 'd' + d, l: `Reached ${d}%`, r: 1, f: r => pct1(r.depthPct[d]), csv: r => r.depthPct[d] })) : [];
+    html += `<section class="panel"><div class="panel-h"><h2>Scroll depth on key pages</h2><p>${(s.keyPages || []).length ? 'Key pages from Funnel setup.' : 'The 25 most viewed organic pages (choose your own in Funnel setup).'} GA4 enhanced measurement sends one scroll event at 90%, so “Reached 90%” = scroll events ÷ views. ${E.depths.length ? 'Depth thresholds come from the percent_scrolled custom dimension.' : 'For 25 / 50 / 75% thresholds, send scroll events with a percent_scrolled parameter from GTM and register it as an event-scoped custom dimension; the columns appear by themselves.'} Scroll events counted: ${esc(evs('scroll'))}.</p></div>
+      ${table('t-un-ens', [{ k: 'path', l: 'Page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }, { k: 'views', l: 'Views', r: 1, f: r => fmtN(Math.round(r.views)) + ' ' + dchip(r.dViews) }].concat(dcols).concat(E.depths.includes(90) ? [] : [{ k: 'scrollRate', l: 'Reached 90%', r: 1, f: r => pct1(r.scrollRate) }]), E.key, { search: false, sort: 'views', file: 'unstop-scroll-depth-key-pages', pageSize: 25 })}</section>`;
+    // return visits
+    const rr = (x, w) => x ? pct1(x.weeks[w - 1].rate) : '—';
+    html += `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Return visits within 30 days</h2><p>New organic users grouped by the week of their first visit (the 4 complete weeks ending 28 days before the period end), and the share active again in each of the next 4 weeks. GA4 cohorts count users per week, so week 4 is the closest standard figure to “still returning after 30 days”.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th></th><th class="r">New organic users</th><th class="r">Week 1</th><th class="r">Week 2</th><th class="r">Week 3</th><th class="r">Week 4</th></tr></thead><tbody>
+        <tr><td><b>This year</b></td><td class="r">${E.ret ? fmtN(E.ret.users) : '—'}</td>${[1, 2, 3, 4].map(w => `<td class="r">${rr(E.ret, w)}</td>`).join('')}</tr>
+        <tr><td>Same weeks last year</td><td class="r">${E.yRet ? fmtN(E.yRet.users) : '—'}</td>${[1, 2, 3, 4].map(w => `<td class="r">${rr(E.yRet, w)}</td>`).join('')}</tr>
+      </tbody></table></div></div></section>
+      <section class="panel"><div class="panel-h"><h2>Click into an opportunity, register or apply</h2><p>Organic users who fired the event ÷ all organic users. Events are set in Funnel setup.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Action</th><th>Events counted</th><th class="r">Users</th><th class="r">Share of organic users</th><th class="r">Last year</th></tr></thead><tbody>
+        <tr><td><b>Click into an opportunity</b></td><td><small>${esc(evs('oppClick'))}</small></td><td class="r">${A1.oppClick ? fmtN(A1.oppClick.users) : '—'}</td><td class="r">${A1.oppClick && A1.oppClick.share != null ? pct1(A1.oppClick.share) : '—'}</td><td class="r">${A1.yOppClick && A1.yOppClick.share != null ? pct1(A1.yOppClick.share) : '—'}</td></tr>
+        <tr><td><b>Register or apply</b></td><td><small>${esc(evs('opportunityAction'))}</small></td><td class="r">${A1.opp ? fmtN(A1.opp.users) : '—'}</td><td class="r">${A1.opp && A1.opp.share != null ? pct1(A1.opp.share) : '—'}</td><td class="r">${A1.yOpp && A1.yOpp.share != null ? pct1(A1.yOpp.share) : '—'}</td></tr>
+      </tbody></table></div><p class="hint" style="padding:0 16px 12px">${E.users ? fmtN(E.users) + ' organic users in the period. ' : ''}When several event names count for one action, the one with the most users is used (GA4 cannot de-duplicate users across events in this report).</p></div></section></div>`;
+    // blog → product
+    const B = E.blog;
+    html += `<section class="panel"><div class="panel-h"><h2>Blog &amp; guides → product pages</h2><p>Page views of product pages (opportunities, employer pages, practice…) whose referrer is a blog or guide page, in organic sessions. This is the job of the content: send readers into the product.</p></div>
+      <div class="panel-b"><div class="un-big"><b>${pct1(B.rate)}</b><span>blog → product click-through · ${fmtN(Math.round(B.toProduct))} product page views from ${fmtN(Math.round(B.blogViews))} blog and guide views${B.yRate != null ? ` · ${pct1(B.yRate)} last year` : ''} · ${fmtN(Math.round(B.events))} product-click events (${esc(evs('productClick'))})</span></div></div>
+      <div class="grid-2 even"><div>${table('t-un-enbd', [{ k: 'cluster', l: 'Product destination', f: r => `<b>${esc(r.cluster)}</b>` }, { k: 'views', l: 'Views from blog', r: 1, f: r => fmtN(Math.round(r.views)) }], B.dest, { search: false, file: 'unstop-blog-to-product-destinations', pageSize: 15 })}</div>
+      <div>${table('t-un-enbs', [{ k: 'path', l: 'Blog / guide page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'views', l: 'Product views sent', r: 1, f: r => fmtN(Math.round(r.views)) }, { k: 'rate', l: 'Click-through', r: 1, f: r => pct1(r.rate) }], B.src, { file: 'unstop-blog-to-product-sources', pageSize: 15, placeholder: 'Filter blog URLs' })}</div></div></section>`;
+    const mount = () => { scopeMount(D); ['t-un-ent', 't-un-ens', 't-un-enbd', 't-un-enbs'].forEach(drawTable); };
+    return { html, mount };
+  };
+
   // ════════════════════════════ FULL FUNNEL ════════════════════════════
   V.funnel = (A, D) => {
     demoFill(D);
@@ -1179,8 +1280,7 @@
     const visUrls = G.vis.rows.reduce((a, r) => a + r.urls, 0), prevUrls = G.vis.rows.reduce((a, r) => a + (r.prevUrls || 0), 0);
     const AQ = acqModel(D);
     const pathCov = ga && ga.pathCov ? ga.pathCov.share : null;
-    const blogT = ga && ga.types.find(t => t.id === 'blog');
-    const ret = ga && ga.returning.cur;
+    const EN = ga ? engModel(D) : null;
     const aiS = ga ? ga.ai.reduce((a, r) => a + r.sessions, 0) : null, aiY = ga ? ga.ai.reduce((a, r) => a + r.ySessions, 0) : null;
     const V2 = {
       impr: [fmtN(site.impr), ps ? U.chg(site.impr, ps.impr) : null, gscSt, gscAt],
@@ -1205,11 +1305,14 @@
       act7: moe && moe.seg.organic.act7 ? [pct1(moe.seg.organic.act7.rate), moe.seg.other.act7 ? moe.seg.organic.act7.rate - moe.seg.other.act7.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
       ret30: moe && moe.seg.organic.ret30 ? [pct1(moe.seg.organic.ret30.rate), moe.seg.other.ret30 ? moe.seg.organic.ret30.rate - moe.seg.other.ret30.rate : null, moeSt, m.at, 'pp', 'vs other channels'] : null,
       ...Object.fromEntries(['moeSignups', 'profile', 'act7', 'ret30'].filter(k => mlv[k] && mlv[k].value != null).map(k => { const x = mlv[k]; return [k, x.rate ? [pct1(x.value), x.compare != null ? x.value - x.compare : null, mlSt, ml.at, 'pp', x.compare != null ? 'vs compared rows' : 'MoEngage live'] : [fmtN(Math.round(x.value)), null, mlSt, ml.at, null, x.compare != null ? 'vs ' + fmtN(Math.round(x.compare)) + ' compared' : 'MoEngage live']]; })),
-      engRate: ga ? [pct1(ga.total.engRate), null, gaSt, g.at] : null,
-      pps: ga ? [ga.total.pps ? ga.total.pps.toFixed(2) : '—', null, gaSt, g.at] : null,
-      returning: ga && ret ? [pct1(ret.share), ga.returning.yoy ? ret.share - ga.returning.yoy.share : null, gaSt, g.at, 'pp', 'vs last year'] : null,
-      opp: ga ? [fmtN(ga.ev.opp), U.chg(ga.ev.opp, ga.ev.yOpp), gaSt, g.at, null, 'vs last year'] : null,
-      prodClick: ga ? [fmtN(blogT ? blogT.prodClick : 0), null, gaSt, g.at, null, blogT && blogT.sessions ? (blogT.prodClick / blogT.sessions * 100).toFixed(1) + ' per 100 blog sessions' : ''] : null,
+      engaged: EN ? [fmtN(Math.round(EN.engaged)), EN.dEngaged, gaSt, g.at, null, 'vs last year'] : null,
+      engRate: EN ? [pct1(EN.engRate), EN.engRate != null && EN.yEngRate != null ? EN.engRate - EN.yEngRate : null, gaSt, g.at, 'pp', 'vs last year'] : null,
+      scrollKey: EN && EN.key.length ? [pct1(EN.key.reduce((a, p) => a + p.scroll, 0) / Math.max(1, EN.key.reduce((a, p) => a + p.views, 0)) * 100), null, gaSt, g.at, null, `reach 90% · ${EN.key.length} key pages`] : null,
+      pps: EN ? [EN.pps ? EN.pps.toFixed(2) : '—', EN.pps && EN.yPps ? U.chg(EN.pps, EN.yPps) : null, gaSt, g.at, null, 'vs last year'] : null,
+      return4w: EN && EN.ret ? [pct1(EN.ret.weeks[3].rate), EN.yRet ? EN.ret.weeks[3].rate - EN.yRet.weeks[3].rate : null, gaSt, g.at, 'pp', 'week 4, vs last year'] : null,
+      oppClickShare: EN && EN.actions.oppClick && EN.actions.oppClick.share != null ? [pct1(EN.actions.oppClick.share), EN.actions.yOppClick && EN.actions.yOppClick.share != null ? EN.actions.oppClick.share - EN.actions.yOppClick.share : null, gaSt, g.at, 'pp', 'of organic users'] : null,
+      oppShare: EN && EN.actions.opp && EN.actions.opp.share != null ? [pct1(EN.actions.opp.share), EN.actions.yOpp && EN.actions.yOpp.share != null ? EN.actions.opp.share - EN.actions.yOpp.share : null, gaSt, g.at, 'pp', 'of organic users'] : null,
+      blogRate: EN && EN.blog.blogViews ? [pct1(EN.blog.rate), EN.blog.yRate != null ? EN.blog.rate - EN.blog.yRate : null, gaSt, g.at, 'pp', 'vs last year'] : null,
       demo: ga ? [fmtN(ga.ev.demo), U.chg(ga.ev.demo, ga.ev.yDemo), gaSt, g.at, null, 'vs last year'] : null,
       contact: ga ? [fmtN(ga.ev.contact), U.chg(ga.ev.contact, ga.ev.yContact), gaSt, g.at, null, 'vs last year'] : null,
       pricing: ga ? [fmtN(ga.pricing.sessions), U.chg(ga.pricing.sessions, ga.pricing.ySessions), gaSt, g.at, null, 'vs last year'] : null,
@@ -1217,7 +1320,7 @@
     };
     const owners = s.owners || {};
     const stages = ['Visibility', 'Traffic', 'Signups', 'Engagement', 'Leads', 'Pipeline & revenue'];
-    const link = { Visibility: '#visibility', Traffic: '#ga4', Signups: '#acquisition', Engagement: '#ga4', Leads: '#ga4', 'Pipeline & revenue': null };
+    const link = { Visibility: '#visibility', Traffic: '#ga4', Signups: '#acquisition', Engagement: '#engagement', Leads: '#ga4', 'Pipeline & revenue': null };
     const card = mt => {
       const v = V2[mt.id];
       const st = mt.later ? 'later' : v ? v[2] : mt.src === 'MoEngage' ? 'none' : mt.src === 'Cost input' ? 'input' : 'none';
@@ -1294,7 +1397,7 @@
       </div></section>
       <section class="panel"><div class="panel-h"><h2>Query clusters</h2><p>One cluster per line: <code>Name: word, phrase, word</code>. First match wins.</p></div><div class="panel-b"><textarea id="un-clusters" rows="9" spellcheck="false">${esc(U.clustersText(s.clusters || U.DEFAULT_CLUSTERS))}</textarea></div></section>
       <section class="panel"><div class="panel-h"><h2>GA4 event names</h2><p>Comma-separated, exact GA4 event names. The GA4 screen lists every event recorded in organic sessions.</p></div><div class="panel-b un-grid2">
-        ${evRow('studentSignup', 'Student signup')}${evRow('employerSignup', 'Employer / recruiter signup')}${evRow('demoRequest', 'Demo request')}${evRow('contactSubmit', 'Contact form submission')}${evRow('opportunityAction', 'Opportunity register / apply')}${evRow('productClick', 'Product click (blog → product)')}${evRow('scroll', 'Scroll')}
+        ${evRow('studentSignup', 'Student signup')}${evRow('employerSignup', 'Employer / recruiter signup')}${evRow('demoRequest', 'Demo request')}${evRow('contactSubmit', 'Contact form submission')}${evRow('opportunityAction', 'Opportunity register / apply')}${evRow('productClick', 'Product click (blog → product)')}${evRow('oppClick', 'Click into an opportunity')}${evRow('scroll', 'Scroll')}
         <label class="field"><span>Pricing page paths</span><input type="text" id="un-pricing" value="${esc(s.pricingPaths.join(', '))}"></label>
         <label class="field"><span>AI assistant sources (GA4 session source contains)</span><input type="text" id="un-ai" value="${esc(s.aiSources.join(', '))}"></label>
         <label class="field"><span>GA4 property ID</span><input type="text" id="un-prop" inputmode="numeric" value="${esc(s.ga4Property)}"></label>
@@ -1305,6 +1408,7 @@
           <label class="field"><span>Monthly SEO cost in ₹ (content, agency, tools, team share)</span><input type="text" id="un-cost" inputmode="decimal" value="${esc(s.monthlyCost)}" placeholder="e.g. 450000"></label>
           <label class="field"><span>Employer / recruiter share of that cost (%), for cost per employer signup</span><input type="number" id="un-cost-emp" min="0" max="100" value="${esc(s.empCostShare == null ? '' : s.empCostShare)}" placeholder="e.g. 30"></label>
           <label class="field"><span>Profile counts as complete at (%)</span><input type="number" id="un-moe-th" min="1" max="100" value="${esc(s.moeThreshold)}"></label>
+          <label class="field"><span>Key pages for scroll depth (one path per line; empty = 25 most viewed)</span><textarea id="un-keypages" rows="4" spellcheck="false" placeholder="/internship&#10;/hackathons&#10;/blog/tcs-nqt-exam-pattern">${esc((s.keyPages || []).join('\n'))}</textarea></label>
           <label class="field"><span>Extra organic source words for MoEngage (optional)</span><input type="text" id="un-orgsrc" value="${esc(s.organicSources)}" placeholder="google, bing, organic, seo"></label>
         </div>
       </div></section>
@@ -1331,6 +1435,7 @@
         n.monthlyCost = document.getElementById('un-cost').value.trim(); n.empCostShare = document.getElementById('un-cost-emp').value.trim();
         n.moeThreshold = +document.getElementById('un-moe-th').value || 80;
         n.organicSources = document.getElementById('un-orgsrc').value.trim();
+        n.keyPages = document.getElementById('un-keypages').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 200);
         const owners = {}; f.querySelectorAll('[data-owner]').forEach(i => { const def = U.METRICS.find(x => x.id === i.dataset.owner); if (i.value.trim() && def && i.value.trim() !== def.owner) owners[i.dataset.owner] = i.value.trim(); }); n.owners = owners;
         save(D.site, n);
         const mm = MOE.get(D.site); if (mm && mm.rows) mm.res = U.moeQuality(mm.rows, moeOpt(n));
