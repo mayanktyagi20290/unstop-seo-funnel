@@ -253,7 +253,7 @@
       buckets: cur, prevBuckets: prev, prev: P,
       d: P ? { clicks: chg(tot.clicks, P.tot.clicks), impr: chg(tot.impr, P.tot.impr), nbClicks: chg(nb.clicks, P.nb.clicks), nbImpr: chg(nb.impr, P.nb.impr), bClicks: chg(b.clicks, P.b.clicks), nbPos: P.nb.pos && nb.pos ? nb.pos - P.nb.pos : null } : null,
       byQueryCluster: [...qc.values()].map(x => ({ name: x.name, nb: fin(x.nb), b: fin(x.b), n3: x.n3, n10: x.n10, n11: x.n11, nq: x.nq })).sort((a, c) => c.nb.clicks - a.nb.clicks),
-      quick, bucketLists: lists, queryList: (o.queries || []).filter(r => +r.impr > 0).sort((a, c) => c.clicks - a.clicks || c.impr - a.impr).slice(0, 3000), queryRows: (o.queries || []).length, capped: !!o.capped
+      quick, bucketLists: lists, allQueries: (o.queries || []).filter(r => +r.impr > 0), queryList: (o.queries || []).filter(r => +r.impr > 0).sort((a, c) => c.clicks - a.clicks || c.impr - a.impr).slice(0, 3000), queryRows: (o.queries || []).length, capped: !!o.capped
     };
   }
   // Fallback for uploads and sample data: page totals from the page report, the branded split from

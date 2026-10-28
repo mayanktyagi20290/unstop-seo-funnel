@@ -1987,6 +1987,106 @@
   // The employer side on one page, laid out like the One-Page Dashboard sheet: B2E, B2E (J&I) and both
   // together, from Search Console (exact per cluster), GA4 and PageSpeed. "Copy for Google Sheets" puts the
   // whole table on the clipboard, ready to paste.
+  // ── B2E: products, search topics, weekly trend and drop alerts ──
+  const B2E_PRODUCTS = { 'ai-sourcing-agent': 'AI Sourcing Agent', 'ai-assessment-agent': 'AI Assessment Agent', 'ai-interview-agent': 'AI Interview Agent', 'ai-screening-agent': 'AI Screening Agent', 'ai-proctoring-agent': 'AI Proctoring Agent', 'ai-calling-agent': 'AI Calling Agent', 'ai-scheduling-agent': 'AI Scheduling Agent', 'ats-software': 'ATS Software', 'employer-branding': 'Employer Branding', 'brand-and-advertise': 'Brand & Advertise', 'campus-hiring': 'Campus Hiring', 'lateral-hiring': 'Lateral Hiring', 'virtual-hiring': 'Virtual Hiring', 'hiring-talent-platform': 'Hiring Talent Platform', 'hackathon-hiring': 'Hackathon Hiring', 'online-assessment-platform': 'Online Assessment Platform', 'ai-interview': 'AI Interview' };
+  const titleCase = x => String(x || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+  // the product a B2E URL belongs to: the folder after /employers (hire-* and free job posting pages grouped)
+  function b2eProduct(url) {
+    const p = U.pathOnly(url).toLowerCase().replace(/\/+$/, '') || '/';
+    if (p === '/employers') return 'Employers home';
+    if (/^\/(saas-pricing|employers\/pricing|pricing)(\/|$)/.test(p)) return 'Pricing';
+    if (/^\/employers\/hire-/.test(p)) return 'Hire pages (hire-*)';
+    if (/free-job-posting/.test(p)) return 'Free job posting';
+    const seg = p.split('/').filter(Boolean);
+    const k = seg[0] === 'employers' ? seg[1] : seg[0];
+    return B2E_PRODUCTS[k] || titleCase(k) || 'Other';
+  }
+  // the employer topic a search belongs to (first match wins)
+  const B2E_TOPICS = [
+    ['ATS / applicant tracking', /\bats\b|applicant tracking|tracking system/],
+    ['Proctoring', /proctor/],
+    ['AI interview', /interview/],
+    ['AI screening', /screening|resume screen|shortlist/],
+    ['AI calling', /calling|voice (ai|agent|bot)|phone screen/],
+    ['Scheduling', /schedul/],
+    ['Assessments & tests', /assessment|aptitude|coding test|online test|skill test|psychometric|personality test|sql (test|assessment)|mcq|pre[- ]?employment|test platform|gamified/],
+    ['Hackathons, quizzes & challenges', /hackathon|ideathon|quiz|simulation|challenge|case comp/],
+    ['Job & internship posting', /post (a |free )?(job|internship)|job posting|internship posting|free job|job board|job portal for (employers|recruiters)|post jobs?/],
+    ['Hire roles & freshers', /^hire |\bhire (a |an )?\w+|hiring (freshers|interns|developers)|fresher hiring/],
+    ['Sourcing', /sourcing|talent pool|candidate search|talent community/],
+    ['Campus hiring', /campus|college (hiring|recruit)|placement drive|university recruit/],
+    ['Lateral & virtual hiring', /lateral|virtual (hiring|recruit)/],
+    ['Employer branding & advertising', /employer brand|branding|brand presence|advertis/],
+    ['Pricing', /pricing|price|cost|plans?\b/],
+    ['Recruitment platform & software', /recruit|hiring (platform|software|tool|solution)|talent (platform|acquisition)|hr software/]
+  ];
+  const b2eTopic = q => { const s = String(q || '').toLowerCase(); const t = B2E_TOPICS.find(([, rx]) => rx.test(s)); return t ? t[0] : 'Other employer searches'; };
+  const B2EX = new Map(); // site|end → { status, weekly, cur, prev, W, at, sample }
+  const b2eKey = D => D.site + '|' + D.end;
+  function b2eWindows(D) {
+    const e = new Date(D.end + 'T00:00:00Z'), iso = d => d.toISOString().slice(0, 10), add = n => { const x = new Date(e); x.setUTCDate(x.getUTCDate() + n); return iso(x); };
+    return { wStart: add(-7 * 16 + 1), end: D.end, curS: add(-6), prevS: add(-13), prevE: add(-7) };
+  }
+  // live: 6 Search Console calls per cluster (daily NB / brand for the trend, pages and queries for this week and last)
+  async function loadB2EX(D, A, ids) {
+    const src = window.CW_SOURCE, key = b2eKey(D); if (!src || !src.gsc) return;
+    B2EX.set(key, { status: 'loading' }); rerender();
+    try {
+      const so = sectioner(D), s = settings(D.site), W = b2eWindows(D), brandRx = A.brandRx;
+      const filt = id => { const sec = so.sections.find(x => x.id === id); const f = [{ dimension: 'page', operator: 'includingRegex', expression: U.sectionRegex(sec, null) }]; const ex = U.sectionExclude(sec, s.sections); if (ex) f.push({ dimension: 'page', operator: 'excludingRegex', expression: ex }); return f; };
+      const q = body => src.gsc.query({ type: 'web', ...body }).then(d => d.rows || []);
+      const out = { weekly: {}, cur: {}, prev: {} };
+      await Promise.all(ids.map(async id => {
+        const f = filt(id);
+        const byDate = brand => q({ startDate: W.wStart, endDate: W.end, dimensions: ['date'], rowLimit: 1000, dimensionFilterGroups: [{ groupType: 'and', filters: f.concat(brandRx ? [{ dimension: 'query', operator: brand ? 'includingRegex' : 'excludingRegex', expression: brandRx }] : []) }] }).then(rows => rows.map(r => ({ d: r.keys[0], clicks: r.clicks, impr: r.impressions, pos: r.position })));
+        const by = (st, en, dim) => q({ startDate: st, endDate: en, dimensions: [dim], rowLimit: 5000, dimensionFilterGroups: [{ groupType: 'and', filters: f }] }).then(rows => rows.map(r => ({ k: r.keys[0], clicks: r.clicks, impr: r.impressions, pos: r.position })));
+        const [nb, b, pc, pp, qc, qp] = await Promise.all([byDate(false), brandRx ? byDate(true) : Promise.resolve([]), by(W.curS, W.end, 'page'), by(W.prevS, W.prevE, 'page'), by(W.curS, W.end, 'query'), by(W.prevS, W.prevE, 'query')]);
+        out.weekly[id] = { nb: U.weekly(nb), b: U.weekly(b) }; out.cur[id] = { pages: pc, queries: qc }; out.prev[id] = { pages: pp, queries: qp };
+      }));
+      B2EX.set(key, { status: 'done', ...out, W, at: Date.now() });
+    } catch (e) { B2EX.set(key, { status: 'error', error: e.message }); }
+    rerender();
+  }
+  // uploads and sample data: alerts compare the loaded period with the previous one; sample data also gets a
+  // generated weekly series so the screen can be previewed
+  function b2eFromRows(A, D, ids) {
+    const so = sectioner(D), isB = brandOf(A);
+    const out = { status: 'done', weekly: {}, cur: {}, prev: {}, W: null, sample: D.source === 'demo', periodBased: true };
+    let seed = 11; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const days = Math.max(1, Math.round((new Date(D.end) - new Date(D.start)) / 864e5) + 1);
+    ids.forEach(id => {
+      const P = (A.P || []).filter(r => so(r.p) === id), PP = (D.prevP || []).filter(r => so(r.p) === id);
+      const QP = (D.QP || []).filter(r => so(r.p) === id);
+      const qa = new Map(); QP.forEach(r => { const o = qa.get(r.q) || { k: r.q, clicks: 0, impr: 0, posW: 0 }; o.clicks += +r.clicks || 0; o.impr += +r.impr || 0; o.posW += (+r.pos || 0) * (+r.impr || 0); qa.set(r.q, o); });
+      const qcur = [...qa.values()].map(o => ({ k: o.k, clicks: o.clicks, impr: o.impr, pos: o.impr ? o.posW / o.impr : 0 }));
+      const prevQ = new Map((D.prevQ || []).map(r => [r.q, r]));
+      out.cur[id] = { pages: P.map(r => ({ k: r.p, clicks: +r.clicks || 0, impr: +r.impr || 0, pos: +r.pos || 0 })), queries: qcur };
+      out.prev[id] = { pages: PP.map(r => ({ k: r.p, clicks: +r.clicks || 0, impr: +r.impr || 0, pos: +r.pos || 0 })), queries: qcur.map(x => prevQ.get(x.k)).filter(Boolean).map(r => ({ k: r.q, clicks: +r.clicks || 0, impr: +r.impr || 0, pos: +r.pos || 0 })) };
+      if (out.sample) {
+        const tc = P.reduce((a, r) => a + (+r.clicks || 0), 0), ti = P.reduce((a, r) => a + (+r.impr || 0), 0);
+        const bc = QP.filter(r => isB(r.q)).reduce((a, r) => a + (+r.clicks || 0), 0), all = QP.reduce((a, r) => a + (+r.clicks || 0), 0) || 1;
+        const bs = bc / all, pos = P.length ? P.reduce((a, r) => a + (+r.pos || 0) * (+r.impr || 0), 0) / (ti || 1) : 15;
+        const e = new Date(D.end + 'T00:00:00Z'); const rowsNb = [], rowsB = [];
+        for (let i = 16 * 7 - 1; i >= 0; i--) { const d = new Date(e); d.setUTCDate(d.getUTCDate() - i); const f = (0.82 + 0.3 * (1 - i / 112)) * (0.85 + R() * 0.3) * (d.getUTCDay() % 6 === 0 ? 0.6 : 1.08); const c = tc / days * f, im = ti / days * f; rowsNb.push({ d: d.toISOString().slice(0, 10), clicks: Math.round(c * (1 - bs)), impr: Math.round(im * 0.94), pos: pos * (1.05 - 0.1 * (1 - i / 112)) }); rowsB.push({ d: d.toISOString().slice(0, 10), clicks: Math.round(c * bs), impr: Math.round(im * 0.06), pos: 1.4 }); }
+        out.weekly[id] = { nb: U.weekly(rowsNb), b: U.weekly(rowsB) };
+      }
+    });
+    return out;
+  }
+  // pages or keywords whose clicks fell (or ranking slipped) against the previous window, with the likely reason
+  function b2eDrops(cur, prev, minPrev) {
+    const cm = new Map(cur.map(r => [r.k, r]));
+    return prev.filter(p => p.clicks >= minPrev || p.impr >= 200).map(p => {
+      const c = cm.get(p.k) || { clicks: 0, impr: 0, pos: null };
+      const dc = U.chg(c.clicks, p.clicks), dpos = c.pos && p.pos ? c.pos - p.pos : null, di = U.chg(c.impr, p.impr);
+      const flag = (p.clicks >= minPrev && dc != null && dc <= -30) || (dpos != null && dpos >= 3 && p.impr >= 100);
+      if (!flag) return null;
+      const why = !c.impr ? 'Dropped out of results (no impressions this week)' : dpos != null && dpos >= 1.5 ? `Ranking dropped: position ${p.pos.toFixed(1)} → ${c.pos.toFixed(1)}` : di != null && di <= -25 ? 'Fewer impressions at a similar position: lower demand or seasonality' : 'Lower CTR at a similar position: check the title, snippet or new SERP features';
+      return { k: p.k, prevClicks: p.clicks, clicks: c.clicks, dc, prevPos: p.pos, pos: c.pos, dpos, prevImpr: p.impr, impr: c.impr, di, lost: p.clicks - c.clicks, why };
+    }).filter(Boolean).sort((a, b) => b.lost - a.lost || (b.dpos || 0) - (a.dpos || 0));
+  }
+  const B2E_STATE = new Map(); // site → { product, topicCol, trend }
+  const b2eState = site => { if (!B2E_STATE.has(site)) B2E_STATE.set(site, { product: '', topicCol: 2, trend: 'nb' }); return B2E_STATE.get(site); };
   const B2E_KW = new Map(); // site → { seg, k, i } keyword list opened from the table
   const B2E_COLS = [{ id: 'empb2b', name: 'B2E' }, { id: 'empjobboard', name: 'B2E (J&I)' }];
   V.b2e = (A, D) => {
@@ -2166,7 +2266,6 @@
     if (!live && D.source !== 'demo') notes.push('Search Console numbers here come from an upload; brand / non-brand split is an estimate. Connect Search Console for exact numbers.');
     if (D.source === 'demo') notes.push('<b>Sample data.</b> Connect Search Console and GA4 for real numbers.');
     // top landing pages
-    const top = (A.P || []).filter(r => cols.some(c => so(r.p) === c.id)).sort((a, b) => b.clicks - a.clicks).slice(0, 25).map(r => { const path = U.pathOnly(r.p), gp = M ? M.pages.find(p => p.path.toLowerCase() === path.toLowerCase()) : null; return { path, cluster: so.label(so(r.p)), clicks: r.clicks, impr: r.impr, pos: r.pos, sessions: gp ? gp.sessions : null, leads: gp ? gp.demo + gp.contact : null, emp: gp ? gp.emp : null }; });
     // ── first review: the three questions, answered for the employer side ──
     const reviewPanel = () => {
       const isB = brandOf(A), qp = new Map();
@@ -2190,20 +2289,130 @@
     delete TABLES['t-un-b2e-kw'];
     function kwPanel() {
       if (!kwSel) return '';
-      const { seg, k, i } = kwSel, lab = { top3: 'top 3', top10: 'top 10', p11: 'positions 11–20' }[k];
+      const { seg, k, i, topic } = kwSel, lab = { top3: 'in top 3', top10: 'in top 10', p11: 'in positions 11–20', all: '' }[k];
       const idx = i === 2 ? [0, 1] : [i];
-      const rows = idx.flatMap(j => { const m = G[j]; return m && m.bucketLists ? m.bucketLists[seg][k].map(r => ({ ...r, cluster: cols[j].name, ctr: r.impr ? r.clicks / r.impr * 100 : 0 })) : []; }).sort((a, b) => b.impr - a.impr);
-      const title = `${i === 2 ? 'B2E + B2E (J&I)' : cols[i].name}: ${seg === 'n' ? 'non-brand' : 'brand'} keywords in ${lab} (${fmtN(rows.length)})`;
+      const isBr = brandOf(A);
+      const rows = idx.flatMap(j => { const m = G[j]; if (!m) return []; const src = topic ? (m.allQueries || []).filter(r => b2eTopic(r.q) === topic && (seg === 'b') === !!isBr(r.q) && (k === 'all' || (k === 'top10' ? r.pos <= 10 : r.pos > 10 && r.pos <= 20))) : (m.bucketLists ? m.bucketLists[seg][k] : []); return src.map(r => ({ ...r, cluster: cols[j].name, ctr: r.impr ? r.clicks / r.impr * 100 : 0 })); }).sort((a, b) => b.impr - a.impr);
+      const title = `${i === 2 ? 'B2E + B2E (J&I)' : cols[i].name}: ${topic ? topic + ', ' : ''}${seg === 'n' ? 'non-brand' : 'brand'} keywords ${lab} (${fmtN(rows.length)})`.replace(/ \(/, ' (').replace(/\s+\(/, ' (');
       return `<section class="panel" id="un-b2e-kwp"><div class="panel-h"><h2>${esc(title)}</h2><p>Search Console, ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}. Position is the average for this cluster’s pages. <button class="btn-quiet sm" type="button" id="un-b2e-kwx">Close</button></p></div>` +
         table('t-un-b2e-kw', [{ k: 'q', l: 'Keyword', cls: 'q', f: r => `<a href="https://www.google.com/search?q=${encodeURIComponent(r.q)}&gl=in&hl=en" target="_blank" rel="noopener">${esc(r.q)}</a>`, csv: r => r.q }, ...(i === 2 ? [{ k: 'cluster', l: 'Cluster' }] : []), { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos), csv: r => r.pos.toFixed(1) }],
-          rows, { file: 'unstop-b2e-' + (seg === 'n' ? 'nonbrand' : 'brand') + '-' + k, sort: 'impr', pageSize: 50, placeholder: 'Filter keywords' }) + '</section>';
+          rows, { file: 'unstop-b2e-' + (topic ? topic.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' : '') + (seg === 'n' ? 'nonbrand' : 'brand') + '-' + k, sort: 'impr', pageSize: 50, placeholder: 'Filter keywords' }) + '</section>';
     }
+    // ═══ extra sections: alerts, weekly trend, products, topics, quick wins, all landing pages ═══
+    const ST = b2eState(D.site), ids = cols.map(c => c.id);
+    const XK = b2eKey(D);
+    const X = live ? B2EX.get(XK) : b2eFromRows(A, D, ids);
+    const xReady = X && X.status === 'done';
+    const isB = brandOf(A);
+    const clusterName = id => (cols.find(c => c.id === id) || { name: so.label(id) }).name;
+    // query × page rows of the employer pages (brand split per page / product, ranking page per query)
+    const QPe = (D.QP || []).filter(r => ids.includes(so(r.p)));
+    const pageQ = new Map(); QPe.forEach(r => { const k = U.pathOnly(r.p).toLowerCase(); const o = pageQ.get(k) || { b: 0, n: 0 }; if (isB(r.q)) o.b += +r.clicks || 0; else o.n += +r.clicks || 0; pageQ.set(k, o); });
+    const gaPage = new Map(M ? M.pages.map(p => [p.path.toLowerCase(), p]) : []);
+    const prevPage = new Map((D.prevP || []).map(r => [r.p, r]));
+    // all landing pages
+    const pagesAll = (A.P || []).filter(r => ids.includes(so(r.p))).map(r => {
+      const path = U.pathOnly(r.p), lk = path.toLowerCase(), gp = gaPage.get(lk), qx = pageQ.get(lk), pr = prevPage.get(r.p);
+      return { p: r.p, path, product: b2eProduct(r.p), cluster: clusterName(so(r.p)), clicks: +r.clicks || 0, impr: +r.impr || 0, ctr: r.impr ? r.clicks / r.impr * 100 : 0, pos: +r.pos || 0, dClicks: pr ? U.chg(r.clicks, pr.clicks) : null,
+        nbC: qx ? qx.n : null, bC: qx ? qx.b : null, sessions: gp ? gp.sessions : null, dSes: gp ? U.chg(gp.sessions, gp.ySessions) : null, leads: gp ? gp.demo + gp.contact : null, emp: gp ? gp.emp : null };
+    });
+    // ── drop alerts ──
+    let alertHtml = '', alertTop = '';
+    if (live && (!X || X.status === 'loading')) alertHtml = '<p class="progress">Loading this week vs last week from Search Console…</p>';
+    else if (X && X.status === 'error') alertHtml = `<p class="start-error">${esc(X.error)}</p>`;
+    else if (xReady) {
+      const pd = ids.flatMap(id => b2eDrops(X.cur[id].pages, X.prev[id].pages, 10).map(r => ({ ...r, cluster: clusterName(id), path: U.pathOnly(r.k) })));
+      const kd = ids.flatMap(id => b2eDrops(X.cur[id].queries.filter(q => !isB(q.k)), X.prev[id].queries.filter(q => !isB(q.k)), 5).map(r => ({ ...r, cluster: clusterName(id) })));
+      const win = X.periodBased ? `${fmtD(D.start)} – ${fmtD(D.end)} vs the previous period` : `${fmtD(X.W.curS)} – ${fmtD(X.W.end)} vs ${fmtD(X.W.prevS)} – ${fmtD(X.W.prevE)}`;
+      const lost = pd.reduce((a, r) => a + r.lost, 0);
+      alertTop = pd.length || kd.length ? `<div class="note un-b2e-alert"><b>${fmtN(pd.length)} page${pd.length === 1 ? '' : 's'} and ${fmtN(kd.length)} non-brand keyword${kd.length === 1 ? '' : 's'} dropped</b> (${esc(win)}): about ${fmtN(Math.round(lost))} clicks lost on pages. <a href="#" data-jump="un-b2e-alerts">See the drops and why →</a></div>` : `<div class="note">No drops this week (${esc(win)}).</div>`;
+      const dRow = (r, label) => `<tr><td class="${label === 'page' ? 'u' : 'q'}">${label === 'page' ? `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` : esc(r.k)}</td><td>${esc(r.cluster)}</td><td class="r">${fmtN(Math.round(r.prevClicks))} → ${fmtN(Math.round(r.clicks))} ${dchip(r.dc)}</td><td class="r">${r.prevPos ? r.prevPos.toFixed(1) : '—'} → ${r.pos ? r.pos.toFixed(1) : '—'}</td><td class="r">${fmtN(Math.round(r.prevImpr))} → ${fmtN(Math.round(r.impr))}</td><td>${esc(r.why)}</td></tr>`;
+      const dTbl = (list, label) => list.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>${label === 'page' ? 'Landing page' : 'Keyword'}</th><th>Cluster</th><th class="r">Clicks</th><th class="r">Position</th><th class="r">Impressions</th><th>Likely reason</th></tr></thead><tbody>${list.slice(0, 20).map(r => dRow(r, label)).join('')}</tbody></table></div>${list.length > 20 ? `<p class="hint">Showing the 20 biggest of ${fmtN(list.length)}.</p>` : ''}` : '<p class="un-n">None.</p>';
+      alertHtml = `<p class="hint">${esc(win)}. Flagged when clicks fell 30% or more (pages with 10+ clicks, keywords with 5+) or the position slipped 3+ places.${X.periodBased ? ' Connect Search Console for a true week-on-week check.' : ''}</p><h3 class="un-sub">Landing pages</h3>${dTbl(pd, 'page')}<h3 class="un-sub">Non-brand keywords</h3>${dTbl(kd, 'kw')}`;
+    }
+    // ── weekly trend ──
+    let trendHtml = '';
+    if (live && (!X || X.status === 'loading')) trendHtml = '<p class="progress">Loading 16 weeks from Search Console…</p>';
+    else if (xReady && Object.keys(X.weekly).length) {
+      const wk = [...new Set(ids.flatMap(id => (X.weekly[id] ? X.weekly[id].nb : []).map(r => r.w)))].sort();
+      const val = (id, w, m) => { const s = X.weekly[id]; if (!s) return null; const r = (m === 'b' ? s.b : s.nb).find(x => x.w === w); return r ? r : null; };
+      trendHtml = `<div class="un-tabs" role="tablist">${[['nb', 'Non-brand clicks'], ['nbi', 'Non-brand impressions'], ['pos', 'Non-brand position'], ['b', 'Brand clicks']].map(([k, l]) => `<button type="button" class="${ST.trend === k ? 'on' : ''}" data-b2t="${k}">${l}</button>`).join('')}</div><div class="chart-box un-tall"><canvas id="un-b2e-ch" aria-label="Weekly trend B2E vs B2E (J&I)"></canvas></div>
+        <div class="tw"><table class="un-mini"><thead><tr><th>Week starting</th>${cols.map(c => `<th class="r">${esc(c.name)} NB clicks</th><th class="r">${esc(c.name)} NB position</th><th class="r">${esc(c.name)} brand clicks</th>`).join('')}</tr></thead><tbody>${wk.slice().reverse().slice(0, 8).map(w => { const part = ids.some(id => { const r = val(id, w, 'nb'); return r && r.partial; }); return `<tr><td>${fmtD(w)}${part ? ' <span class="tag">partial</span>' : ''}</td>${ids.map(id => { const n = val(id, w, 'nb'), b = val(id, w, 'b'); return `<td class="r">${n ? fmtN(n.clicks) : '—'}</td><td class="r">${n && n.impr ? n.pos.toFixed(1) : '—'}</td><td class="r">${b ? fmtN(b.clicks) : '—'}</td>`; }).join('')}</tr>`; }).join('')}</tbody></table></div>${X.sample ? '<p class="hint">Sample weekly series generated from the sample totals.</p>' : `<p class="hint">Last 16 weeks to ${fmtD(D.end)}, Monday-start weeks.</p>`}`;
+    } else trendHtml = '<p class="un-n">Weekly trend needs a live Search Console connection (an upload has no daily rows per cluster).</p>';
+    // ── products ──
+    const prodMap = new Map();
+    pagesAll.forEach(r => { const o = prodMap.get(r.product) || { product: r.product, clusters: new Set(), pages: 0, clicks: 0, impr: 0, posW: 0, pClicks: 0, hasPrev: false, nbC: 0, bC: 0, sessions: 0, ySes: 0, leads: 0, emp: 0, ga: false, q: new Map() }; o.clusters.add(r.cluster); o.pages++; o.clicks += r.clicks; o.impr += r.impr; o.posW += r.pos * r.impr; const pr = prevPage.get(r.p); if (pr) { o.pClicks += +pr.clicks || 0; o.hasPrev = true; } o.nbC += r.nbC || 0; o.bC += r.bC || 0; const gp = gaPage.get(r.path.toLowerCase()); if (gp) { o.ga = true; o.sessions += gp.sessions; o.ySes += gp.ySessions; o.leads += gp.demo + gp.contact; o.emp += gp.emp; } prodMap.set(r.product, o); });
+    QPe.forEach(r => { if (isB(r.q)) return; const o = prodMap.get(b2eProduct(r.p)); if (!o) return; const x = o.q.get(r.q) || { impr: 0, posW: 0 }; x.impr += +r.impr || 0; x.posW += (+r.pos || 0) * (+r.impr || 0); o.q.set(r.q, x); });
+    const prods = [...prodMap.values()].map(o => { let t10 = 0, p11 = 0; o.q.forEach(x => { const p = x.impr ? x.posW / x.impr : 99; if (p <= 10) t10++; else if (p <= 20) p11++; }); return { product: o.product, clusters: [...o.clusters].join(', '), pages: o.pages, clicks: o.clicks, impr: o.impr, ctr: o.impr ? o.clicks / o.impr * 100 : 0, pos: o.impr ? o.posW / o.impr : 0, dClicks: o.hasPrev ? U.chg(o.clicks, o.pClicks) : null, nbC: QPe.length ? o.nbC : null, bC: QPe.length ? o.bC : null, t10: QPe.length ? t10 : null, p11: QPe.length ? p11 : null, sessions: o.ga ? o.sessions : null, dSes: o.ga ? U.chg(o.sessions, o.ySes) : null, leads: o.ga ? o.leads : null, emp: o.ga ? o.emp : null }; });
+    delete TABLES['t-un-b2e-prod'];
+    const nOr = v => v == null ? '—' : fmtN(Math.round(v));
+    const prodHtml = table('t-un-b2e-prod', [
+      { k: 'product', l: 'Product', f: r => `<a href="#" data-prod="${esc(r.product)}"><b>${esc(r.product)}</b></a><br><small class="un-n">${esc(r.clusters)} · ${fmtN(r.pages)} page${r.pages === 1 ? '' : 's'}</small>`, csv: r => r.product },
+      { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + (D.prevStart ? dchip(r.dClicks) : ''), csv: r => r.clicks }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => r.impr ? posTag(r.pos) : '—', csv: r => r.pos.toFixed(1) },
+      { k: 'nbC', l: 'Non-brand clicks', r: 1, f: r => nOr(r.nbC) }, { k: 'bC', l: 'Brand clicks', r: 1, f: r => nOr(r.bC) }, { k: 't10', l: 'NB keywords top 10', r: 1, f: r => nOr(r.t10) }, { k: 'p11', l: 'NB 11–20', r: 1, f: r => nOr(r.p11) },
+      ...(M ? [{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.sessions == null ? '—' : fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSes), csv: r => r.sessions }, { k: 'leads', l: 'Demo + contact', r: 1, f: r => nOr(r.leads) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => nOr(r.emp) }] : [])
+    ], prods, { file: 'unstop-b2e-products', sort: 'clicks', pageSize: 40, search: false });
+    // ── search topics: brand vs non-brand ──
+    const tcol = ST.topicCol, tIdx = tcol === 2 ? [0, 1] : [tcol];
+    const tq = tIdx.flatMap(j => G[j] && G[j].allQueries ? G[j].allQueries.map(r => ({ ...r, cluster: cols[j].name })) : []);
+    const tm = new Map();
+    tq.forEach(r => { const t = b2eTopic(r.q), o = tm.get(t) || { topic: t, n: { clicks: 0, impr: 0, posW: 0, k: 0, t10: 0, p11: 0 }, b: { clicks: 0, impr: 0, posW: 0, k: 0 } }; const x = isB(r.q) ? o.b : o.n; x.clicks += +r.clicks || 0; x.impr += +r.impr || 0; x.posW += (+r.pos || 0) * (+r.impr || 0); x.k++; if (!isB(r.q)) { if (r.pos <= 10) o.n.t10++; else if (r.pos <= 20) o.n.p11++; } tm.set(t, o); });
+    const topics = [...tm.values()].map(o => ({ topic: o.topic, nClicks: o.n.clicks, nImpr: o.n.impr, nCtr: o.n.impr ? o.n.clicks / o.n.impr * 100 : 0, nPos: o.n.impr ? o.n.posW / o.n.impr : null, nK: o.n.k, t10: o.n.t10, p11: o.n.p11, bClicks: o.b.clicks, bImpr: o.b.impr, bCtr: o.b.impr ? o.b.clicks / o.b.impr * 100 : 0, bPos: o.b.impr ? o.b.posW / o.b.impr : null, bK: o.b.k }));
+    delete TABLES['t-un-b2e-top'];
+    const tLink = (v, topic, seg, k) => v ? `<a href="#" data-tkw="${esc(topic)}|${seg}|${k}" title="Show these keywords">${fmtN(Math.round(v))}</a>` : '0';
+    const topicHtml = (live && G.some(m => !m)) ? '<p class="progress">Loading…</p>' : G.some(m => m && !m.allQueries) ? '<p class="un-n">Press Reload Search Console to load the full query list.</p>' :
+      `<label class="field un-f sm" style="max-width:260px"><span>Cluster</span><select id="un-b2e-tcol">${[[2, 'B2E + B2E (J&I)'], [0, cols[0].name], [1, cols[1].name]].map(([v, l]) => `<option value="${v}" ${tcol === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` +
+      table('t-un-b2e-top', [
+        { k: 'topic', l: 'Search topic', f: r => `<b>${esc(r.topic)}</b>`, csv: r => r.topic },
+        { k: 'nClicks', l: 'NB clicks', r: 1, f: r => fmtN(r.nClicks) }, { k: 'nImpr', l: 'NB impr.', r: 1, f: r => fmtN(r.nImpr) }, { k: 'nCtr', l: 'NB CTR', r: 1, f: r => pct1(r.nCtr) }, { k: 'nPos', l: 'NB position', r: 1, f: r => r.nPos == null ? '—' : posTag(r.nPos), csv: r => r.nPos },
+        { k: 'nK', l: 'NB keywords', r: 1, f: r => tLink(r.nK, r.topic, 'n', 'all') }, { k: 't10', l: 'NB top 10', r: 1, f: r => tLink(r.t10, r.topic, 'n', 'top10') }, { k: 'p11', l: 'NB 11–20', r: 1, f: r => tLink(r.p11, r.topic, 'n', 'p11') },
+        { k: 'bClicks', l: 'Brand clicks', r: 1, f: r => fmtN(r.bClicks) }, { k: 'bCtr', l: 'Brand CTR', r: 1, f: r => r.bImpr ? pct1(r.bCtr) : '—' }, { k: 'bPos', l: 'Brand position', r: 1, f: r => r.bPos == null ? '—' : posTag(r.bPos), csv: r => r.bPos }, { k: 'bK', l: 'Brand keywords', r: 1, f: r => tLink(r.bK, r.topic, 'b', 'all') }
+      ], topics, { file: 'unstop-b2e-search-topics', sort: 'nClicks', pageSize: 30, search: false });
+    // ── quick wins: non-brand keywords in positions 11–20 with the page that ranks and the next step ──
+    const qpBest = new Map(); QPe.forEach(r => { if (isB(r.q)) return; const o = qpBest.get(r.q); if (!o || (+r.impr || 0) > o.impr) qpBest.set(r.q, { p: r.p, impr: +r.impr || 0 }); });
+    const qwAll = [0, 1].flatMap(j => G[j] && G[j].allQueries ? G[j].allQueries.filter(r => !isB(r.q) && r.pos > 10 && r.pos <= 20).map(r => ({ ...r, cluster: cols[j].name })) : []);
+    const qw = qwAll.map(r => {
+      const pg = qpBest.get(r.q), path = pg ? U.pathOnly(pg.p) : null;
+      const action = !path ? 'Find the page that should rank for this search (none in the page × query data) and link to it from the employer hub' : r.pos <= 13 ? 'Close to page 1: add 2–3 internal links with this phrase as anchor text and use the phrase in the title and H1' : r.impr >= 500 ? 'High demand: add a section or FAQ that answers this search directly on the page, then link to it' : 'Expand the page for this search (a focused section, examples, FAQ) and add internal links';
+      return { ...r, path, url: pg ? pg.p : null, topic: b2eTopic(r.q), action, score: r.impr * (21 - r.pos) / 10 };
+    }).sort((a, b) => b.score - a.score);
+    delete TABLES['t-un-b2e-qw'];
+    const QW = qw.slice(0, 300);
+    const qwHtml = (live && G.some(m => !m)) ? '<p class="progress">Loading…</p>' : !QW.length ? '<p class="un-n">No non-brand keywords in positions 11–20 for these pages.</p>' :
+      `<div class="un-row" style="margin-bottom:8px"><button class="btn-primary sm" type="button" id="un-b2e-qw10">Add the top 10 to the Action board</button><span class="hint" id="un-b2e-qwmsg">${fmtN(qw.length)} quick wins, most impressions × closeness to page 1 first.</span></div>` +
+      table('t-un-b2e-qw', [
+        { k: 'q', l: 'Keyword', cls: 'q', f: r => `<a href="https://www.google.com/search?q=${encodeURIComponent(r.q)}&gl=in&hl=en" target="_blank" rel="noopener">${esc(r.q)}</a><br><small class="un-n">${esc(r.topic)}</small>`, csv: r => r.q },
+        { k: 'cluster', l: 'Cluster' }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos), csv: r => r.pos.toFixed(1) }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) },
+        { k: 'path', l: 'Page that ranks', cls: 'u', f: r => r.path ? `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` : '<span class="un-n">not found</span>', csv: r => r.path || '' },
+        { k: 'action', l: 'Next step', f: r => `<small>${esc(r.action)}</small>` },
+        { k: 'add', l: '', f: r => `<button class="btn-quiet sm" type="button" data-qw="${QW.indexOf(r)}">Add task</button>`, csv: () => '' }
+      ], QW, { file: 'unstop-b2e-quick-wins', sort: 'score', pageSize: 25, placeholder: 'Filter keywords or pages', searchKeys: ['q', 'path', 'topic'] });
+    // ── all landing pages (filtered by a product when one is picked) ──
+    delete TABLES['t-un-b2e-pages'];
+    const pList = ST.product ? pagesAll.filter(r => r.product === ST.product) : pagesAll;
+    const pagesHtml = `${ST.product ? `<p class="un-row"><span class="un-chip">Product: <b>${esc(ST.product)}</b></span> <a href="#" id="un-b2e-pall">Show all ${fmtN(pagesAll.length)} pages</a></p>` : ''}` +
+      table('t-un-b2e-pages', [
+        { k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.p },
+        { k: 'product', l: 'Product', f: r => `<a href="#" data-prod="${esc(r.product)}">${esc(r.product)}</a>`, csv: r => r.product }, { k: 'cluster', l: 'Cluster' },
+        { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + (D.prevStart ? dchip(r.dClicks) : ''), csv: r => r.clicks }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => r.impr ? posTag(r.pos) : '—', csv: r => r.pos.toFixed(1) },
+        { k: 'nbC', l: 'Non-brand clicks', r: 1, f: r => nOr(r.nbC) }, { k: 'bC', l: 'Brand clicks', r: 1, f: r => nOr(r.bC) },
+        ...(M ? [{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.sessions == null ? '—' : fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSes), csv: r => r.sessions }, { k: 'leads', l: 'Demo + contact', r: 1, f: r => nOr(r.leads) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => nOr(r.emp) }] : [])
+      ], pList, { file: 'unstop-b2e-landing-pages', sort: 'clicks', pageSize: 50, placeholder: 'Filter URLs or products', searchKeys: ['path', 'product', 'cluster'] });
+    const navLinks = [['un-b2e-sum', 'Summary'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    const navHtml = `<nav class="un-b2e-nav">${navLinks.map(([id, l]) => `<a href="#" data-jump="${id}">${esc(l)}</a>`).join('')}</nav>`;
+    const sec = (id, title, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
     const html = intro +
-      `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') +
+      `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') + alertTop + navHtml +
       `<div class="un-row" style="margin:6px 0 12px"><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Paste into the sheet with Ctrl/Cmd + V: one KPI per row, columns B2E, B2E (J&I), both.</span></div>` +
-      `<section class="panel"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
-      kwPanel() + reviewPanel() +
-      `<section class="panel"><div class="panel-h"><h2>Top employer landing pages</h2><p>By Search Console clicks${M ? ', with GA4 organic sessions and leads' : ''}.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Clicks</th><th class="r">Impr.</th><th class="r">Position</th>${M ? '<th class="r">Sessions</th><th class="r">Demo + contact</th><th class="r">Employer signups</th>' : ''}</tr></thead><tbody>${top.map(r => `<tr><td class="u"><a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a></td><td>${esc(r.cluster)}</td><td class="r">${fmtN(r.clicks)}</td><td class="r">${fmtN(r.impr)}</td><td class="r">${r.impr ? posTag(r.pos) : '—'}</td>${M ? `<td class="r">${r.sessions == null ? '—' : fmtN(Math.round(r.sessions))}</td><td class="r">${r.leads == null ? '—' : fmtN(Math.round(r.leads))}</td><td class="r">${r.emp == null ? '—' : fmtN(Math.round(r.emp))}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${M ? 8 : 5}" class="empty">No employer pages in this data.</td></tr>`}</tbody></table></div></div></section>`;
+      `<section class="panel" id="un-b2e-sum"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
+      kwPanel() +
+      sec('un-b2e-alerts', 'Drop alerts', 'Employer pages and non-brand keywords that lost clicks or ranking this week, with the likely reason.', alertHtml || '<p class="un-n">—</p>') +
+      sec('un-b2e-trend', 'Weekly trend: B2E vs B2E (J&I)', 'Non-brand and brand Search Console clicks, impressions and position per week.', trendHtml) +
+      sec('un-b2e-prod', 'Products', 'Every employer product (the folder after /employers). Click a product to list all its landing pages below.' + (QPe.length ? '' : ' Brand / non-brand and keyword counts need query × page rows.'), prodHtml) +
+      sec('un-b2e-topics', 'Search topics: brand vs non-brand', 'Searches that bring people to the employer pages, grouped by topic. Click a keyword count to see the keywords.', topicHtml) +
+      sec('un-b2e-qw', 'Quick wins: non-brand keywords in positions 11–20', 'Each with the page that ranks and the next step. Add a task to put it on the Action board with an owner and due date.', qwHtml) +
+      sec('un-b2e-pages', 'All employer landing pages', `${fmtN(pagesAll.length)} pages with Search Console data${M ? ', with GA4 sessions, leads and employer signups' : ''}. Click a page to analyse it on its own.`, pagesHtml) +
+      `<div id="un-b2e-rev">${reviewPanel()}</div>`;
     const mount = () => {
       if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc)); } });
       const msg = t => { const el = document.getElementById('un-b2e-msg'); if (el) el.textContent = t; };
@@ -2220,7 +2429,31 @@
       if (document.getElementById('t-un-b2e-kw')) drawTable('t-un-b2e-kw');
       const kx = document.getElementById('un-b2e-kwx'); if (kx) kx.addEventListener('click', () => { B2E_KW.delete(D.site); rerender(); });
       const rl = document.getElementById('un-b2e-reload');
-      if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); rerender(); });
+      if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); B2EX.delete(XK); rerender(); });
+      if (live && !B2EX.get(XK)) loadB2EX(D, A, ids);
+      const jump = id => { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      document.querySelectorAll('[data-jump]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); jump(a.dataset.jump); }));
+      ['t-un-b2e-prod', 't-un-b2e-top', 't-un-b2e-qw', 't-un-b2e-pages'].forEach(id => { if (document.getElementById(id)) drawTable(id); });
+      // product → its landing pages
+      ['un-b2e-prod', 'un-b2e-pages'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('click', e => { const a = e.target.closest('[data-prod]'); if (!a) return; e.preventDefault(); ST.product = a.dataset.prod; rerender(); setTimeout(() => jump('un-b2e-pages'), 60); }); });
+      const pall = document.getElementById('un-b2e-pall'); if (pall) pall.addEventListener('click', e => { e.preventDefault(); ST.product = ''; rerender(); setTimeout(() => jump('un-b2e-pages'), 60); });
+      // topics: cluster picker and keyword lists
+      const tc = document.getElementById('un-b2e-tcol'); if (tc) tc.addEventListener('change', () => { ST.topicCol = +tc.value; rerender(); setTimeout(() => jump('un-b2e-topics'), 60); });
+      const tEl = document.getElementById('un-b2e-topics'); if (tEl) tEl.addEventListener('click', e => { const a = e.target.closest('[data-tkw]'); if (!a) return; e.preventDefault(); const [topic, seg, k] = a.dataset.tkw.split('|'); B2E_KW.set(D.site, { topic, seg, k, i: ST.topicCol }); rerender(); setTimeout(() => jump('un-b2e-kwp'), 60); });
+      // quick wins → Action board
+      const addTask = r => { const GW = window.CW_GROWTH, TK = window.CW_TASKS; if (!GW || !TK) return false; const due = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10); return GW.upsert(D.site, TK.manual({ title: `Quick win: "${r.q}" (position ${r.pos.toFixed(1)})`, url: r.url || null, action: r.action, owner: ownerOf({ kpi: 'Keywords in positions 11', src: 'GSC' }), due }, D)); };
+      const qmsg = t => { const el = document.getElementById('un-b2e-qwmsg'); if (el) el.textContent = t; };
+      const qEl = document.getElementById('un-b2e-qw'); if (qEl) qEl.addEventListener('click', e => { const b = e.target.closest('[data-qw]'); if (!b) return; const r = QW[+b.dataset.qw]; if (!r) return; const ok = addTask(r); b.textContent = ok ? 'Added ✓' : 'Could not add'; b.disabled = true; qmsg(ok ? `Added "${r.q}" to the Action board.` : 'The Action board could not be saved in this browser.'); });
+      const q10 = document.getElementById('un-b2e-qw10'); if (q10) q10.addEventListener('click', () => { let n = 0; QW.slice(0, 10).forEach(r => { if (addTask(r)) n++; }); q10.disabled = true; qmsg(`Added ${n} quick wins to the Action board (due in 14 days).`); });
+      // weekly chart
+      if (xReady && document.getElementById('un-b2e-ch')) {
+        const wk = [...new Set(ids.flatMap(id => (X.weekly[id] ? X.weekly[id].nb : []).map(r => r.w)))].sort().filter(w => !ids.some(id => { const s = X.weekly[id]; const r = s && s.nb.find(x => x.w === w); return r && r.partial; }));
+        const colors = ['--signal', '--orange'];
+        let ch = null;
+        const draw = () => { if (ch) { try { ch.destroy(); } catch (x) { } } const m = ST.trend; ch = chart('un-b2e-ch', { type: 'line', data: { labels: wk.map(w => fmtD(w)), datasets: ids.map((id, i) => { const s = X.weekly[id] || { nb: [], b: [] }; const src = m === 'b' ? s.b : s.nb; return { label: cols[i].name, data: wk.map(w => { const r = src.find(x => x.w === w); return !r ? null : m === 'nbi' ? r.impr : m === 'pos' ? +r.pos.toFixed(2) : r.clicks; }), borderColor: cssVar(colors[i]), backgroundColor: cssVar(colors[i]), tension: .25, pointRadius: 2, borderWidth: 2 }; }) }, options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { reverse: m === 'pos', beginAtZero: m !== 'pos' } }, plugins: { legend: { position: 'bottom' } } } }); };
+        draw();
+        document.querySelectorAll('[data-b2t]').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('[data-b2t]').forEach(x => x.classList.toggle('on', x === b)); ST.trend = b.dataset.b2t; draw(); }));
+      }
     };
     return { html, mount };
   };
