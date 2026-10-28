@@ -1,7 +1,8 @@
 // Unstop SEO › B2B sales-form leads (the "B2B Form Leads" Google Sheet, used as the CRM for B2E).
 // Each lead's email domain is classed as official (company), campus (college / university), personal
 // (Gmail and other free mail) or internal (unstop.com), and tied to the page the form was filled on.
-// Names, emails and phone numbers are read only to dedupe and get the domain, then dropped.
+// Names are kept (in this tab only) so a count can be opened into its leads; email addresses and phone
+// numbers are read only to dedupe and get the domain, then dropped.
 (function (root) {
   'use strict';
   const FREE = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.in', 'yahoo.co.in', 'ymail.com', 'rocketmail.com', 'outlook.com', 'outlook.in', 'hotmail.com', 'hotmail.co.in', 'live.com', 'live.in', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'rediffmail.com', 'rediff.com', 'protonmail.com', 'proton.me', 'pm.me', 'zoho.com', 'zohomail.in', 'zohomail.com', 'gmx.com', 'gmx.net', 'mail.com', 'yandex.com', 'yandex.ru', 'tutanota.com', 'inbox.com', 'fastmail.com', 'hey.com', 'duck.com', 'mailinator.com', 'yopmail.com', 'tempmail.com', '10minutemail.com', 'qq.com', '163.com', 'sify.com', 'indiatimes.com', 'in.com']);
@@ -75,7 +76,7 @@
         if (seen.has(key)) { dup++; continue; } seen.add(key);
         const ch = String(get('channel') || '').trim();
         const usertype = String(get('usertype') || '').trim();
-        leads.push({ day, month: day ? day.slice(0, 7) : null, path: pagePath(get('link')), domain, kind: emailKind(domain, usertype), usertype, status: String(get('status') || '').trim(), channel: ch || 'Organic', source: sourceOf(ch), organic: !ch || /organic|seo/i.test(ch) });
+        leads.push({ name: String(get('name') || '').trim().slice(0, 80), day, month: day ? day.slice(0, 7) : null, path: pagePath(get('link')), domain, kind: emailKind(domain, usertype), usertype, status: String(get('status') || '').trim(), channel: ch || 'Organic', source: sourceOf(ch), organic: !ch || /organic|seo/i.test(ch) });
         used++;
       }
       info.push({ name: sh.name, rows: rows.length - 1, used, dup });

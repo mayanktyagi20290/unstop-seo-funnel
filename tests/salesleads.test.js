@@ -23,7 +23,7 @@ test('dates and pages from the sheet', () => {
   assert.equal(S.pagePath('https://unstop.com/Employers/hire-react-developers/?x=1'), '/employers/hire-react-developers');
   assert.equal(S.pagePath(''), '');
 });
-test('two tabs merged, duplicates dropped, one class per domain, names not kept', () => {
+test('two tabs merged, duplicates dropped, one class per domain, emails and phones not kept', () => {
   const a = [['name', 'usertype', 'type', 'created_at', 'link', 'Channel', 'User Status', 'Email Domain'],
     ['A One', 'Working Professionals', 'salesForm', 'October 14, 2026, 5:54 PM', 'https://unstop.com/employers', 'Organic', 'New User', 'acme.com'],
     ['B Two', 'College Students', 'salesForm', 'October 2, 2026, 1:00 PM', 'https://unstop.com/employers/hire-react-developers', 'Organic', 'Existing User', 'gmail.com'],
@@ -37,7 +37,7 @@ test('two tabs merged, duplicates dropped, one class per domain, names not kept'
   assert.equal(m.min, '2026-10-02'); assert.equal(m.max, '2026-10-20');
   const snsct = m.leads.filter(l => l.domain === 'snsct.org'); assert.ok(snsct.every(l => l.kind === 'campus'));
   const e = m.leads.find(l => l.domain === 'unstop.com'); assert.equal(e.kind, 'internal'); assert.equal(e.organic, false);
-  assert.ok(m.leads.every(l => !('name' in l) && !('email' in l)));
+  assert.ok(m.leads.every(l => !('email' in l) && !('phone' in l))); assert.equal(m.leads[0].name, 'A One');
   const t = S.tally(m.leads); assert.equal(t.total, 4); assert.equal(t.internal, 1); assert.equal(t.official, 1); assert.equal(t.campus, 2); assert.equal(t.personal, 1); assert.equal(t.officialShare, 25);
 });
 test('sheet without the needed columns is reported, not guessed', () => {

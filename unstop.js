@@ -412,15 +412,15 @@
     const leadEv = [...new Set(['demoRequest', 'contactSubmit', 'employerSignup'].flatMap(k => (o.events && o.events[k]) || []))].slice(0, 60);
     const blogRx = '/(blog|blog-series|category|bites|resources|prep-zone)(/|$)';
     const R = {
-      landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, limit: 100000 },
+      landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 },
       device: { dateRanges: both, dimensions: [{ name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }, { name: 'engagedSessions' }], dimensionFilter: org, limit: 50 },
       country: { dateRanges: both, dimensions: [{ name: 'country' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 300 },
       region: { dateRanges: both, dimensions: [{ name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), limit: 120 },
       // page type × device and page type × state, so device and geography are never only sitewide
-      landingDevice: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 250000 },
-      landingRegion: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), limit: 250000 },
+      landingDevice: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 250000 },
+      landingRegion: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 250000 },
       daily: { dateRanges: both, dimensions: [{ name: 'date' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 1000 },
-      events: { dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, limit: 250000 },
+      events: { dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 250000 },
       eventsYoy: { dateRanges: [yoy], dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, limit: 2000 },
       returning: { dateRanges: both, dimensions: [{ name: 'newVsReturning' }], metrics: [{ name: 'activeUsers' }, { name: 'sessions' }], dimensionFilter: org, limit: 10 },
       pricing: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'sessions' }, { name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: GA.and(org, GA.regex('pagePath', pricing)), limit: 200 },
@@ -436,7 +436,9 @@
       cohorts: cohortReq(o.end, 0), cohortsYoy: cohortReq(o.end, 1),
       // assisted conversions: employer conversions by the channel that first brought the user and the channel of the converting session
       assisted: { dateRanges: both, dimensions: [{ name: 'firstUserDefaultChannelGroup' }, { name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.inList('eventName', leadEv.length ? leadEv : ['generate_lead']), limit: 10000 },
-      ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 }
+      ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 },
+      // AI assistant referrals month by month (16 months to the end date), by assistant and landing page
+      aiMonthly: { optional: true, dateRanges: [{ startDate: monthsBack(o.end, 15), endDate: o.end }], dimensions: [{ name: 'yearMonth' }, { name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 }
     };
     return R;
   }
@@ -511,6 +513,7 @@
       actions, ret, yRet, pages, key, depths, blog, hasExtra: !!(R.totals || R.pageViews)
     };
   }
+  function monthsBack(d, n) { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(1); x.setUTCMonth(x.getUTCMonth() - n); return x.toISOString().slice(0, 10); }
   function shiftYear(d) { const x = new Date(d + 'T00:00:00Z'); x.setUTCFullYear(x.getUTCFullYear() - 1); return x.toISOString().slice(0, 10); }
   // Turn a runReport response into plain objects: { dims..., metrics..., range: 'cur'|'yoy' }.
   function gaRows(res) {
@@ -619,6 +622,8 @@
     const AI = R.ai || [];
     const aiBy = new Map();
     AI.forEach(r => { const k = aiName(r.sessionSource); const o = aiBy.get(k) || { source: k, raw: new Set(), sessions: 0, ySessions: 0, engaged: 0, keyEvents: 0, newUsers: 0 }; o.raw.add(r.sessionSource); if (r.range === 'yoy') o.ySessions += r.sessions; else { o.sessions += r.sessions; o.engaged += r.engagedSessions; o.keyEvents += r.keyEvents; o.newUsers += r.newUsers; } aiBy.set(k, o); });
+    // month × assistant × landing page (yearMonth "202610" → "2026-10")
+    const aiMonthly = (R.aiMonthly || []).map(r => ({ month: String(r.yearMonth || '').replace(/^(\d{4})(\d{2})$/, '$1-$2'), source: aiName(r.sessionSource), path: pathOnly(r.landingPage), sessions: r.sessions, newUsers: r.newUsers, engaged: r.engagedSessions, keyEvents: r.keyEvents }));
     const ai = [...aiBy.values()].map(o => ({ ...o, raw: [...o.raw].join(', '), dSessions: chg(o.sessions, o.ySessions), engRate: o.sessions ? o.engaged / o.sessions * 100 : null })).sort((a, b) => b.sessions - a.sessions);
     const aiPages = [];
     const apm = new Map();
@@ -628,7 +633,7 @@
       ok: cur.length > 0 || E.length > 0,
       total: { ...T, engRate: T.sessions ? T.engaged / T.sessions * 100 : null, pps: T.sessions ? T.views / T.sessions : null, avgEngSec: T.sessions ? T.dur / T.sessions : null },
       yoy: TY, dSessions: TY ? chg(T.sessions, TY.sessions) : null, dNewUsers: TY ? chg(T.newUsers, TY.newUsers) : null,
-      pages, types, device, country, region, typeDevice, typeRegion, sections, pathCov, daily, ai, aiPages,
+      pages, types, device, country, region, typeDevice, typeRegion, sections, pathCov, daily, ai, aiPages, aiMonthly,
       events: [...evTot.values()].sort((a, b) => b.count - a.count),
       ev: { stu: evSum('stu'), emp: evSum('emp'), demo: evSum('demo'), contact: evSum('contact'), opp: evSum('opp'), prodClick: evSum('prodClick'), scroll: evSum('scroll'), yStu: yEv('studentSignup'), yEmp: yEv('employerSignup'), yDemo: yEv('demoRequest'), yContact: yEv('contactSubmit'), yOpp: yEv('opportunityAction') },
       returning: { cur: ret('cur'), yoy: ret('yoy') }, pricing, channels
