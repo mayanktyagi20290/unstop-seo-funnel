@@ -1987,6 +1987,7 @@
   // The employer side on one page, laid out like the One-Page Dashboard sheet: B2E, B2E (J&I) and both
   // together, from Search Console (exact per cluster), GA4 and PageSpeed. "Copy for Google Sheets" puts the
   // whole table on the clipboard, ready to paste.
+  const B2E_KW = new Map(); // site → { seg, k, i } keyword list opened from the table
   const B2E_COLS = [{ id: 'empb2b', name: 'B2E' }, { id: 'empjobboard', name: 'B2E (J&I)' }];
   V.b2e = (A, D) => {
     demoFill(D);
@@ -2061,8 +2062,8 @@
     const bk = (f) => [...G.map(m => m ? f(m.buckets) : null), both(G, m => f(m.buckets))];
     const bkPrev = (f) => [...G.map(m => m && m.prevBuckets ? f(m.prevBuckets) : null), both(G.map(m => m && m.prevBuckets ? m : null), m => f(m.prevBuckets))];
     const diff = (cur, prev) => cur.map((c, i) => c != null && prev[i] != null ? { n: c - prev[i] } : null);
-    [['Keywords in top 3 (non-brand)', b => b.n.top3], ['Keywords in top 10 (non-brand)', b => b.n.top10], ['Keywords in positions 11–20 (non-brand, quick wins)', b => b.n.p11], ['Keywords in top 3 (brand)', b => b.b.top3], ['Keywords in top 10 (brand)', b => b.b.top10]]
-      .forEach(([l, f], j) => { const c = bk(f); row(V1, l, c, 'n', hasPrev ? diff(c, bkPrev(f)) : null, 'GSC', j ? '' : 'each query counted once per cluster; total = sum of both'); });
+    [['Keywords in top 3 (non-brand)', b => b.n.top3, 'n', 'top3'], ['Keywords in top 10 (non-brand)', b => b.n.top10, 'n', 'top10'], ['Keywords in positions 11–20 (non-brand, quick wins)', b => b.n.p11, 'n', 'p11'], ['Keywords in top 3 (brand)', b => b.b.top3, 'b', 'top3'], ['Keywords in top 10 (brand)', b => b.b.top10, 'b', 'top10']]
+      .forEach(([l, f, seg, k], j) => { const c = bk(f); row(V1, l, c, 'n', hasPrev ? diff(c, bkPrev(f)) : null, 'GSC', j ? 'click a number to see the keywords' : 'click a number to see the keywords; each query counted once per cluster, total = sum of both'); R[R.length - 1].bucket = { seg, k }; });
     // 2. Traffic
     const T2 = 'Traffic (GA4, organic)';
     const ga = (f) => [...GAc.map(x => x ? f(x) : null), both(GAc, f)];
@@ -2104,7 +2105,7 @@
     const heads = [...cols.map(c => c.name), 'Both (employer total)'];
     const chgTxt = c => c == null ? '' : typeof c === 'object' ? (c.pos != null ? (c.pos > 0 ? '+' : '') + c.pos.toFixed(1) : (c.n > 0 ? '+' : '') + fmtN(c.n)) : (c > 0 ? '+' : '') + c.toFixed(1) + '%';
     const chgHtml = (c, kpi) => { if (c == null) return ''; if (typeof c === 'object') { const v = c.pos != null ? c.pos : c.n; if (c.pos != null) return dchip(v, true, 'pos'); const good = /11–20/.test(kpi) ? null : v > 0; return `<span class="un-d ${v === 0 ? 'flat' : good === null ? 'flat' : good ? 'up' : 'down'}">${chgTxt(c)}</span>`; } return dchip(c); };
-    const cell = (r, i) => { const v = r.vals[i]; if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; return fmtV(v, r.kind); };
+    const cell = (r, i) => { const v = r.vals[i]; if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; if (r.bucket && v > 0) return `<a href="#" class="un-b2e-kw" data-kw="${r.bucket.seg}|${r.bucket.k}|${i}" title="Show these keywords">${fmtV(v, r.kind)}</a>`; return fmtV(v, r.kind); };
     const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : 'later';
     let lastSec = '';
     const trs = R.map(r => { const s = r.sec !== lastSec ? `<tr class="un-b2e-sec"><th colspan="${heads.length * 2 + 2}">${esc(r.sec)}</th></tr>` : ''; lastSec = r.sec; return s + `<tr><td>${esc(r.kpi)}${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td>${heads.map((h, i) => `<td class="r"><b>${cell(r, i)}</b></td><td class="r un-b2e-d">${chgHtml(r.chgs[i], r.kpi)}</td>`).join('')}<td>${chip(status(r))}</td></tr>`; }).join('');
@@ -2122,10 +2123,24 @@
     if (D.source === 'demo') notes.push('<b>Sample data.</b> Connect Search Console and GA4 for real numbers.');
     // top landing pages
     const top = (A.P || []).filter(r => cols.some(c => so(r.p) === c.id)).sort((a, b) => b.clicks - a.clicks).slice(0, 25).map(r => { const path = U.pathOnly(r.p), gp = M ? M.pages.find(p => p.path.toLowerCase() === path.toLowerCase()) : null; return { path, cluster: so.label(so(r.p)), clicks: r.clicks, impr: r.impr, pos: r.pos, sessions: gp ? gp.sessions : null, leads: gp ? gp.demo + gp.contact : null, emp: gp ? gp.emp : null }; });
+    // keywords behind a bucket count (clicked in the table)
+    const kwSel = B2E_KW.get(D.site);
+    delete TABLES['t-un-b2e-kw'];
+    function kwPanel() {
+      if (!kwSel) return '';
+      const { seg, k, i } = kwSel, lab = { top3: 'top 3', top10: 'top 10', p11: 'positions 11–20' }[k];
+      const idx = i === 2 ? [0, 1] : [i];
+      const rows = idx.flatMap(j => { const m = G[j]; return m && m.bucketLists ? m.bucketLists[seg][k].map(r => ({ ...r, cluster: cols[j].name, ctr: r.impr ? r.clicks / r.impr * 100 : 0 })) : []; }).sort((a, b) => b.impr - a.impr);
+      const title = `${i === 2 ? 'B2E + B2E (J&I)' : cols[i].name}: ${seg === 'n' ? 'non-brand' : 'brand'} keywords in ${lab} (${fmtN(rows.length)})`;
+      return `<section class="panel" id="un-b2e-kwp"><div class="panel-h"><h2>${esc(title)}</h2><p>Search Console, ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}. Position is the average for this cluster’s pages. <button class="btn-quiet sm" type="button" id="un-b2e-kwx">Close</button></p></div>` +
+        table('t-un-b2e-kw', [{ k: 'q', l: 'Keyword', cls: 'q', f: r => `<a href="https://www.google.com/search?q=${encodeURIComponent(r.q)}&gl=in&hl=en" target="_blank" rel="noopener">${esc(r.q)}</a>`, csv: r => r.q }, ...(i === 2 ? [{ k: 'cluster', l: 'Cluster' }] : []), { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos), csv: r => r.pos.toFixed(1) }],
+          rows, { file: 'unstop-b2e-' + (seg === 'n' ? 'nonbrand' : 'brand') + '-' + k, sort: 'impr', pageSize: 50, placeholder: 'Filter keywords' }) + '</section>';
+    }
     const html = intro +
       `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') +
       `<div class="un-row" style="margin:6px 0 12px"><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Paste into the sheet with Ctrl/Cmd + V: one KPI per row, columns B2E, B2E (J&I), both.</span></div>` +
       `<section class="panel"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
+      kwPanel() +
       `<section class="panel"><div class="panel-h"><h2>Top employer landing pages</h2><p>By Search Console clicks${M ? ', with GA4 organic sessions and leads' : ''}.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Clicks</th><th class="r">Impr.</th><th class="r">Position</th>${M ? '<th class="r">Sessions</th><th class="r">Demo + contact</th><th class="r">Employer signups</th>' : ''}</tr></thead><tbody>${top.map(r => `<tr><td class="u"><a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a></td><td>${esc(r.cluster)}</td><td class="r">${fmtN(r.clicks)}</td><td class="r">${fmtN(r.impr)}</td><td class="r">${r.impr ? posTag(r.pos) : '—'}</td>${M ? `<td class="r">${r.sessions == null ? '—' : fmtN(Math.round(r.sessions))}</td><td class="r">${r.leads == null ? '—' : fmtN(Math.round(r.leads))}</td><td class="r">${r.emp == null ? '—' : fmtN(Math.round(r.emp))}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${M ? 8 : 5}" class="empty">No employer pages in this data.</td></tr>`}</tbody></table></div></div></section>`;
     const mount = () => {
       if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc)); } });
@@ -2138,6 +2153,10 @@
       });
       const dl = document.getElementById('un-b2e-csv');
       if (dl) dl.addEventListener('click', () => { const csv = tsv().split('\n').map(l => l.split('\t').map(v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v).join(',')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `unstop-b2e-dashboard-${D.start}-${D.end}.csv`; document.body.appendChild(a); a.click(); a.remove(); });
+      const tb = document.querySelector('.un-b2e');
+      if (tb) tb.addEventListener('click', e => { const el = e.target.closest('[data-kw]'); if (!el) return; e.preventDefault(); const [seg, k, i] = el.dataset.kw.split('|'); B2E_KW.set(D.site, { seg, k, i: +i }); rerender(); setTimeout(() => { const p = document.getElementById('un-b2e-kwp'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); });
+      if (document.getElementById('t-un-b2e-kw')) drawTable('t-un-b2e-kw');
+      const kx = document.getElementById('un-b2e-kwx'); if (kx) kx.addEventListener('click', () => { B2E_KW.delete(D.site); rerender(); });
       const rl = document.getElementById('un-b2e-reload');
       if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); rerender(); });
     };

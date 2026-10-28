@@ -243,13 +243,17 @@
       qc.set(k, x);
     });
     const quick = (o.queries || []).filter(r => !isBrand(r.q) && r.pos > 10 && r.pos <= 20 && r.impr > 0).sort((a, c) => c.impr - a.impr).slice(0, 50);
+    // the keywords behind each bucket count (same rules as `buckets`), most impressions first
+    const lists = { n: { top3: [], top10: [], p11: [] }, b: { top3: [], top10: [], p11: [] } };
+    (o.queries || []).forEach(r => { if (!(+r.impr > 0)) return; const L = lists[isBrand(r.q) ? 'b' : 'n'], p = +r.pos || 999; if (p <= 3) L.top3.push(r); if (p <= 10) L.top10.push(r); if (p > 10 && p <= 20) L.p11.push(r); });
+    Object.values(lists).forEach(L => Object.values(L).forEach(a => a.sort((x, y) => y.impr - x.impr || y.clicks - x.clicks)));
     const P = o.prevTot ? { tot: m(o.prevTot), b: m(o.prevB), nb: m(o.prevNb) } : null;
     return {
       tot, b, nb, anon, bShare: (b.clicks + nb.clicks) ? b.clicks / (b.clicks + nb.clicks) * 100 : null,
       buckets: cur, prevBuckets: prev, prev: P,
       d: P ? { clicks: chg(tot.clicks, P.tot.clicks), impr: chg(tot.impr, P.tot.impr), nbClicks: chg(nb.clicks, P.nb.clicks), nbImpr: chg(nb.impr, P.nb.impr), bClicks: chg(b.clicks, P.b.clicks), nbPos: P.nb.pos && nb.pos ? nb.pos - P.nb.pos : null } : null,
       byQueryCluster: [...qc.values()].map(x => ({ name: x.name, nb: fin(x.nb), b: fin(x.b), n3: x.n3, n10: x.n10, n11: x.n11, nq: x.nq })).sort((a, c) => c.nb.clicks - a.nb.clicks),
-      quick, queryList: (o.queries || []).filter(r => +r.impr > 0).sort((a, c) => c.clicks - a.clicks || c.impr - a.impr).slice(0, 3000), queryRows: (o.queries || []).length, capped: !!o.capped
+      quick, bucketLists: lists, queryList: (o.queries || []).filter(r => +r.impr > 0).sort((a, c) => c.clicks - a.clicks || c.impr - a.impr).slice(0, 3000), queryRows: (o.queries || []).length, capped: !!o.capped
     };
   }
   // Fallback for uploads and sample data: page totals from the page report, the branded split from
