@@ -7,7 +7,7 @@
   const { head, table, drawTable, TABLES, chart, cssVar, posTag, pctf, urlCell } = ui;
   const CW = window.CW, U = window.UN, fmtN = CW.fmtN;
   const CFG = (window.CW_CONFIG && window.CW_CONFIG.unstop) || {};
-  const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
+  const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly'; // webmasters too: the MoEngage proxy checks Search Console access
   const rerender = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
 
   // ── per-site settings ──
@@ -902,6 +902,7 @@
   const moeKey = () => { try { return sessionStorage.getItem('un:moe-key') || ''; } catch (e) { return ''; } };
   function googleTok() {
     for (const k of ['un:tok', 'un:ga-tok']) { try { const v = JSON.parse(sessionStorage.getItem(k)); if (v && v.t && v.exp > Date.now() + 30000) return v.t; } catch (e) { } }
+    const a = window.UN_AUTH; if (a && a.token && a.exp > Date.now() + 30000) return a.token;
     return token();
   }
   function moeReady(c) { return c.mode === 'proxy' ? !!c.proxy : !!(c.workspace && moeKey()); }
@@ -909,7 +910,7 @@
     let url, headers = { Accept: 'application/json' };
     if (c.mode === 'proxy') {
       const t = googleTok();
-      if (!t) throw new Error('Sign in with Google first (Connect GA4 on the GA4 screen, or open the analysis through Connect Search Console). The proxy only answers people who can open Unstop’s Search Console or GA4.');
+      if (!t) throw new Error('Google sign-in is needed: press Load dashboards again and finish the Google pop-up with your unstop.com account. The proxy only answers people who can open Unstop’s Search Console or GA4.');
       url = c.proxy.replace(/\/+$/, '') + path.replace('/v5/analytics', '') + (fresh ? '?cache=false' : '');
       headers.Authorization = 'Bearer ' + t;
     } else {
@@ -1034,7 +1035,10 @@
     const fg = $('un-moe-forget');
     if (fg) fg.addEventListener('click', () => { const s = settings(D.site); s.moe = { ...moeCfg(s), proxy: '', workspace: '' }; save(D.site, s); try { sessionStorage.removeItem('un:moe-key'); } catch (x) { } MOELIVE.delete(D.site); rerender(); });
     const ld = $('un-moe-load');
-    if (ld) ld.addEventListener('click', () => { const s = settings(D.site), c = moeCfg(s); const d = $('un-moe-dash'); c.dashboard = d ? d.value.trim() : c.dashboard; s.moe = c; save(D.site, s); moeLoad(D, { list: !c.dashboard }); });
+    if (ld) ld.addEventListener('click', () => { const s = settings(D.site), c = moeCfg(s); const d = $('un-moe-dash'); c.dashboard = d ? d.value.trim() : c.dashboard; s.moe = c; save(D.site, s);
+      // no Google token in this tab yet: sign in from this click (keeps the pop-up allowed), then load
+      if (c.mode === 'proxy' && !googleTok()) { signIn().then(() => moeLoad(D, { list: !c.dashboard }), e => { MSG.moe = e.message; rerender(); }); return; }
+      moeLoad(D, { list: !c.dashboard }); });
     const dsel = $('un-moe-dash');
     if (dsel && dsel.tagName === 'SELECT') dsel.addEventListener('change', () => { const s = settings(D.site), c = moeCfg(s); c.dashboard = dsel.value; s.moe = c; save(D.site, s); if (c.dashboard) moeLoad(D); });
     const fr = $('un-moe-fresh');
