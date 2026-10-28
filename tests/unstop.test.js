@@ -227,4 +227,22 @@ test('GA4 assisted: organic first visit converting in another channel', () => {
   const a = U.assistedModel(raw, { demoRequest: ['book_demo'], contactSubmit: ['contact_form_submit'], employerSignup: [] });
   assert.equal(a.cur.lastOrganic.total, 12); assert.equal(a.cur.assisted.total, 7); assert.equal(a.cur.organicAll.total, 17); assert.equal(a.cur.byCloser[0].channel, 'Email'); assert.equal(a.cur.toOrganic.total, 2);
 });
+
+test('reviews: periods are the last complete week, month and quarter', () => {
+  const p = U.reviewPeriods('2026-10-27');
+  assert.equal(p.week.start, '2026-10-19'); assert.equal(p.week.end, '2026-10-25');
+  assert.equal(p.month.start, '2026-09-01'); assert.equal(p.month.end, '2026-09-30');
+  assert.equal(p.quarter.start, '2026-07-01'); assert.equal(p.quarter.end, '2026-09-30');
+  assert.equal(U.reviewPeriods('2026-09-30').month.start, '2026-09-01');
+});
+test('attribution health: missing sources and gaps are flagged', () => {
+  const h = U.attributionHealth({ ga: { signups: 100, leads: 50, notSetShare: 2 }, moe: null, crm: { source: 95, journey: false, landing: 30, amount: true, stage: true, organicLeads: 20 } });
+  const st = id => h.checks.find(c => c.id === id).state;
+  assert.equal(st('gaSignup'), 'ok'); assert.equal(st('moe'), 'none'); assert.equal(st('crmJourney'), 'fail'); assert.equal(st('crmLanding'), 'fail'); assert.equal(st('crmVsGa'), 'fail');
+  assert.equal(h.ready, false);
+});
+test('stop / continue / scale: weak templates stop, links follow movement', () => {
+  const c = U.stopContinueScale({ templates: [{ key: 'Programmatic: Jobs', old: 200, traffic90Rate: 8, perPage: .2 }], links: { measured: 20, improved: 2, declined: 9 }, quality: { ok: false, worse: 1 } });
+  assert.equal(c[0].call, 'Stop'); assert.ok(c.some(x => x.area === 'Link building' && x.call === 'Stop')); assert.ok(c.some(x => x.area === 'User acquisition' && x.call === 'Fix'));
+});
 report('unstop');

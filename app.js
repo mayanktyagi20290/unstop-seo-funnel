@@ -330,6 +330,16 @@
   // Runs an analysis from Search Console. Used by the property screen and by the scope switcher
   // in the top bar, which re-runs the same property and dates for another folder or page.
   let LAST = null;
+  // Reviews screen: reload the live analysis for another period (with the previous period for comparison)
+  window.UN_PERIOD = {
+    latest: () => LATEST, live: () => !!(D && D.source === 'api' && LAST),
+    async load(start, end) {
+      if (!(D && D.source === 'api' && LAST)) return 'Needs a Search Console connection (sample data and uploads keep their own dates).';
+      const err = { textContent: '', hidden: true }, before = LOAD;
+      await analyseProperty({ ...LAST, start, end: end > LATEST ? LATEST : end, compare: true }, { error: err, go: { disabled: false } });
+      return LOAD !== before && err.hidden ? null : (err.textContent || 'Could not load that period.');
+    }
+  };
   async function analyseProperty(o, ui) {
     if (o.end && o.end > LATEST && LATEST_KNOWN) o = { ...o, end: LATEST };
     const { site, start, end, compare } = o;

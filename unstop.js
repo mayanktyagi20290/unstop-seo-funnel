@@ -833,7 +833,7 @@
       const isWon = /closed ?won|\bwon\b|signed|customer/.test(stage) || (map.won != null && !!String(get('won') || '').trim() && !/lost/.test(stage) && map.stage == null);
       const revenue = map.revenue != null ? money(get('revenue')) : isWon ? amount : 0;
       const cd = toDate(get('created'));
-      leads.push({ ft, journey, organicFT: ft === 'Organic search', organicAny: journey.has('Organic search'), mql: isMql, opp: isOpp, won: isWon, pipeline: isOpp ? amount : 0, revenue: isWon ? (revenue || amount) : 0, landing: map.landing != null ? String(get('landing') || '') : '', month: cd ? cd.toISOString().slice(0, 7) : null, hasSource: ft !== '(not set)' });
+      leads.push({ ft, journey, organicFT: ft === 'Organic search', organicAny: journey.has('Organic search'), mql: isMql, opp: isOpp, won: isWon, pipeline: isOpp ? amount : 0, revenue: isWon ? (revenue || amount) : 0, landing: map.landing != null ? String(get('landing') || '') : '', month: cd ? cd.toISOString().slice(0, 7) : null, day: cd ? cd.toISOString().slice(0, 10) : null, hasSource: ft !== '(not set)' });
     }
     if (!leads.length) return { ok: false, error: 'No lead rows found.', header, map };
     const agg = list => { const n = list.length, mq = list.filter(l => l.mql).length, op = list.filter(l => l.opp).length, wn = list.filter(l => l.won).length; return { leads: n, mqls: map.mql != null ? mq : null, opps: op, won: wn, pipeline: list.reduce((a, l) => a + l.pipeline, 0), revenue: list.reduce((a, l) => a + l.revenue, 0), toMql: n && map.mql != null ? mq / n * 100 : null, toOpp: n ? op / n * 100 : null, toClose: n ? wn / n * 100 : null, winRate: op ? wn / op * 100 : null }; };
@@ -845,7 +845,11 @@
     const lp = new Map(); leads.filter(l => l.organicFT && l.landing).forEach(l => { const k = pathOnly(l.landing); const o = lp.get(k) || []; o.push(l); lp.set(k, o); });
     const landing = [...lp.entries()].map(([path, list]) => ({ path, ...agg(list) })).sort((a, b) => b.pipeline - a.pipeline || b.leads - a.leads);
     const coverage = { source: leads.filter(l => l.hasSource).length / leads.length * 100, journey: map.touches != null || map.latest != null ? 100 : 0, landing: map.landing != null ? leads.filter(l => l.landing).length / leads.length * 100 : 0, amount: map.amount != null, stage: map.stage != null || map.won != null };
-    return { ok: true, header, map, total: leads.length, channels, ft, assisted, anyOrg, other, all, monthly, landing, coverage, hasJourney: map.touches != null || map.latest != null, hasMql: map.mql != null };
+    // organic first-touch leads created between two dates (for reconciling with GA4 over the same days)
+    const ftBetween = (a, b) => leads.filter(l => l.organicFT && l.day && l.day >= a && l.day <= b).length;
+    const quarters = new Map(); leads.filter(l => l.month).forEach(l => { const [y, m] = l.month.split('-').map(Number); const k = y + '-Q' + (Math.floor((m - 1) / 3) + 1); const o = quarters.get(k) || []; o.push(l); quarters.set(k, o); });
+    const quarterly = [...quarters.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([q, list]) => ({ quarter: q, ft: agg(list.filter(l => l.organicFT)), assisted: agg(list.filter(l => l.organicAny && !l.organicFT)), all: agg(list) }));
+    return { ok: true, header, map, total: leads.length, channels, ft, assisted, anyOrg, other, all, monthly, quarterly, landing, coverage, ftBetween, hasJourney: map.touches != null || map.latest != null, hasMql: map.mql != null };
   }
   // GA4: employer conversions where organic first brought the user but another channel's session converted (and the reverse).
   function assistedModel(raw, ev) {
@@ -865,6 +869,76 @@
     });
     const fin = x => ({ ...x, byCloser: [...x.byCloser.entries()].map(([channel, v]) => ({ channel, ...v })).sort((a, b) => b.total - a.total) });
     return { ok: rows.length > 0, cur: fin(R.cur), yoy: fin(R.yoy) };
+  }
+
+  // ── review cadence ──
+  // Last complete Monday–Sunday week, calendar month and quarter on or before `latest` (YYYY-MM-DD).
+  function reviewPeriods(latest) {
+    const d = new Date(latest + 'T00:00:00Z'), iso = x => x.toISOString().slice(0, 10);
+    const sun = new Date(d); sun.setUTCDate(sun.getUTCDate() - (sun.getUTCDay() % 7)); // last Sunday on or before
+    const mon = new Date(sun); mon.setUTCDate(mon.getUTCDate() - 6);
+    const mEnd = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + (d.getUTCDate() === new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate() ? 1 : 0), 0));
+    const mStart = new Date(Date.UTC(mEnd.getUTCFullYear(), mEnd.getUTCMonth(), 1));
+    const q = Math.floor(d.getUTCMonth() / 3), qLastDay = new Date(Date.UTC(d.getUTCFullYear(), q * 3 + 3, 0));
+    const qEnd = iso(qLastDay) <= latest ? qLastDay : new Date(Date.UTC(d.getUTCFullYear(), q * 3, 0));
+    const qStart = new Date(Date.UTC(qEnd.getUTCFullYear(), Math.floor(qEnd.getUTCMonth() / 3) * 3, 1));
+    const qName = 'Q' + (Math.floor(qEnd.getUTCMonth() / 3) + 1) + ' ' + qEnd.getUTCFullYear();
+    return { week: { start: iso(mon), end: iso(sun), label: 'Week of ' + iso(mon) }, month: { start: iso(mStart), end: iso(mEnd), label: mStart.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) }, quarter: { start: iso(qStart), end: iso(qEnd), label: qName } };
+  }
+  // Does the loaded period match a review period?
+  function periodMatch(D, p) { return !!(D && p && D.start === p.start && D.end === p.end); }
+
+  // Attribution health between GA4, the product database (MoEngage) and the CRM. Each check:
+  // { id, area, label, state: 'ok' | 'warn' | 'fail' | 'none', value, fix }
+  function attributionHealth(o) {
+    const out = [], add = (id, area, label, state, value, fix) => out.push({ id, area, label, state, value, fix });
+    const gap = (a, b) => a == null || b == null || !Math.max(a, b) ? null : Math.abs(a - b) / Math.max(a, b) * 100;
+    if (!o.ga) add('ga', 'GA4', 'GA4 connected', 'none', 'not connected', 'Connect GA4 on the GA4 screen.');
+    else {
+      add('gaSignup', 'GA4', 'Organic signup events found', o.ga.signups > 0 ? 'ok' : 'fail', o.ga.signups, 'Set the real signup event names in Funnel setup (the GA4 screen lists every event seen in organic sessions), and fix the GTM trigger if none fire.');
+      add('gaLead', 'GA4', 'Employer lead events found (demo / contact)', o.ga.leads > 0 ? 'ok' : 'fail', o.ga.leads, 'Track demo and contact form submits on employer pages as GA4 events and list their names in Funnel setup.');
+      add('gaNotSet', 'GA4', 'Organic landing pages with a page (not “(not set)”)', o.ga.notSetShare == null ? 'none' : o.ga.notSetShare < 5 ? 'ok' : o.ga.notSetShare < 15 ? 'warn' : 'fail', o.ga.notSetShare == null ? '—' : (100 - o.ga.notSetShare).toFixed(1) + '%', 'High “(not set)” landing pages usually mean sessions start without a page_view (consent mode or late tag firing).');
+    }
+    if (!o.moe) add('moe', 'Product database (MoEngage)', 'MoEngage connected or exported', 'none', 'not connected', 'Connect the MoEngage dashboard or upload a user export on Signup quality.');
+    else {
+      add('moeSource', 'Product database (MoEngage)', 'Signups carry an acquisition source', o.moe.hasSource ? (o.moe.notSetShare != null && o.moe.notSetShare > 20 ? 'warn' : 'ok') : 'fail', o.moe.hasSource ? (o.moe.notSetShare != null ? (100 - o.moe.notSetShare).toFixed(1) + '% with a source' : 'yes') : 'no source column', 'Store UTM source / medium (and the landing page) on the user at signup, and send them to MoEngage as user attributes.');
+      const g = gap(o.ga && o.ga.signups, o.moe.organicSignups);
+      if (o.moe.organicSignups != null && o.ga) add('moeVsGa', 'Product database (MoEngage)', 'Organic signups: GA4 vs MoEngage agree', g == null ? 'none' : g <= 15 ? 'ok' : g <= 35 ? 'warn' : 'fail', g == null ? '—' : `${g.toFixed(0)}% apart`, 'Compare definitions (same dates, same signup event, organic = Organic Search in both). A large gap means one side is not capturing the source.');
+    }
+    if (!o.crm) add('crm', 'CRM', 'CRM export loaded', 'none', 'not loaded', 'Upload the CRM export on Leads & revenue.');
+    else {
+      add('crmSource', 'CRM', 'Leads with an original source', o.crm.source >= 90 ? 'ok' : o.crm.source >= 70 ? 'warn' : 'fail', o.crm.source.toFixed(1) + '%', 'Map the hidden UTM / original-source fields on every web form into the CRM.');
+      add('crmJourney', 'CRM', 'Journey (all touches) available', o.crm.journey ? 'ok' : 'fail', o.crm.journey ? 'yes' : 'no', 'Export “All touches”, “Latest source” or the attribution path so organic in the journey can be measured.');
+      add('crmLanding', 'CRM', 'Leads with a first page seen (joins to GA4 landing pages)', o.crm.landing >= 70 ? 'ok' : o.crm.landing >= 40 ? 'warn' : 'fail', o.crm.landing.toFixed(1) + '%', 'Capture the first page (or the GA4 client ID) on the form; it is the join key between GA4 and the CRM.');
+      add('crmDeal', 'CRM', 'Deals carry amount and stage', o.crm.amount && o.crm.stage ? 'ok' : 'fail', o.crm.amount && o.crm.stage ? 'yes' : 'missing', 'Export deal amount and deal stage with the leads (or the associated deals).');
+      if (o.ga && o.crm.organicLeads != null) { const g = gap(o.ga.leads, o.crm.organicLeads); add('crmVsGa', 'CRM', 'Organic employer leads: GA4 vs CRM agree', g == null ? 'none' : g <= 20 ? 'ok' : g <= 40 ? 'warn' : 'fail', g == null ? '—' : `${g.toFixed(0)}% apart (GA4 ${Math.round(o.ga.leads)} · CRM ${o.crm.organicLeads})`, 'Use the same dates; GA4 counts form submits, the CRM counts de-duplicated leads. A large gap means forms are not passing the source to the CRM.'); }
+    }
+    const scored = out.filter(c => c.state !== 'none');
+    return { checks: out, ok: scored.filter(c => c.state === 'ok').length, total: scored.length, missing: out.filter(c => c.state === 'none').length, ready: scored.length > 0 && scored.every(c => c.state === 'ok') && !out.some(c => c.state === 'none' && c.area === 'CRM') };
+  }
+
+  // Quarterly "stop / continue / scale" suggestions from evidence already on the screens. Each item:
+  // { area, item, call: 'Stop' | 'Fix' | 'Continue' | 'Scale', why }
+  function stopContinueScale(o) {
+    const out = [];
+    (o.templates || []).forEach(t => { if (t.old >= 20 && t.traffic90Rate != null) { if (t.traffic90Rate < 15) out.push({ area: 'Content & programmatic', item: t.key, call: 'Stop', why: `Only ${t.traffic90Rate.toFixed(0)}% of ${t.old} pages have traffic after 90 days.` }); else if (t.traffic90Rate >= 50 && t.perPage >= 5) out.push({ area: 'Content & programmatic', item: t.key, call: 'Scale', why: `${t.traffic90Rate.toFixed(0)}% of pages have traffic after 90 days at ${t.perPage.toFixed(1)} clicks per page.` }); } });
+    const cl = (o.clusters || []).filter(c => c.sessions >= 500 && c.cvr != null);
+    const cvrs = cl.map(c => c.cvr).sort((a, b) => a - b), med = cvrs.length ? cvrs[Math.floor((cvrs.length - 1) / 2)] : null;
+    const scaleC = [], fixC = [];
+    cl.forEach(c => {
+      if (c.dSessions != null && c.dSessions <= -15) fixC.push({ area: 'Clusters', item: c.name, call: 'Fix', why: `Organic sessions ${c.dSessions.toFixed(0)}% vs last year (${c.signups} signups).`, k: c.dSessions });
+      else if (med != null && c.cvr <= med * .5 && c.sessions >= 2000) fixC.push({ area: 'Clusters', item: c.name, call: 'Fix', why: `Signup CVR ${c.cvr.toFixed(1)}% is under half the cluster median (${med.toFixed(1)}%) on ${c.sessions.toLocaleString()} sessions.`, k: -c.sessions });
+      else if (med != null && c.dSessions != null && c.dSessions >= 20 && c.cvr >= med * 1.25) scaleC.push({ area: 'Clusters', item: c.name, call: 'Scale', why: `Sessions +${c.dSessions.toFixed(0)}% vs last year and ${c.cvr.toFixed(1)}% signup CVR (median ${med.toFixed(1)}%).`, k: -c.signups });
+    });
+    fixC.sort((a, b) => a.k - b.k).slice(0, 6).forEach(x => { delete x.k; out.push(x); });
+    scaleC.sort((a, b) => a.k - b.k).slice(0, 6).forEach(x => { delete x.k; out.push(x); });
+    if (o.links && o.links.measured >= 5) { const up = o.links.improved, dn = o.links.declined; out.push({ area: 'Link building', item: 'Target pages', call: dn > up && up / o.links.measured < .2 ? 'Stop' : up >= dn && up > 0 ? 'Continue' : 'Fix', why: `${up} of ${o.links.measured} target pages moved up a position or more; ${dn} moved down; the rest held.` }); }
+    if (o.refresh && o.refresh.measured >= 3) { const r = o.refresh.improved / o.refresh.measured; out.push({ area: 'Content refreshes', item: 'Refreshed pages', call: r >= .5 ? 'Scale' : r < .2 ? 'Stop' : 'Continue', why: `${o.refresh.improved} of ${o.refresh.measured} measured refreshes clearly improved.` }); }
+    if (o.ai && o.ai.trend && o.ai.trend.length >= 2) { const a = o.ai.trend[o.ai.trend.length - 2], b = o.ai.trend[o.ai.trend.length - 1]; out.push({ area: 'AI answers', item: 'Mention rate', call: b.mention >= a.mention ? 'Continue' : 'Fix', why: `Mentioned in ${b.mention.toFixed(0)}% of answers (${a.mention.toFixed(0)}% the month before).` }); }
+    if (o.quality) out.push({ area: 'User acquisition', item: 'Organic signup quality', call: o.quality.ok ? 'Continue' : 'Fix', why: o.quality.ok ? 'Organic signups are as good as or better than other channels.' : `Organic is worse on ${o.quality.worse} quality measure(s): volume alone is not a win.` });
+    if (o.roi != null) out.push({ area: 'Whole programme', item: 'Revenue ÷ SEO cost (first touch)', call: o.roi >= 3 ? 'Scale' : o.roi >= 1 ? 'Continue' : 'Fix', why: `${o.roi.toFixed(1)}× the quarter’s SEO cost in organic first-touch revenue.` });
+    const order = { Stop: 0, Fix: 1, Scale: 2, Continue: 3 };
+    return out.sort((a, b) => order[a.call] - order[b.call]);
   }
   // ── metric registry for the funnel dashboard (owner, source, definition, cadence) ──
   const METRICS = [
@@ -912,7 +986,7 @@
     { stage: 'Pipeline & revenue', id: 'l2c', label: 'Lead → close rate (organic)', src: 'CRM', owner: 'Demand Gen + Finance', cadence: 'Monthly', def: 'Organic first-touch leads closed won ÷ organic first-touch leads, against all other channels.' },
   ];
 
-  const api = { cohortWeeks, engagementModel, DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
+  const api = { reviewPeriods, periodMatch, attributionHealth, stopContinueScale, cohortWeeks, engagementModel, DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
     moeHeaderMap, moeQuality, qualityVerdict, channelOf, crmHeaderMap, crmModel, assistedModel, organicTest, toDate, METRICS, chg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;

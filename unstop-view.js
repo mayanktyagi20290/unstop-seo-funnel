@@ -1570,6 +1570,141 @@
     return { html, mount };
   };
 
+  // ════════════════════════════ REVIEWS (cadence) ════════════════════════════
+  // Weekly leading indicators, monthly full chain by page type, quarterly revenue / cost / stop-or-scale,
+  // the first-review pack (three questions) and attribution health between GA4, MoEngage and the CRM.
+  const DKEY = site => 'un:decisions:' + site;
+  const decisions = site => { try { const v = JSON.parse(localStorage.getItem(DKEY(site))); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+  const saveDecisions = (site, list) => { try { localStorage.setItem(DKEY(site), JSON.stringify(list.slice(-500))); } catch (e) { } };
+  let REVMSG = '';
+  function healthOf(D) {
+    const AQ = acqModel(D), ga = AQ.ga, g = GA.get(D.site), m = MOE.get(D.site), ml = moeLive(D), C = crmOf(D);
+    const notSet = ga ? (() => { const t = ga.pages.reduce((a, p) => a + p.sessions, 0), n = ga.pages.filter(p => /not set/i.test(p.path)).reduce((a, p) => a + p.sessions, 0); return t ? n / t * 100 : null; })() : null;
+    const res = m && m.res && m.res.ok ? m.res : null;
+    return U.attributionHealth({
+      ga: ga ? { signups: ga.ev.stu + ga.ev.emp, leads: ga.ev.demo + ga.ev.contact, notSetShare: notSet } : null,
+      moe: res || ml ? { hasSource: res ? res.has.source : true, notSetShare: res ? (res.sources.filter(x => /not set/i.test(x.source)).reduce((a, x) => a + x.users, 0) / Math.max(1, res.total) * 100) : null, organicSignups: AQ.moeSignups } : null,
+      crm: C ? { source: C.res.coverage.source, journey: C.res.hasJourney, landing: C.res.coverage.landing, amount: C.res.coverage.amount, stage: C.res.coverage.stage, organicLeads: g ? C.res.ftBetween(g.start, g.end) : null } : null
+    });
+  }
+  function healthTable(H) {
+    const st = { ok: '<span class="un-st live">OK</span>', warn: '<span class="un-st sample">Check</span>', fail: '<span class="un-st bad">Fix</span>', none: '<span class="un-st none">Not connected</span>' };
+    return `<div class="tw"><table class="un-mini"><thead><tr><th>Source</th><th>Check</th><th>Status</th><th class="r">Value</th><th>What to fix</th></tr></thead><tbody>${H.checks.map(c => `<tr><td>${esc(c.area)}</td><td><b>${esc(c.label)}</b></td><td>${st[c.state]}</td><td class="r">${esc(String(c.value))}</td><td><small>${c.state === 'ok' ? '—' : esc(c.fix)}</small></td></tr>`).join('')}</tbody></table></div>`;
+  }
+  function decisionBlock(D, cadence) {
+    const list = decisions(D.site).filter(d => d.cadence === cadence).slice().reverse();
+    return `<section class="panel"><div class="panel-h"><h2>Decisions and owners (${esc(cadence)})</h2><p>Log what the review decided, who owns it and by when. Kept in this browser; export to share.</p></div><div class="panel-b">
+      <form class="un-row" id="un-dec-form" data-cadence="${esc(cadence)}"><label class="field un-grow"><span>Decision / action</span><input type="text" id="un-dec-what" required maxlength="300"></label><label class="field"><span>Owner</span><input type="text" id="un-dec-owner" required maxlength="80"></label><label class="field"><span>Due</span><input type="date" id="un-dec-due"></label><button class="btn-primary sm" type="submit">Add</button><button class="btn-quiet" type="button" id="un-dec-export">Export CSV</button></form></div>
+      ${list.length ? `<div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Logged</th><th>Decision / action</th><th>Owner</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>${list.map(d => `<tr><td>${esc(d.date)}</td><td>${esc(d.what)}</td><td>${esc(d.owner)}</td><td>${esc(d.due || '—')}</td><td><select data-dec-st="${esc(d.id)}">${['Open', 'Done', 'Dropped'].map(x => `<option ${d.status === x ? 'selected' : ''}>${x}</option>`).join('')}</select></td><td><button class="btn-quiet sm" type="button" data-dec-del="${esc(d.id)}">Remove</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}</section>`;
+  }
+  function decisionMount(D) {
+    const f = document.getElementById('un-dec-form'); if (!f) return;
+    f.addEventListener('submit', e => { e.preventDefault(); const l = decisions(D.site); l.push({ id: 'd' + Date.now().toString(36), cadence: f.dataset.cadence, date: new Date().toISOString().slice(0, 10), what: document.getElementById('un-dec-what').value.trim(), owner: document.getElementById('un-dec-owner').value.trim(), due: document.getElementById('un-dec-due').value, status: 'Open' }); saveDecisions(D.site, l); rerender(); });
+    document.getElementById('un-dec-export').addEventListener('click', () => { const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; download('unstop-seo-decisions.csv', ['Cadence,Logged,Decision,Owner,Due,Status'].concat(decisions(D.site).map(d => [d.cadence, d.date, d.what, d.owner, d.due, d.status].map(cell).join(','))).join('\n')); });
+    document.querySelectorAll('[data-dec-st]').forEach(s => s.addEventListener('change', () => { const l = decisions(D.site); const d = l.find(x => x.id === s.dataset.decSt); if (d) d.status = s.value; saveDecisions(D.site, l); }));
+    document.querySelectorAll('[data-dec-del]').forEach(b => b.addEventListener('click', () => { saveDecisions(D.site, decisions(D.site).filter(x => x.id !== b.dataset.decDel)); rerender(); }));
+  }
+  function periodBar(D, p, what) {
+    const P = window.UN_PERIOD, g = GA.get(D.site);
+    const gscOk = U.periodMatch(D, p), gaOk = g && g.start === p.start && g.end === p.end;
+    const live = P && P.live();
+    return `<div class="note un-period ${gscOk && (gaOk || !g) ? '' : 'un-warn'}"><b>${esc(what)}: ${esc(p.label)}</b> (${fmtD(p.start)} – ${fmtD(p.end)}). Loaded: Search Console ${fmtD(D.start)} – ${fmtD(D.end)}${gscOk ? ' ✓' : ''}${g ? ` · GA4 ${fmtD(g.start)} – ${fmtD(g.end)}${gaOk ? ' ✓' : ''}` : ''}.
+      ${gscOk && (gaOk || !g) ? '' : live ? ` <button class="btn-primary sm" type="button" id="un-rev-load" data-s="${p.start}" data-e="${p.end}">Load ${esc(p.label)}</button> <span class="progress" id="un-rev-prog"></span>` : ' Sample data and uploads keep their own dates; with Search Console connected this button loads the review period.'}
+      ${REVMSG ? `<br><span class="start-error">${esc(REVMSG)}</span>` : ''}</div>`;
+  }
+  function periodMount(D) {
+    const b = document.getElementById('un-rev-load'); if (!b) return;
+    b.addEventListener('click', async () => {
+      const s = b.dataset.s, e = b.dataset.e, site = D.site, p = document.getElementById('un-rev-prog');
+      b.disabled = true; REVMSG = ''; if (p) p.textContent = 'Loading Search Console…';
+      const err = await window.UN_PERIOD.load(s, e);
+      if (err) { REVMSG = err; rerender(); return; }
+      const g = GA.get(site), prop = (g && !g.sample && g.property) || settings(site).ga4Property;
+      if (prop && token()) { try { await loadGa4({ site }, { property: prop, propertyName: g && g.propertyName, start: s, end: e }); } catch (x) { REVMSG = 'GA4: ' + x.message; } }
+      rerender();
+    });
+  }
+  const REV_TABS = [['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['first', 'First review'], ['attribution', 'Attribution health']];
+  V.reviews = (A, D) => {
+    demoFill(D); scSamples(A, D);
+    window.CW_LAST_A = A;
+    Object.keys(TABLES).filter(k => k.startsWith('t-un-rv')).forEach(k => delete TABLES[k]);
+    const tab = fParams().get('r') || 'weekly', s = settings(D.site);
+    const latest = window.UN_PERIOD && window.UN_PERIOD.live() ? window.UN_PERIOD.latest() : D.end;
+    const PR = U.reviewPeriods(latest);
+    const kp = (l, v, d, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${d || ''} ${sub || ''}</small></div>`;
+    const pts = (a, b) => a == null || b == null ? '' : `<span class="un-d ${a - b > 0 ? 'up' : a - b < 0 ? 'down' : 'flat'}">${a - b > 0 ? '+' : ''}${(a - b).toFixed(1)} pts</span>`;
+    const G = gscModel(A, D), AQ = acqModel(D), ga = AQ.ga, { typeOf } = tools(D), so = sectioner(D), H = healthOf(D);
+    let html = head('Reviews', 'Weekly review of leading indicators, monthly review of the full chain by page type, quarterly review of revenue, cost and what to stop, the first-review pack and attribution health.') +
+      `<div class="un-tabs" role="tablist">${REV_TABS.map(([k, l]) => `<a role="tab" class="${k === tab ? 'on' : ''}" href="#reviews?r=${k}">${l}${k === 'attribution' ? ` <small>${H.ok}/${H.total}</small>` : ''}</a>`).join('')}</div>`;
+    let tables = [];
+    if (tab === 'weekly') {
+      const site = A.site, ps = A.prevSite, tr = G.ranks.total;
+      html += periodBar(D, PR.week, 'Weekly review') + `<h2 class="un-sub">Leading indicators vs the previous period</h2><div class="un-kpis">
+        ${kp('Impressions', fmtN(site.impr), ps ? dchip(U.chg(site.impr, ps.impr)) : '', '')}${kp('Clicks', fmtN(site.clicks), ps ? dchip(U.chg(site.clicks, ps.clicks)) : '', '')}
+        ${kp('Non-branded clicks', fmtN(A.totNB.clicks), A.prev ? dchip(U.chg(A.totNB.clicks, A.prev.nb.clicks)) : '', '')}${kp('Average position', site.pos ? site.pos.toFixed(1) : '—', ps && ps.pos ? dchip(site.pos - ps.pos, true, 'pos') : '', '')}
+        ${kp('NB keywords in top 10', fmtN(tr.n.top10), G.ranks.hasPrev ? cnt(tr.n.top10, tr.pn.top10, true).replace(/^[^<]*/, '') : '', 'top 3: ' + fmtN(tr.n.top3))}${kp('NB keywords 11–20', fmtN(tr.n.p11), G.ranks.hasPrev ? cnt(tr.n.p11, tr.pn.p11, true).replace(/^[^<]*/, '') : '', 'quick wins')}
+        ${kp('Pages getting impressions', fmtN(G.vis.rows.reduce((a, r) => a + r.urls, 0)), '', 'indexed and visible')}${kp('Indexed (latest inspection)', (() => { const h = techHist(D.site).filter(x => x.kind === 'inspect').pop(); return h ? pct1(h.indexedPct) : scd(D.site).insp ? pct1(scd(D.site).insp.rows.filter(r => r.indexed).length / Math.max(1, scd(D.site).insp.rows.length) * 100) : '—'; })(), '', '<a href="#scorecards?w=tech">run on Technical SEO</a>')}
+      </div>
+      <section class="panel"><div class="panel-h"><h2>By page type</h2><p>Branded and non-branded apart.</p></div>${table('t-un-rvw', [{ k: 'name', l: 'Page type', f: r => `<b>${esc(r.name)}</b>` }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) + ' ' + dchip(r.dImpr) }, { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + dchip(r.dClicks) }, { k: 'nb', l: 'Non-branded clicks (est.)', r: 1, f: r => r.estNB ? fmtN(r.estNB.clicks) : '—', csv: r => r.estNB ? Math.round(r.estNB.clicks) : '' }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos) + ' ' + dchip(r.dPos, true, 'pos'), csv: r => r.pos }, { k: 'urls', l: 'Pages with impressions', r: 1, f: r => fmtN(r.urls) }], G.vis.rows, { search: false, file: 'unstop-weekly-by-page-type', pageSize: 20 })}</section>
+      <section class="panel"><div class="panel-h"><h2>Rankings by page type</h2></div>${table('t-un-rvr', [{ k: 'name', l: 'Page type', f: r => `<b>${esc(r.name)}</b>` }, { k: 'n3', l: 'NB top 3', r: 1, f: r => cnt(r.n.top3, r.pn.top3, G.ranks.hasPrev) }, { k: 'n10', l: 'NB top 10', r: 1, f: r => cnt(r.n.top10, r.pn.top10, G.ranks.hasPrev) }, { k: 'n11', l: 'NB 11–20', r: 1, f: r => cnt(r.n.p11, r.pn.p11, G.ranks.hasPrev) }, { k: 'b10', l: 'Branded top 10', r: 1, f: r => cnt(r.b.top10, r.pb.top10, G.ranks.hasPrev) }], G.ranks.byType.map(bucketRow), { search: false, file: 'unstop-weekly-rankings', pageSize: 20 })}</section>
+      <p class="hint">Cluster detail: <a href="#urlclusters">Clusters</a> · indexation and crawl: <a href="#scorecards?w=tech">Technical SEO</a> · sitemaps: <a href="#visibility">Visibility</a>.</p>` + decisionBlock(D, 'Weekly');
+      tables = ['t-un-rvw', 't-un-rvr'];
+    }
+    if (tab === 'monthly') {
+      const chain = U.joinChain(G.vis, ga, typeOf).filter(r => (r.gsc && r.gsc.impr) || (r.ga && r.ga.sessions));
+      const V0 = AQ.verdict, AS = ga ? assistedOf(D) : null;
+      html += periodBar(D, PR.month, 'Monthly review') + (ga ? `<h2 class="un-sub">The chain</h2><div class="un-kpis">
+        ${kp('Organic sessions', fmtN(ga.total.sessions), dchip(ga.dSessions), 'vs last year')}${kp('Student signups', fmtN(Math.round(AQ.stu)), dchip(U.chg(AQ.stu, AQ.yStu)), 'CVR ' + pct1(AQ.cvrStu))}${kp('Employer signups', fmtN(Math.round(AQ.emp)), dchip(U.chg(AQ.emp, AQ.yEmp)), 'CVR ' + pct1(AQ.cvrEmp))}${kp('Signup quality', V0 ? (V0.ok ? 'Volume counts' : 'Volume is not a win') : '—', '', V0 ? `${V0.better} better · ${V0.worse} worse vs other channels` : '<a href="#quality">connect MoEngage</a>')}
+        ${kp('Engagement rate', pct1(ga.total.engRate), '', '')}${kp('Demo + contact', fmtN(Math.round(ga.ev.demo + ga.ev.contact)), dchip(U.chg(ga.ev.demo + ga.ev.contact, ga.ev.yDemo + ga.ev.yContact)), 'vs last year')}${kp('Assisted employer conversions', AS ? fmtN(Math.round(AS.cur.assisted.total)) : '—', '', 'organic first, closed elsewhere')}${kp('Pricing-page sessions', fmtN(Math.round(ga.pricing.sessions)), dchip(U.chg(ga.pricing.sessions, ga.pricing.ySessions)), '')}
+      </div>` : '<div class="note"><a href="#ga4">Connect GA4</a> for traffic, signups and leads.</div>') +
+      `<section class="panel"><div class="panel-h"><h2>Traffic → signups → leads by page type</h2><p>Search Console vs the previous period; GA4 vs the same dates last year (traffic is seasonal).</p></div>${table('t-un-rvm', [
+        { k: 'name', l: 'Page type', f: r => `<b>${esc(r.name)}</b>` }, { k: 'clicks', l: 'Clicks', r: 1, f: r => r.gsc ? fmtN(r.gsc.clicks) + ' ' + dchip(r.gsc.dClicks) : '—', csv: r => r.gsc ? r.gsc.clicks : '' }, { k: 'nb', l: 'NB clicks (est.)', r: 1, f: r => r.gsc && r.gsc.estNB ? fmtN(r.gsc.estNB.clicks) : '—', csv: r => r.gsc && r.gsc.estNB ? Math.round(r.gsc.estNB.clicks) : '' },
+        { k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.ga ? fmtN(r.ga.sessions) + ' ' + dchip(r.ga.dSessions) : '—', csv: r => r.ga ? r.ga.sessions : '' }, { k: 'stu', l: 'Student signups', r: 1, f: r => r.ga ? fmtN(r.ga.stu) : '—', csv: r => r.ga ? r.ga.stu : '' }, { k: 'emp', l: 'Employer signups', r: 1, f: r => r.ga ? fmtN(r.ga.emp) : '—', csv: r => r.ga ? r.ga.emp : '' }, { k: 'cvr', l: 'Signup CVR', r: 1, f: r => r.ga ? pct1(r.ga.cvr) : '—', csv: r => r.ga ? r.ga.cvr : '' }, { k: 'opp', l: 'Register / apply', r: 1, f: r => r.ga ? fmtN(r.ga.opp) : '—', csv: r => r.ga ? r.ga.opp : '' }, { k: 'leads', l: 'Demo + contact', r: 1, f: r => r.ga ? fmtN(r.ga.demo + r.ga.contact) : '—', csv: r => r.ga ? r.ga.demo + r.ga.contact : '' }
+      ], chain.map(r => ({ ...r, clicks: r.gsc ? r.gsc.clicks : -1, sessions: r.ga ? r.ga.sessions : -1 })), { search: false, file: 'unstop-monthly-chain-by-page-type', pageSize: 20 })}</section>
+      <p class="hint">Deeper: <a href="#acquisition">User acquisition</a> · <a href="#engagement">Engagement</a> · <a href="#leads">Leads & revenue</a> · <a href="#scorecards">Workstream scorecards</a>.</p>` + decisionBlock(D, 'Monthly');
+      tables = ['t-un-rvm'];
+    }
+    if (tab === 'quarterly') {
+      const C = crmOf(D), X = scd(D.site), pub = X.pub ? SC.publishingModel(X.pub.rows, A.P, so, D.end) : null, links = X.links ? SC.linksModel(X.links.rows, A, D, so) : null, ai = X.ai ? SC.aiModel(X.ai.rows) : null;
+      const qKey = PR.quarter.start.slice(0, 4) + '-Q' + (Math.floor((+PR.quarter.start.slice(5, 7) - 1) / 3) + 1);
+      const Q = C ? C.res.quarterly : [], q = Q.find(x => x.quarter === qKey);
+      const qCost = AQ.cost ? AQ.cost * 3 : null, roi = q && qCost ? q.ft.revenue / qCost : null;
+      const clusters = ga ? (() => { const m = new Map(); ga.pages.forEach(p => { const id = so(p.path); const o = m.get(id) || { name: so.label(id), sessions: 0, ySessions: 0, signups: 0 }; o.sessions += p.sessions; o.ySessions += p.ySessions; o.signups += p.signups; m.set(id, o); }); return [...m.values()].map(o => ({ ...o, cvr: o.sessions ? o.signups / o.sessions * 100 : null, dSessions: U.chg(o.sessions, o.ySessions) })); })() : [];
+      const rf = X.refresh && X.refresh.rows ? X.refresh.rows.filter(r => r.w && r.w[0].status === 'measured' && r.w[0].window.L >= 28) : [];
+      const calls = U.stopContinueScale({ templates: pub && pub.ok ? pub.byTemplate : [], clusters, links: links && links.ok ? links : null, refresh: rf.length ? { measured: rf.length, improved: rf.filter(r => /improved/.test(r.w[0].verdict)).length } : null, ai: ai && ai.ok ? ai : null, quality: AQ.verdict, roi });
+      html += periodBar(D, PR.quarter, 'Quarterly review') + `<h2 class="un-sub">Revenue and cost</h2><div class="un-kpis">
+        ${kp('Revenue: organic first touch', q ? inr(q.ft.revenue) : '—', '', q ? `${fmtN(q.ft.won)} won · ${esc(qKey)}` : C ? 'no leads in ' + esc(qKey) : '<a href="#leads">upload CRM export</a>')}
+        ${kp('Revenue: organic in the journey', q && C.res.hasJourney ? inr(q.assisted.revenue) : '—', '', 'reported apart')}
+        ${kp('Pipeline: organic first touch', q ? inr(q.ft.pipeline) : '—', '', q ? fmtN(q.ft.opps) + ' opportunities' : '')}
+        ${kp('SEO cost in the quarter', qCost ? inr(qCost) : '—', '', qCost ? `₹${fmtN(AQ.cost)} × 3 months${AQ.costSample ? ' (sample)' : ''}` : '<a href="#funnelsetup">add monthly cost</a>')}
+        ${kp('Revenue ÷ cost (first touch)', roi != null ? roi.toFixed(1) + '×' : '—', '', '')}
+        ${kp('Cost per student signup', AQ.cpsStu != null ? inr(AQ.cpsStu) : '—', '', 'loaded period')}${kp('Cost per employer signup', AQ.cpsEmp != null ? inr(AQ.cpsEmp) : '—', '', 'loaded period')}
+      </div>` +
+      (Q.length ? `<section class="panel"><div class="panel-h"><h2>By quarter (CRM)</h2></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Quarter</th><th class="r">Organic FT leads</th><th class="r">FT pipeline</th><th class="r">FT revenue</th><th class="r">Assisted pipeline</th><th class="r">Assisted revenue</th><th class="r">All leads</th><th class="r">Organic share of revenue</th></tr></thead><tbody>${Q.slice(-6).map(x => `<tr${x.quarter === qKey ? ' class="on"' : ''}><td><b>${esc(x.quarter)}</b></td><td class="r">${fmtN(x.ft.leads)}</td><td class="r">${inr(x.ft.pipeline)}</td><td class="r">${inr(x.ft.revenue)}</td><td class="r">${C.res.hasJourney ? inr(x.assisted.pipeline) : '—'}</td><td class="r">${C.res.hasJourney ? inr(x.assisted.revenue) : '—'}</td><td class="r">${fmtN(x.all.leads)}</td><td class="r">${x.all.revenue ? pct1(x.ft.revenue / x.all.revenue * 100) : '—'}</td></tr>`).join('')}</tbody></table></div></div></section>` : '') +
+      `<section class="panel"><div class="panel-h"><h2>What to stop, fix, continue or scale</h2><p>Suggestions from the evidence on the other screens (programmatic templates, clusters, link building, refreshes, AI answers, signup quality, revenue ÷ cost). The review decides; log the decision below.</p></div>${calls.length ? `<div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Call</th><th>Workstream</th><th>Item</th><th>Why</th></tr></thead><tbody>${calls.map(c => `<tr><td><span class="un-st ${c.call === 'Stop' ? 'bad' : c.call === 'Fix' ? 'sample' : c.call === 'Scale' ? 'live' : 'none'}">${esc(c.call)}</span></td><td>${esc(c.area)}</td><td><b>${esc(c.item)}</b></td><td><small>${esc(c.why)}</small></td></tr>`).join('')}</tbody></table></div></div>` : '<div class="panel-b"><p class="empty">Not enough evidence loaded yet: add the publishing log, backlinks, refreshes and CRM export.</p></div>'}</section>` + decisionBlock(D, 'Quarterly');
+    }
+    if (tab === 'first') {
+      const q1 = U.topSignupPages(ga, 15), q2 = U.nonBrandedSignupShare(ga, D, brandOf(A)), C = crmOf(D);
+      html += periodBar(D, PR.month, 'First review (last month)') + `<div class="note">Attribution health: <b>${H.ok} of ${H.total}</b> checks pass${H.missing ? `, ${H.missing} source${H.missing === 1 ? '' : 's'} not connected` : ''}. ${H.ready ? 'Numbers below can be shared.' : '<b>Fix attribution before presenting pipeline or revenue as SEO impact.</b>'} <a href="#reviews?r=attribution">Details</a></div>
+      <section class="panel"><div class="panel-h"><h2>1. Which pages drove the most signups last month (not the most traffic)?</h2></div>${ga && q1.length ? table('t-un-rv1', [{ k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path }, { k: 'cluster', l: 'Cluster' }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder }, { k: 'signups', l: 'Signups', r: 1, f: r => fmtN(r.signups) }, { k: 'stu', l: 'Student', r: 1, f: r => fmtN(r.stu) }, { k: 'emp', l: 'Employer', r: 1, f: r => fmtN(r.emp) }, { k: 'sessions', l: 'Sessions', r: 1, f: r => fmtN(r.sessions) }, { k: 'cvr', l: 'CVR', r: 1, f: r => pct1(r.cvr) }, { k: 'trank', l: 'Traffic rank', r: 1 }], withCluster(D, q1, r => r.path).map(r => ({ ...r, trank: ga.pages.slice().sort((a, b) => b.sessions - a.sessions).findIndex(p => p.path === r.path) + 1 })), { search: false, sort: 'signups', file: 'unstop-q1-signup-pages', pageSize: 15 }) + '<p class="hint" style="padding:0 16px 12px">“Traffic rank” shows where the page sits by organic sessions, to see signups and traffic apart.</p>' : '<div class="panel-b"><p class="empty"><a href="#ga4">Connect GA4</a> and set the signup events.</p></div>'}</section>
+      <section class="panel"><div class="panel-h"><h2>2. What share of organic signups comes from non-branded queries?</h2></div><div class="panel-b">${q2 ? `<div class="un-big"><b>${pct1(q2.share)}</b><span>estimated non-branded share of organic signups (labelled estimate)</span></div><p class="hint">Each landing page’s signups × the non-branded share of that page’s Search Console clicks. Covers ${pct1(q2.coverage)} of organic signups; Search Console never ties a query to a signup.</p>` : '<p class="empty">Needs GA4 signups and Search Console query × page rows.</p>'}</div></section>
+      <section class="panel"><div class="panel-h"><h2>3. How much pipeline can we trace to organic?</h2></div><div class="panel-b">${C ? (() => { const mr = C.res.monthly.find(m => m.month === PR.month.start.slice(0, 7)); return mr ? `<p class="un-meta">Leads created in ${esc(PR.month.label)}:</p><div class="un-kpis">${kp('Organic first touch', inr(mr.ft.pipeline), '', `${fmtN(mr.ft.opps)} opportunities · ${inr(mr.ft.revenue)} won`)}${kp('Organic in the journey', C.res.hasJourney ? inr(mr.assisted.pipeline) : '—', '', C.res.hasJourney ? `${fmtN(mr.assisted.opps)} opportunities` : 'needs a journey column')}${kp('Organic first-touch leads', fmtN(mr.ft.leads), '', `of ${fmtN(mr.all.leads)} leads`)}</div><p class="un-meta">Whole CRM file:</p>` : ''; })() + `<div class="un-kpis">${kp('Organic first touch', inr(C.res.ft.pipeline), '', `${fmtN(C.res.ft.opps)} opportunities · ${inr(C.res.ft.revenue)} won`)}${kp('Organic in the journey', C.res.hasJourney ? inr(C.res.assisted.pipeline) : '—', '', C.res.hasJourney ? `${fmtN(C.res.assisted.opps)} opportunities · ${inr(C.res.assisted.revenue)} won` : 'needs a journey column')}${kp('Lead → opportunity', pct1(C.res.ft.toOpp), pts(C.res.ft.toOpp, C.res.other.toOpp), 'vs other channels')}${kp('Lead source coverage', pct1(C.res.coverage.source), '', 'of CRM leads')}</div>` : '<p class="empty"><a href="#leads">Upload the CRM export</a>.</p>'}</div></section>`;
+      tables = ['t-un-rv1'];
+    }
+    if (tab === 'attribution') {
+      html += `<section class="panel"><div class="panel-h"><h2>Attribution health: GA4 × product database × CRM</h2><p>${H.ok} of ${H.total} checks pass${H.missing ? ` · ${H.missing} source${H.missing === 1 ? '' : 's'} not connected` : ''}. Fix these first: until they pass, organic pipeline and revenue cannot be reported with confidence.</p></div><div class="panel-b flush">${healthTable(H)}</div></section>
+      <section class="panel"><div class="panel-h"><h2>How the three systems join</h2></div><div class="panel-b"><ol class="un-steps">
+        <li><b>GA4 → product database:</b> on signup, store the session’s source / medium and landing page (or the GA4 client ID) on the user record, and pass them to MoEngage as user attributes. Then organic signups in GA4 and MoEngage can be reconciled and signup quality split by channel.</li>
+        <li><b>GA4 → CRM:</b> every employer form (demo, contact, signup) sends hidden fields: original source, medium, first page seen and GA4 client ID. That is the join key between the website session and the lead.</li>
+        <li><b>CRM → revenue:</b> deals are associated with the lead, with amount and stage, and the lead keeps both the original source (first touch) and the list of touches (journey).</li>
+        <li><b>Reconcile monthly:</b> the checks above compare GA4 with MoEngage and with the CRM over the same dates; a gap over ~20% means a source field is being lost.</li>
+      </ol></div></section>`;
+    }
+    const mount = () => { tables.forEach(drawTable); decisionMount(D); periodMount(D); };
+    return { html, mount };
+  };
+
   // ════════════════════════════ FULL FUNNEL ════════════════════════════
   V.funnel = (A, D) => {
     demoFill(D);
@@ -1655,6 +1790,7 @@
         <div><span>MoEngage</span>${chip(moeSt)}<small>${ml ? 'Live dashboard · ' + Object.keys(mlv).length + ' metric(s) mapped' + (m ? ' · plus export' : '') : mlL && mlL.status === 'loading' ? 'Loading live dashboard…' : m ? esc(m.name) + ' · ' + fmtN(m.res.total || 0) + ' users' : '<a href="#quality">Connect live or upload export</a>'}</small></div>
         <div><span>CRM</span>${chip(crmSt)}<small>${CR ? esc(CR.name) + ' · ' + fmtN(CR.res.total) + ' leads' : '<a href="#leads">Upload CRM export</a>'}</small></div>
       </div>` +
+      (() => { const H = healthOf(D); return `<div class="note ${H.ready ? '' : 'un-warn'}"><b>Attribution health: ${H.ok} of ${H.total} checks pass</b>${H.missing ? ` · ${H.missing} source${H.missing === 1 ? '' : 's'} not connected` : ''}. ${H.ready ? 'GA4, MoEngage and the CRM agree well enough to report organic pipeline and revenue.' : 'Fix attribution first: until it passes, organic pipeline and revenue are not reliable.'} <a href="#reviews?r=attribution">See the checks</a> · Reviews: <a href="#reviews?r=weekly">weekly</a>, <a href="#reviews?r=monthly">monthly</a>, <a href="#reviews?r=quarterly">quarterly</a>, <a href="#reviews?r=first">first review</a>.</div>`; })() +
       `<div class="un-stages">${stages.map(st => `<section class="un-stage"><h2>${link[st] ? `<a href="${link[st]}">${esc(st)}</a>` : esc(st)}</h2>${U.METRICS.filter(x => x.stage === st).map(card).join('')}</section>`).join('')}</div>` +
       `<section class="panel"><div class="panel-h"><h2>The chain by page type</h2><p>Search Console pages and GA4 landing pages classified with the same rules. Never read a single sitewide number in isolation.</p></div>
         ${table('t-un-fc', [
