@@ -2280,6 +2280,10 @@
     const aImpr = tot('tot', x => x.impr), aClicks = tot('tot', x => x.clicks);
     row(V1, 'Impressions (all queries)', aImpr, 'n', hasPrev ? chgOf(aImpr, totPrev('tot', x => x.impr)) : null, 'GSC', 'includes queries Google anonymises');
     row(V1, 'Clicks (all queries)', aClicks, 'n', hasPrev ? chgOf(aClicks, totPrev('tot', x => x.clicks)) : null, 'GSC');
+    // brand + non-brand + hidden = all: Google keeps most low-volume searches private, so this closes the gap
+    const hidC = G.map(m => m ? Math.max(0, m.tot.clicks - m.b.clicks - m.nb.clicks) : null), hidI = G.map(m => m ? Math.max(0, m.tot.impr - m.b.impr - m.nb.impr) : null);
+    row(V1, 'Clicks from hidden searches', [...hidC, hidC.every(v => v == null) ? null : (hidC[0] || 0) + (hidC[1] || 0)], 'n', null, 'GSC', 'searches Google does not show (anonymised); brand + non-brand + hidden = all queries');
+    row(V1, 'Hidden share of clicks', hidC.map((v, i) => v == null || !aClicks[i] ? null : v / aClicks[i] * 100).concat([aClicks[2] ? ((hidC[0] || 0) + (hidC[1] || 0)) / aClicks[2] * 100 : null]), 'pct', null, 'GSC');
     const bk = (f) => [...G.map(m => m ? f(m.buckets) : null), both(G, m => f(m.buckets))];
     const bkPrev = (f) => [...G.map(m => m && m.prevBuckets ? f(m.prevBuckets) : null), both(G.map(m => m && m.prevBuckets ? m : null), m => f(m.prevBuckets))];
     const diff = (cur, prev) => cur.map((c, i) => c != null && prev[i] != null ? { n: c - prev[i] } : null);
