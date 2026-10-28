@@ -1993,7 +1993,7 @@
     demoFill(D);
     window.CW_LAST_A = A;
     const so = sectioner(D);
-    const cols = B2E_COLS.filter(c => so.sections.some(x => x.id === c.id));
+    const cols = B2E_COLS.filter(c => so.sections.some(x => x.id === c.id)), s0 = settings(D.site);
     const intro = head('B2E dashboard', 'Employer pages on one page: B2E (hiring platform, employer branding, assessments, AI agents, ATS, pricing) and B2E (J&I) (AI sourcing agent, hire-* and free job posting pages). Search Console, GA4 and PageSpeed together. Copy the table straight into the One-Page Dashboard sheet.');
     if (cols.length < 2) return { html: intro + '<div class="note">The B2E and B2E (J&I) clusters are missing from Funnel setup › URL clusters. Reset clusters to the defaults or add them back.</div>' };
     const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
@@ -2064,6 +2064,13 @@
     const diff = (cur, prev) => cur.map((c, i) => c != null && prev[i] != null ? { n: c - prev[i] } : null);
     [['Keywords in top 3 (non-brand)', b => b.n.top3, 'n', 'top3'], ['Keywords in top 10 (non-brand)', b => b.n.top10, 'n', 'top10'], ['Keywords in positions 11–20 (non-brand, quick wins)', b => b.n.p11, 'n', 'p11'], ['Keywords in top 3 (brand)', b => b.b.top3, 'b', 'top3'], ['Keywords in top 10 (brand)', b => b.b.top10, 'b', 'top10']]
       .forEach(([l, f, seg, k], j) => { const c = bk(f); row(V1, l, c, 'n', hasPrev ? diff(c, bkPrev(f)) : null, 'GSC', j ? 'click a number to see the keywords' : 'click a number to see the keywords; each query counted once per cluster, total = sum of both'); R[R.length - 1].bucket = { seg, k }; });
+    // share of voice and indexation live on other screens: shown here as links so nothing is missing
+    R.push({ sec: V1, kpi: 'Share of voice vs 4 competitors', vals: [null, null, null], kind: 'text', chgs: [], src: 'Rank tracker', note: 'fixed keyword set from a rank tracker export', link: ['#visibility', 'Upload on Visibility by page type'] });
+    R.push({ sec: V1, kpi: 'Indexed vs submitted pages', vals: [null, null, null], kind: 'text', chgs: [], src: 'GSC', note: 'sitemap level (whole site)', link: ['#visibility', 'Sitemaps on Visibility by page type'] });
+    const urlsOf = id => (A.P || []).filter(r => so(r.p) === id && +r.impr > 0);
+    const urlC = cols.map(c => urlsOf(c.id).length), urlClk = cols.map(c => urlsOf(c.id).reduce((a, r) => a + (+r.clicks || 0), 0));
+    row(V1, 'URLs getting impressions', [...urlC, urlC[0] + urlC[1]], 'n', null, 'GSC', 'pages Google shows at least once (programmatic J&I pages: indexation check)');
+    row(V1, 'Clicks per URL (traffic per page)', [...urlC.map((n, i) => n ? urlClk[i] / n : null), (urlC[0] + urlC[1]) ? (urlClk[0] + urlClk[1]) / (urlC[0] + urlC[1]) : null], 'dec', null, 'GSC');
     // 2. Traffic
     const T2 = 'Traffic (GA4, organic)';
     const ga = (f) => [...GAc.map(x => x ? f(x) : null), both(GAc, f)];
@@ -2076,6 +2083,11 @@
     const allStates = () => { const m = new Map(); GAc.forEach(x => x && x.stMap.forEach((v, k) => m.set(k, (m.get(k) || 0) + v))); return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${fmtN(Math.round(v))}`).join(', ') || '—'; };
     R.push({ sec: T2, kpi: 'Top 3 states (sessions)', vals: [...GAc.map(x => x ? stTxt(x) : null), M ? allStates() : null], kind: 'text', chgs: [], src: 'GA4', note: '' });
     row(T2, 'Landing pages with organic sessions', ga(x => x.landings), 'n', null, 'GA4');
+    const pathIds = new Set(s0.pathSections || U.DEFAULT_PATH_SECTIONS);
+    R.push({ sec: T2, kpi: 'Share of sessions on pages with a conversion path', vals: [...cols.map((c, i) => GAc[i] ? (pathIds.has(c.id) ? 100 : 0) : null), M ? (both(GAc, x => x.sessions) ? cols.reduce((a, c, i) => a + (pathIds.has(c.id) && GAc[i] ? GAc[i].sessions : 0), 0) / both(GAc, x => x.sessions) * 100 : null) : null], kind: 'pct', chgs: [], src: 'GA4', note: 'clusters marked as having a conversion path (demo / post a job) in Funnel setup' });
+    const aiOf = id => M && M.aiPages ? M.aiPages.filter(p => so(p.path) === id).reduce((a, p) => a + p.sessions, 0) : null;
+    const aiC = cols.map(c => aiOf(c.id));
+    row(T2, 'AI assistant sessions landing here', [...aiC, M ? aiC[0] + aiC[1] : null], 'n', null, 'GA4', 'ChatGPT, Perplexity, Gemini, Copilot… referrals (all channels)');
     // 3. Leads & signups
     const L3 = 'Leads & signups (GA4)';
     row(L3, 'Demo requests', ga(x => x.demo), 'n', null, 'GA4', 'event names: Funnel setup');
@@ -2085,33 +2097,65 @@
     row(L3, 'Employer / recruiter signups', ga(x => x.emp), 'n', null, 'GA4', 'needs the real employer signup event name');
     row(L3, 'Employer signup CVR', ga(x => x.emp).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4', 'signups ÷ organic sessions');
     row(L3, 'Pricing page sessions', ga(x => x.pricing), 'n', null, 'GA4', 'intent signal, not a lead');
+    const AQ = acqModel(D);
+    R.push({ sec: L3, kpi: 'Cost per organic employer signup', vals: [null, null, AQ.cpsEmp != null ? '₹' + fmtN(Math.round(AQ.cpsEmp)) : null], kind: 'text', chgs: [], src: 'Cost input', note: AQ.cpsEmp != null ? `${AQ.empShare}% of ₹${fmtN(AQ.cost)} a month ÷ all organic employer signups${AQ.costSample ? ' (sample cost)' : ''}` : 'add monthly SEO cost and employer share in Funnel setup', link: AQ.cpsEmp != null ? null : ['#funnelsetup', 'Funnel setup'] });
+    const qx = AQ.moe && AQ.moe.seg ? AQ.moe.seg : null;
+    [['profile', 'Employer profile completion: organic vs other'], ['act7', 'Employer 7-day activation: organic vs other'], ['ret30', 'Employer 30-day retention: organic vs other']].forEach(([k, l]) => {
+      const o = qx && qx.orgEmployer && qx.orgEmployer[k], t = qx && qx.othEmployer && qx.othEmployer[k];
+      R.push({ sec: L3, kpi: l, vals: [null, null, o ? `${pct1(o.rate)} vs ${t ? pct1(t.rate) : '—'}` : null], kind: 'text', chgs: [], src: 'MoEngage', note: o ? '' : 'MoEngage export or live dashboard with an employer / recruiter user type', link: o ? null : ['#quality', 'Signup quality'] });
+    });
+    const AS = assistedOf(D);
+    R.push({ sec: L3, kpi: 'Assisted employer conversions (organic started, closed elsewhere)', vals: [null, null, AS ? AS.cur.assisted.total : null], kind: 'n', chgs: [null, null, AS ? U.chg(AS.cur.assisted.total, AS.yoy.assisted.total) : null], src: 'GA4', note: 'demo / contact / employer signup events, first visit organic, converting visit another channel' });
     // 4. Engagement
     const E4 = 'Engagement (GA4)';
     row(E4, 'Engaged sessions', ga(x => x.engaged), 'n', null, 'GA4');
     row(E4, 'Engagement rate', ga(x => x.engaged).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4');
     row(E4, 'Pages per session', ga(x => x.views).map((v, i) => v == null || !ses[i] ? null : v / ses[i]), 'dec', null, 'GA4');
     row(E4, 'Scroll 90% per 100 page views', ga(x => x.scroll).map((v, i) => { const vw = ga(x => x.views)[i]; return v == null || !vw ? null : v / vw * 100; }), 'dec', null, 'GA4');
+    R.push({ sec: E4, kpi: 'Return visits within 30 days', vals: [null, null, null], kind: 'text', chgs: [], src: 'GA4', note: 'GA4 cohorts are site-wide, not per landing cluster', link: ['#engagement', 'Engagement'] });
     // 5. Technical
     const S5 = 'Technical (PageSpeed)';
     const ps = f => [...PS.map(x => x ? f(x) : null), null];
     row(S5, 'Core Web Vitals pass rate (field data)', ps(x => x.pass), 'pct', null, 'PageSpeed', 'run from Workstream scorecards › Technical SEO');
     row(S5, 'Median performance score (mobile)', ps(x => x.perf), 'n', null, 'PageSpeed');
     row(S5, 'Pages tested', ps(x => x.tested), 'n', null, 'PageSpeed');
+    const cr = scd(D.site).crawl, crR = cr && cr.res && cr.res.ok ? cr.res : null;
+    const crOf = id => { if (!crR) return null; const c = crR.clusters.find(x => x.id === id); return c ? c.errors : 0; };
+    const crC = cols.map(c => crOf(c.id));
+    row(S5, 'Crawl errors (4xx / 5xx)', [...crC, crR ? crC[0] + crC[1] : null], 'n', null, 'Crawl', crR ? '' : 'upload a Screaming Frog crawl in Workstream scorecards › Technical SEO');
     // 6. Needs CRM / finance (kept visible so nothing is silently missing)
-    const C6 = 'Pipeline & revenue';
-    ['MQLs from organic', 'Pipeline created – organic first touch', 'Pipeline created – organic assisted', 'Revenue closed – organic first touch', 'Revenue closed – organic assisted', 'Lead → opportunity rate', 'Cost per organic employer signup']
-      .forEach((l, j) => R.push({ sec: C6, kpi: l, vals: [null, null, null], kind: 'text', chgs: [], src: 'CRM / Finance', note: j ? '' : 'not available yet for any column: needs a CRM export (Leads & revenue screen) and the cost input in Funnel setup' }));
+    const C6 = 'Pipeline & revenue (CRM)';
+    const crm = crmOf(D), C = crm ? crm.res : null;
+    // first-touch numbers split by the lead's first landing page (when the CRM export has one)
+    const lpOf = id => C && C.landing ? C.landing.filter(x => so(x.path) === id) : [];
+    const lpSum = (id, k) => C && C.coverage && C.coverage.landing > 0 ? lpOf(id).reduce((a, x) => a + (x[k] || 0), 0) : null;
+    const inr = v => v == null ? null : '₹' + fmtN(Math.round(v));
+    const crmRow = (kpi, perCol, total, note) => R.push({ sec: C6, kpi, vals: [...perCol, total], kind: 'text', chgs: [], src: 'CRM', note: C ? note || '' : (kpi.startsWith('MQL') ? 'upload a CRM export (lead source, landing page, stage, amount)' : ''), link: C ? null : (kpi.startsWith('MQL') ? ['#leads', 'Leads & revenue'] : null) });
+    crmRow('MQLs from organic (first touch)', cols.map(c => { const v = lpSum(c.id, 'mqls'); return v == null ? null : fmtN(v); }), C && C.ft.mqls != null ? fmtN(C.ft.mqls) : null, 'per column: by the lead’s first landing page');
+    crmRow('Pipeline created – organic first touch', cols.map(c => inr(lpSum(c.id, 'pipeline'))), C ? inr(C.ft.pipeline) : null);
+    crmRow('Pipeline created – organic in the journey (assisted)', [null, null], C ? inr(C.assisted.pipeline) : null, 'not split by page: assisted leads first landed elsewhere');
+    crmRow('Revenue closed – organic first touch', cols.map(c => inr(lpSum(c.id, 'revenue'))), C ? inr(C.ft.revenue) : null);
+    crmRow('Revenue closed – organic in the journey (assisted)', [null, null], C ? inr(C.assisted.revenue) : null);
+    crmRow('Lead → opportunity: organic vs other channels', [null, null], C ? `${pct1(C.ft.toOpp)} vs ${pct1(C.other.toOpp)}` : null);
+    crmRow('Lead → close: organic vs other channels', [null, null], C ? `${pct1(C.ft.toClose)} vs ${pct1(C.other.toClose)}` : null);
 
+    const MID = [[/^Impressions/, 'impr'], [/^Clicks \(non-brand/, 'nbClicks'], [/^Clicks/, 'clicks'], [/^CTR/, 'ctr'], [/^Average position/, 'pos'], [/^Keywords in positions 11/, 'p11'], [/^Keywords in top/, 'top10'], [/^Share of voice/, 'sov'], [/^Indexed|^URLs getting/, 'indexed'], [/^Clicks per URL/, 'clicks'],
+      [/^Organic sessions|^Sessions –|^Top 3 states|^Landing pages/, 'sessions'], [/^Organic new users/, 'newUsers'], [/^Share of sessions on pages/, 'pathCov'], [/^AI assistant/, 'aiSessions'],
+      [/^Demo/, 'demo'], [/^Contact/, 'contact'], [/^Employer \/ recruiter signups/, 'emp'], [/^Employer signup CVR/, 'cvrEmp'], [/^Pricing/, 'pricing'], [/^Cost per organic employer/, 'cpsEmp'], [/^Employer profile/, 'profile'], [/^Employer 7-day/, 'act7'], [/^Employer 30-day/, 'ret30'], [/^Assisted/, 'assistedGa'],
+      [/^Engaged sessions/, 'engaged'], [/^Engagement rate/, 'engRate'], [/^Pages per session/, 'pps'], [/^Scroll/, 'scrollKey'], [/^Return visits/, 'return4w'],
+      [/^MQL/, 'mqls'], [/^Pipeline created – organic first/, 'pipeFT'], [/^Pipeline created – organic in/, 'pipeAssist'], [/^Revenue closed – organic first/, 'revFT'], [/^Revenue closed – organic in/, 'revAssist'], [/^Lead → opp/, 'l2o'], [/^Lead → close/, 'l2c']];
+    const ownerOf = r => { const m = MID.find(([rx]) => rx.test(r.kpi)); if (!m) return r.src === 'PageSpeed' || r.src === 'Crawl' ? 'Technical SEO + Engineering' : 'B2B SEO'; const mt = U.METRICS.find(x => x.id === m[1]); return (s0.owners || {})[m[1]] || (mt ? mt.owner : 'B2B SEO'); };
+    R.forEach(r => { r.owner = ownerOf(r); });
     const heads = [...cols.map(c => c.name), 'Both (employer total)'];
     const chgTxt = c => c == null ? '' : typeof c === 'object' ? (c.pos != null ? (c.pos > 0 ? '+' : '') + c.pos.toFixed(1) : (c.n > 0 ? '+' : '') + fmtN(c.n)) : (c > 0 ? '+' : '') + c.toFixed(1) + '%';
     const chgHtml = (c, kpi) => { if (c == null) return ''; if (typeof c === 'object') { const v = c.pos != null ? c.pos : c.n; if (c.pos != null) return dchip(v, true, 'pos'); const good = /11–20/.test(kpi) ? null : v > 0; return `<span class="un-d ${v === 0 ? 'flat' : good === null ? 'flat' : good ? 'up' : 'down'}">${chgTxt(c)}</span>`; } return dchip(c); };
     const cell = (r, i) => { const v = r.vals[i]; if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; if (r.bucket && v > 0) return `<a href="#" class="un-b2e-kw" data-kw="${r.bucket.seg}|${r.bucket.k}|${i}" title="Show these keywords">${fmtV(v, r.kind)}</a>`; return fmtV(v, r.kind); };
-    const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : 'later';
+    const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : r.src === 'Crawl' ? (!crR ? 'none' : cr.sample ? 'sample' : 'file') : r.src === 'CRM' ? (!C ? 'none' : crm.sample ? 'sample' : 'file') : r.src === 'MoEngage' ? (!AQ.qsrc ? 'none' : AQ.qsrc) : r.src === 'Cost input' ? (AQ.cpsEmp == null ? 'none' : AQ.costSample ? 'sample' : 'input') : r.src === 'Rank tracker' ? 'file' : 'later';
     let lastSec = '';
-    const trs = R.map(r => { const s = r.sec !== lastSec ? `<tr class="un-b2e-sec"><th colspan="${heads.length * 2 + 2}">${esc(r.sec)}</th></tr>` : ''; lastSec = r.sec; return s + `<tr><td>${esc(r.kpi)}${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td>${heads.map((h, i) => `<td class="r"><b>${cell(r, i)}</b></td><td class="r un-b2e-d">${chgHtml(r.chgs[i], r.kpi)}</td>`).join('')}<td>${chip(status(r))}</td></tr>`; }).join('');
+    const trs = R.map(r => { const s = r.sec !== lastSec ? `<tr class="un-b2e-sec"><th colspan="${heads.length * 2 + 3}">${esc(r.sec)}</th></tr>` : ''; lastSec = r.sec; return s + `<tr><td>${esc(r.kpi)}${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td>${heads.map((h, i) => `<td class="r"><b>${cell(r, i)}</b></td><td class="r un-b2e-d">${chgHtml(r.chgs[i], r.kpi)}</td>`).join('')}<td>${r.link ? `<a href="${esc(r.link[0])}">${esc(r.link[1])} →</a>` : chip(status(r))}</td><td class="un-b2e-o">${esc(r.owner)}</td></tr>`; }).join('');
     const tsv = () => {
-      const lines = [['Section', 'KPI', ...heads.flatMap(h => [h, h + ' change']), 'Source', 'Note'].join('\t')];
-      R.forEach(r => lines.push([r.sec, r.kpi, ...heads.flatMap((h, i) => [r.kind === 'text' ? (r.vals[i] == null ? '' : r.vals[i]) : (r.vals[i] == null || !isFinite(r.vals[i]) ? '' : r.kind === 'n' ? String(Math.round(r.vals[i])) : fmtV(r.vals[i], r.kind)), chgTxt(r.chgs[i])]), r.src, r.note].join('\t')));
+      const lines = [['Section', 'KPI', ...heads.flatMap(h => [h, h + ' change']), 'Source', 'Owner', 'Note'].join('\t')];
+      R.forEach(r => lines.push([r.sec, r.kpi, ...heads.flatMap((h, i) => [r.kind === 'text' ? (r.vals[i] == null ? '' : r.vals[i]) : (r.vals[i] == null || !isFinite(r.vals[i]) ? '' : r.kind === 'n' ? String(Math.round(r.vals[i])) : fmtV(r.vals[i], r.kind)), chgTxt(r.chgs[i])]), r.src, r.owner, r.note].join('\t')));
       return lines.join('\n');
     };
     const period = `${fmtD(D.start)} – ${fmtD(D.end)}${hasPrev ? ` · Search Console changes vs ${fmtD(D.prevStart)} – ${fmtD(D.prevEnd)}` : ' · turn on “Compare with the previous period” for week-on-week changes'}${g ? ` · GA4 ${fmtD(g.start)} – ${fmtD(g.end)}, changes vs same dates last year` : ''}`;
@@ -2123,6 +2167,24 @@
     if (D.source === 'demo') notes.push('<b>Sample data.</b> Connect Search Console and GA4 for real numbers.');
     // top landing pages
     const top = (A.P || []).filter(r => cols.some(c => so(r.p) === c.id)).sort((a, b) => b.clicks - a.clicks).slice(0, 25).map(r => { const path = U.pathOnly(r.p), gp = M ? M.pages.find(p => p.path.toLowerCase() === path.toLowerCase()) : null; return { path, cluster: so.label(so(r.p)), clicks: r.clicks, impr: r.impr, pos: r.pos, sessions: gp ? gp.sessions : null, leads: gp ? gp.demo + gp.contact : null, emp: gp ? gp.emp : null }; });
+    // ── first review: the three questions, answered for the employer side ──
+    const reviewPanel = () => {
+      const isB = brandOf(A), qp = new Map();
+      (D.QP || []).forEach(r => { const k = U.pathOnly(r.p).toLowerCase(); const o = qp.get(k) || { b: 0, n: 0 }; if (isB(r.q)) o.b += +r.clicks || 0; else o.n += +r.clicks || 0; qp.set(k, o); });
+      const pg = M ? M.pages.filter(p => cols.some(c => so(p.path) === c.id)).map(p => ({ ...p, cluster: so.label(so(p.path)), conv: p.emp + p.demo + p.contact })) : [];
+      const top = pg.filter(p => p.conv > 0).sort((a, b) => b.conv - a.conv || b.sessions - a.sessions).slice(0, 10);
+      let wn = 0, wt = 0, covered = 0, all = 0;
+      pg.forEach(p => { all += p.conv; const x = qp.get(p.path.toLowerCase()); if (!x || !(x.b + x.n)) return; covered += p.conv; wt += p.conv; wn += p.conv * x.n / (x.b + x.n); });
+      const nbShare = wt ? wn / wt * 100 : null;
+      const q1 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : top.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Employer signups</th><th class="r">Demo + contact</th><th class="r">Sessions</th></tr></thead><tbody>${top.map(p => `<tr><td class="u"><a href="${esc(focusHref({ u: p.path }))}">${esc(p.path)}</a></td><td>${esc(p.cluster)}</td><td class="r">${fmtN(Math.round(p.emp))}</td><td class="r">${fmtN(Math.round(p.demo + p.contact))}</td><td class="r">${fmtN(Math.round(p.sessions))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="un-n">No employer signup, demo or contact events on these pages yet: check the event names in Funnel setup.</p>';
+      const q2 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : nbShare == null ? '<p class="un-n">Needs Search Console query × page rows for the employer pages.</p>' : `<p class="un-big"><b>${pct1(nbShare)}</b> <span>of employer signups + leads came from non-branded searches (estimate)</span></p><p class="hint">Each page’s signups and leads × that page’s non-branded share of clicks. Google does not tie a search to a signup, so this is a proxy, not an exact count. Covers ${pct1(all ? covered / all * 100 : 0)} of conversions (pages with query data).</p>`;
+      const q3 = C ? `<div class="grid-2 even"><p class="un-big"><b>${inr(C.ft.pipeline)}</b> <span>pipeline with organic as first touch</span></p><p class="un-big"><b>${inr(C.assisted.pipeline)}</b> <span>pipeline with organic in the journey (assisted)</span></p></div><p class="hint">Kept separate, never added together. ${fmtN(C.ft.leads)} organic first-touch leads, ${fmtN(C.ft.opps)} opportunities. Source known on ${pct1(C.coverage.source)} of CRM leads${C.coverage.landing ? `, landing page on ${pct1(C.coverage.landing)}` : ''}.${crm.sample ? ' Sample CRM data.' : ''}</p>` : `<p class="un-n">Not traceable yet: upload a CRM export with lead source, landing page, stage and amount on <a href="#leads">Leads & revenue</a>.</p>`;
+      return `<section class="panel"><div class="panel-h"><h2>First review: the three questions (employer side)</h2></div><div class="panel-b">
+        <h3 class="un-sub">1. Which employer pages drove the most signups and leads (not the most traffic)?</h3>${q1}
+        <h3 class="un-sub">2. What share of organic signups and leads comes from non-branded queries?</h3>${q2}
+        <h3 class="un-sub">3. How much pipeline can we trace to organic?</h3>${q3}
+        <p class="hint">Cadence: <b>weekly</b> the Visibility rows (indexation, rankings, impressions) · <b>monthly</b> traffic → signups → leads · <b>quarterly</b> pipeline, revenue, cost and what to stop. Decisions and owners are logged on <a href="#reviews">Reviews</a>.</p></div></section>`;
+    };
     // keywords behind a bucket count (clicked in the table)
     const kwSel = B2E_KW.get(D.site);
     delete TABLES['t-un-b2e-kw'];
@@ -2139,8 +2201,8 @@
     const html = intro +
       `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') +
       `<div class="un-row" style="margin:6px 0 12px"><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Paste into the sheet with Ctrl/Cmd + V: one KPI per row, columns B2E, B2E (J&I), both.</span></div>` +
-      `<section class="panel"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
-      kwPanel() +
+      `<section class="panel"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
+      kwPanel() + reviewPanel() +
       `<section class="panel"><div class="panel-h"><h2>Top employer landing pages</h2><p>By Search Console clicks${M ? ', with GA4 organic sessions and leads' : ''}.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Clicks</th><th class="r">Impr.</th><th class="r">Position</th>${M ? '<th class="r">Sessions</th><th class="r">Demo + contact</th><th class="r">Employer signups</th>' : ''}</tr></thead><tbody>${top.map(r => `<tr><td class="u"><a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a></td><td>${esc(r.cluster)}</td><td class="r">${fmtN(r.clicks)}</td><td class="r">${fmtN(r.impr)}</td><td class="r">${r.impr ? posTag(r.pos) : '—'}</td>${M ? `<td class="r">${r.sessions == null ? '—' : fmtN(Math.round(r.sessions))}</td><td class="r">${r.leads == null ? '—' : fmtN(Math.round(r.leads))}</td><td class="r">${r.emp == null ? '—' : fmtN(Math.round(r.emp))}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${M ? 8 : 5}" class="empty">No employer pages in this data.</td></tr>`}</tbody></table></div></div></section>`;
     const mount = () => {
       if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc)); } });
