@@ -8,7 +8,10 @@
   const CW = window.CW, U = window.UN, fmtN = CW.fmtN;
   const CFG = (window.CW_CONFIG && window.CW_CONFIG.unstop) || {};
   const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/spreadsheets.readonly'; // webmasters too: the MoEngage proxy checks Search Console access
-  const rerender = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
+  // Re-render after the current task, and only once however many loaders finish together. A loader that
+  // starts during a screen's mount therefore never re-renders the page under that mount.
+  let rrPending = false;
+  const rerender = () => { if (rrPending) return; rrPending = true; setTimeout(() => { rrPending = false; window.dispatchEvent(new HashChangeEvent('hashchange')); }, 0); };
 
   // ── per-site settings ──
   const KEY = site => 'un:funnel:' + site;
@@ -617,11 +620,15 @@
     // GA4 allows about 10 requests at once per property: run 4 at a time, the reports every screen needs first
     const FIRST = ['landing', 'events', 'daily', 'device', 'region', 'landingDevice', 'landingRegion', 'eventsYoy', 'pricing', 'ai', 'assisted', 'channels', 'channelEvents'];
     keys.sort((a, b) => (FIRST.includes(a) ? FIRST.indexOf(a) : 99) - (FIRST.includes(b) ? FIRST.indexOf(b) : 99));
-    const queue = keys.slice();
-    const worker = async () => { while (queue.length) { const k = queue.shift(); try { raw[k] = await runReport(o.property, reqs[k]); } catch (e) { if (!opt.has(k)) failed.push(k + ': ' + e.message); } finally { done++; if (prog) prog.textContent = `Loading GA4 reports… ${done} of ${keys.length}`; } } };
-    await Promise.all([worker(), worker(), worker(), worker()]);
+    // phase 1: what the dashboards show first; the screen renders as soon as these arrive
+    const first = keys.filter(k => FIRST.includes(k) || k === 'aiMonthly'), rest = keys.filter(k => !first.includes(k));
+    const run = async list => { const queue = list.slice(); const worker = async () => { while (queue.length) { const k = queue.shift(); try { raw[k] = await runReport(o.property, reqs[k]); } catch (e) { if (!opt.has(k)) failed.push(k + ': ' + e.message); } finally { done++; if (prog) prog.textContent = `Loading GA4 reports… ${done} of ${keys.length}`; } } }; await Promise.all([worker(), worker(), worker(), worker()]); };
+    await run(first);
     if (!raw.landing && failed.length) throw new Error(failed[0].replace(/^\w+: /, ''));
-    GA.set(D.site, { raw, property: o.property, propertyName: o.propertyName || o.property, start: o.start, end: o.end, at: Date.now(), failed, sample: false });
+    const entry = { raw, property: o.property, propertyName: o.propertyName || o.property, start: o.start, end: o.end, at: Date.now(), failed, sample: false, more: rest.length > 0 };
+    GA.set(D.site, entry);
+    // phase 2: engagement, cohorts and the rest load in the background and fill in when ready
+    if (rest.length) run(rest).then(() => { if (GA.get(D.site) !== entry) return; entry.more = false; entry.model = null; entry.at = Date.now(); rerender(); });
   }
   // One sign-in for both: "Connect Search Console" already asks for GA4 access, so when this tab has that
   // token and a GA4 property is known (saved, in config.js, or the one Unstop property on the account),

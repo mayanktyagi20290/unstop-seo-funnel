@@ -109,6 +109,7 @@
     Chart.defaults.font.family = cssVar('--body') || 'system-ui';
     Chart.defaults.color = cssVar('--muted');
     Chart.defaults.borderColor = cssVar('--line-soft');
+    const old = Chart.getChart ? Chart.getChart(el) : null; if (old) { try { old.destroy(); } catch (e) { } } // never two charts on one canvas
     const c = new Chart(el, cfg); CHARTS.push(c); return c;
   }
 
