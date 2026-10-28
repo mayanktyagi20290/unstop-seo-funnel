@@ -126,6 +126,11 @@
     emp('/employers/hire-data-analysts', [['hire data analyst', 3000, 18.4], ['hire data analyst freshers', 900, 12.6]]);
     emp('/employers/hire-interns', [['hire interns', 6000, 9.6], ['post internship for free', 5000, 7.1], ['unstop post internship', 500, 1.2, B]]);
     emp('/employers/ai-sourcing-agent', [['ai sourcing tool', 2500, 22.1], ['ai recruiting agent', 1800, 19.6]]);
+    emp('/employers/ai-sourcing-agent/jobs-internships-listings-jobboard', [['post jobs for free', 8000, 14.2], ['post internship online', 3500, 9.4]]);
+    emp('/employers/ai-sourcing-agent/our-largest-early-talent-community', [['hire freshers india', 5000, 17.8], ['fresher hiring platform', 2200, 12.1]]);
+    emp('/employers/hire-react-developers', [['hire react developers', 3500, 19.2], ['hire react js freshers', 900, 13.5]]);
+    emp('/employers/employer-branding', [['employer branding platform', 2000, 11.6], ['campus employer branding', 900, 7.4]]);
+    emp('/employers/ai-assessment-agent/aptitude-test', [['online aptitude test for hiring', 3000, 15.1], ['aptitude test platform', 1800, 18.3]]);
     emp('/talent-report-2026', [['unstop talent report', 700, 1.1, B], ['gen z hiring report 2026', 1500, 6.2]]);
 
     // long tail on opportunity, blog and company pages

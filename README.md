@@ -27,7 +27,7 @@ Files: `unstop.js` (pure logic, tested in `tests/unstop.test.js`), `moengage.js`
 
 The top bar's **All pages · Change** button narrows the whole app to a section: pick an Unstop cluster (e.g. *Opportunity › Internships*) or a folder inside it (*Opportunity › Internships › /internship*), or type any folder or page. With Search Console connected every report is re-pulled with that page filter (plus an exclusion for narrower clusters, so `/employers` never includes `/employers/hire-*`). On sample data the same filter is applied in the browser.
 
-Clusters are named *Group › Cluster* (Opportunity › Hackathons, Opportunity › Internships, Opportunity › Jobs, College & company › Company & college pages, Content › Blog, Employer › Job board, Employer › B2B products…), and page tables show the cluster and the folder rule each URL matched.
+Clusters are named *Group › Cluster* (Opportunity › Hackathons, Opportunity › Internships, Opportunity › Jobs, College & company › Company & college pages, Content › Blog, B2E (J&I) for the AI sourcing agent, hire-* and free job posting pages, B2E for every other employer product page…), and page tables show the cluster and the folder rule each URL matched.
 
 ## Sample data
 

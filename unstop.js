@@ -138,8 +138,10 @@
     { id: 'orgpages', name: 'College & company › Company & college pages (/c/)', type: 'org', rules: ['/c', '/college', '/colleges', '/company', '/companies', '/institute', '/institutes'] },
     { id: 'blog', name: 'Content › Blog', type: 'blog', rules: ['/blog', '/blog-series', '/category', '/bites'] },
     { id: 'resources', name: 'Content › Resources & prep', type: 'blog', rules: ['/resources', '/prep-zone', '/top-*'] },
-    { id: 'empjobboard', name: 'Employer › Job board', type: 'emp', rules: ['/employers/hire-*', '/employers/ai-sourcing-agent', '/employers/jobs-internships-listings-jobboard', '/employers/our-largest-early-talent-community'] },
-    { id: 'empb2b', name: 'Employer › B2B products', type: 'emp', rules: ['/employers', '/saas-pricing', '/online-assessment-platform', '/hire', '/recruiters', '/hiring-solutions'] },
+    // B2E (J&I): jobs & internships posting for employers: the AI sourcing agent and its pages, hire-* pages, free job posting pages
+    { id: 'empjobboard', name: 'B2E (J&I)', type: 'emp', rules: ['/employers/ai-sourcing-agent', '/employers/hire-*', '/employers/free-job-posting*', '/free-job-posting*'] },
+    // B2E: every other employer product page (hiring platform, employer branding, assessments, AI agents, ATS, pricing)
+    { id: 'empb2b', name: 'B2E', type: 'emp', rules: ['/employers', '/saas-pricing', '/online-assessment-platform', '/hire', '/recruiters', '/hiring-solutions'] },
     { id: 'empreports', name: 'Employer › Reports & partners', type: 'emp', rules: ['/talent-report-*', '/unstop-talent-meet-*', '/our-partners', '/unstop-bridge-for-colleges', '/institutions', '/reports'] },
     { id: 'practice', name: 'Product › Practice & coding', type: 'prod', rules: ['/practice', '/code'] },
     { id: 'courses', name: 'Product › Courses & mentorship', type: 'prod', rules: ['/courses', '/mentor', '/find-a-mentor', '/become-a-mentor'] },

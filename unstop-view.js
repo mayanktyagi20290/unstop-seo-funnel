@@ -18,7 +18,7 @@
     ga4Property: CFG.ga4PropertyId || '', pricingPaths: (CFG.pricingPaths || []).slice(), aiSources: (CFG.aiSources || []).slice(),
     pathTypes: ['opp', 'emp', 'org'], pathSections: null, owners: {}, monthlyCost: '', empCostShare: '', moeThreshold: 80, organicSources: ''
   });
-  function settings(site) { let s = null; try { s = JSON.parse(localStorage.getItem(KEY(site))); } catch (e) { } const d = DEF(); if (s && s.events && JSON.stringify(s.events.contactSubmit) === '["contact_form_submit","form_submit"]') s.events.contactSubmit = d.events.contactSubmit; return s ? { ...d, ...s, events: { ...d.events, ...(s.events || {}) } } : d; }
+  function settings(site) { let s = null; try { s = JSON.parse(localStorage.getItem(KEY(site))); } catch (e) { } const d = DEF(); if (s && Array.isArray(s.sections)) s.sections = s.sections.map(x => { const d = U.DEFAULT_SECTIONS.find(y => y.id === x.id); if (!d || !['empjobboard', 'empb2b'].includes(x.id) || !/^Employer › (Job board|B2B products)$/.test(x.name)) return x; return { ...x, name: d.name, rules: x.id === 'empjobboard' ? d.rules : x.rules }; }); if (s && s.events && JSON.stringify(s.events.contactSubmit) === '["contact_form_submit","form_submit"]') s.events.contactSubmit = d.events.contactSubmit; return s ? { ...d, ...s, events: { ...d.events, ...(s.events || {}) } } : d; }
   function save(site, s) { try { localStorage.setItem(KEY(site), JSON.stringify(s)); } catch (e) { } }
   const ctx = new Map(); // site → { typeOf, clusterOf } rebuilt when settings change
   function tools(D) {

@@ -127,7 +127,7 @@ test('URL clusters: user-named folders land in their own cluster and roll up to 
   const f = U.makeSectioner();
   const cases = { 'https://unstop.com/internship': ['internships', 'opp'], 'https://unstop.com/job': ['jobs', 'opp'], 'https://unstop.com/hackathons': ['hackathons', 'opp'],
     'https://unstop.com/competitions/x-1': ['competitions', 'opp'], 'https://unstop.com/blog/x': ['blog', 'blog'], 'https://unstop.com/resources': ['resources', 'blog'],
-    'https://unstop.com/employers/hire-java-developers': ['empjobboard', 'emp'], 'https://unstop.com/employers/ats-software': ['empb2b', 'emp'], 'https://unstop.com/saas-pricing': ['empb2b', 'emp'],
+    'https://unstop.com/employers/hire-java-developers': ['empjobboard', 'emp'], 'https://unstop.com/employers/ats-software': ['empb2b', 'emp'], 'https://unstop.com/saas-pricing': ['empb2b', 'emp'], 'https://unstop.com/employers/ai-sourcing-agent/our-largest-early-talent-community': ['empjobboard', 'emp'], 'https://unstop.com/employers/free-job-posting-delhi': ['empjobboard', 'emp'], 'https://unstop.com/employers/employer-branding/hackathons': ['empb2b', 'emp'],
     'https://unstop.com/c/tcs-1': ['orgpages', 'org'], 'https://unstop.com/tcs-nqt-exam-pattern-sections-and-preparation-guide': ['blog', 'blog'], 'https://unstop.com/': ['home', 'home'] };
   Object.entries(cases).forEach(([u, [id, t]]) => { assert.equal(f(u), id, u); assert.equal(f.typeOf(f(u)), t, u); });
 });
