@@ -1982,5 +1982,167 @@
     return { html, mount };
   };
 
+
+  // ════════════════════════════ B2E DASHBOARD ════════════════════════════
+  // The employer side on one page, laid out like the One-Page Dashboard sheet: B2E, B2E (J&I) and both
+  // together, from Search Console (exact per cluster), GA4 and PageSpeed. "Copy for Google Sheets" puts the
+  // whole table on the clipboard, ready to paste.
+  const B2E_COLS = [{ id: 'empb2b', name: 'B2E' }, { id: 'empjobboard', name: 'B2E (J&I)' }];
+  V.b2e = (A, D) => {
+    demoFill(D);
+    window.CW_LAST_A = A;
+    const so = sectioner(D);
+    const cols = B2E_COLS.filter(c => so.sections.some(x => x.id === c.id));
+    const intro = head('B2E dashboard', 'Employer pages on one page: B2E (hiring platform, employer branding, assessments, AI agents, ATS, pricing) and B2E (J&I) (AI sourcing agent, hire-* and free job posting pages). Search Console, GA4 and PageSpeed together. Copy the table straight into the One-Page Dashboard sheet.');
+    if (cols.length < 2) return { html: intro + '<div class="note">The B2E and B2E (J&I) clusters are missing from Funnel setup › URL clusters. Reset clusters to the defaults or add them back.</div>' };
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const scOf = id => ({ kind: 'cluster', id, label: so.label(id), test: x => so(x) === id });
+    const keyOf = sc => [D.site, D.start, D.end, D.prevStart || '', sc.kind, sc.id || '', sc.folder || '', sc.path || ''].join('|');
+    const F = cols.map(c => { const sc = scOf(c.id); return live ? FOC.get(keyOf(sc)) : { status: 'done', model: scopeFromRows(A, D, sc) }; });
+    const loading = live && F.some(f => !f || f.status === 'loading');
+    const G = F.map(f => f && f.status === 'done' ? f.model : null);
+    const errs = F.filter(f => f && f.status === 'error').map(f => f.error);
+
+    // ── GA4 per cluster ──
+    const g = GA.get(D.site), M = gaModel(D);
+    const gaOf = id => {
+      if (!M) return null;
+      const P = M.pages.filter(p => so(p.path) === id);
+      const t = k => P.reduce((a, p) => a + (p[k] || 0), 0);
+      const o = { sessions: t('sessions'), ySessions: t('ySessions'), newUsers: t('newUsers'), yNewUsers: t('yNewUsers'), engaged: t('engaged'), views: t('views'), emp: t('emp'), demo: t('demo'), contact: t('contact'), scroll: t('scroll'), landings: P.filter(p => p.sessions > 0).length };
+      const dev = { desktop: 0, mobile: 0, tablet: 0, yDesktop: 0, yMobile: 0 }, st = new Map();
+      if (g && g.raw) {
+        if (g.raw.landingDevice) U.gaRows(g.raw.landingDevice).forEach(r => { if (so(U.pathOnly(r.landingPage)) !== id) return; const k = String(r.deviceCategory || '').toLowerCase(); if (r.range === 'yoy') { if (k === 'desktop') dev.yDesktop += r.sessions; if (k === 'mobile') dev.yMobile += r.sessions; } else if (k in dev) dev[k] += r.sessions; });
+        if (g.raw.landingRegion) U.gaRows(g.raw.landingRegion).forEach(r => { if (r.range === 'yoy' || so(U.pathOnly(r.landingPage)) !== id) return; const k = r.region || '(not set)'; if (k === '(not set)') return; st.set(k, (st.get(k) || 0) + r.sessions); });
+      }
+      o.dev = dev; o.stMap = st; o.states = [...st.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      o.pricing = M.pricing ? M.pricing.pages.filter(p => so(U.pathOnly(p.path)) === id).reduce((a, p) => a + p.sessions, 0) : 0;
+      return o;
+    };
+    const GAc = cols.map(c => gaOf(c.id));
+    // ── PageSpeed (from Workstream scorecards › Technical SEO) ──
+    const psi = scd(D.site).psi;
+    const psiOf = id => { if (!psi || !psi.results) return null; const r = psi.results.filter(x => !x.error && so(U.pathOnly(x.url)) === id); if (!r.length) return null; const f = r.filter(x => x.hasField); return { tested: r.length, pass: f.length ? f.filter(x => x.pass).length / f.length * 100 : null, perf: r.map(x => x.perf).filter(x => x != null).sort((a, b) => a - b)[Math.floor(r.length / 2)] }; };
+    const PS = cols.map(c => psiOf(c.id));
+
+    // ── combine the two clusters ──
+    const sum = (a, b) => (a == null && b == null) ? null : (a || 0) + (b || 0);
+    const both = (arr, f) => arr.every(x => x == null) ? null : arr.reduce((acc, x) => sum(acc, x == null ? null : f(x)), null);
+    const wPos = (list, key) => { let w = 0, i = 0; list.forEach(m => { if (m && m[key].impr) { w += m[key].pos * m[key].impr; i += m[key].impr; } }); return i ? w / i : null; };
+    const ratio = (a, b) => a == null || !b ? null : a / b * 100;
+    const prevGsc = (m, key, f) => m && m.prev ? f(m.prev[key]) : null;
+
+    // rows: [section, KPI, values per column + total, change per column + total (text), source]
+    const R = [];
+    const fmtV = (v, kind) => v == null || !isFinite(v) ? '—' : kind === 'pct' ? v.toFixed(1) + '%' : kind === 'pos' ? v.toFixed(1) : kind === 'dec' ? v.toFixed(2) : fmtN(Math.round(v));
+    const row = (sec, kpi, vals, kind, chgs, src, note) => R.push({ sec, kpi, vals, kind, chgs: chgs || [], src, note: note || '' });
+    const pc = (c, p) => U.chg(c, p);
+    const hasPrev = !!D.prevStart;
+    const vsGsc = hasPrev ? 'vs previous period' : '';
+    // 1. Visibility
+    const tot = (key, f) => { const v = G.map(m => m ? f(m[key]) : null); return [...v, both(G, m => f(m[key]))]; };
+    const totPrev = (key, f) => { const v = G.map(m => prevGsc(m, key, f)); return [...v, both(G.map(m => m && m.prev ? m : null), m => f(m.prev[key]))]; };
+    const chgOf = (cur, prev) => cur.map((c, i) => pc(c, prev[i]));
+    const V1 = 'Visibility (Search Console)';
+    const nbImpr = tot('nb', x => x.impr), nbClicks = tot('nb', x => x.clicks);
+    row(V1, 'Impressions (non-brand)', nbImpr, 'n', hasPrev ? chgOf(nbImpr, totPrev('nb', x => x.impr)) : null, 'GSC');
+    row(V1, 'Clicks (non-brand)', nbClicks, 'n', hasPrev ? chgOf(nbClicks, totPrev('nb', x => x.clicks)) : null, 'GSC');
+    row(V1, 'CTR (non-brand)', nbClicks.map((c, i) => ratio(c, nbImpr[i])), 'pct', null, 'GSC');
+    const nbPos = [...G.map(m => m && m.nb.impr ? m.nb.pos : null), wPos(G.filter(Boolean), 'nb')];
+    const nbPosPrev = [...G.map(m => m && m.prev && m.prev.nb.impr ? m.prev.nb.pos : null), wPos(G.filter(m => m && m.prev).map(m => m.prev), 'nb')];
+    row(V1, 'Average position (non-brand)', nbPos, 'pos', hasPrev ? nbPos.map((v, i) => v != null && nbPosPrev[i] != null ? { pos: v - nbPosPrev[i] } : null) : null, 'GSC');
+    const bImpr = tot('b', x => x.impr), bClicks = tot('b', x => x.clicks);
+    row(V1, 'Impressions (brand)', bImpr, 'n', hasPrev ? chgOf(bImpr, totPrev('b', x => x.impr)) : null, 'GSC');
+    row(V1, 'Clicks (brand)', bClicks, 'n', hasPrev ? chgOf(bClicks, totPrev('b', x => x.clicks)) : null, 'GSC');
+    row(V1, 'CTR (brand)', bClicks.map((c, i) => ratio(c, bImpr[i])), 'pct', null, 'GSC');
+    const aImpr = tot('tot', x => x.impr), aClicks = tot('tot', x => x.clicks);
+    row(V1, 'Impressions (all queries)', aImpr, 'n', hasPrev ? chgOf(aImpr, totPrev('tot', x => x.impr)) : null, 'GSC', 'includes queries Google anonymises');
+    row(V1, 'Clicks (all queries)', aClicks, 'n', hasPrev ? chgOf(aClicks, totPrev('tot', x => x.clicks)) : null, 'GSC');
+    const bk = (f) => [...G.map(m => m ? f(m.buckets) : null), both(G, m => f(m.buckets))];
+    const bkPrev = (f) => [...G.map(m => m && m.prevBuckets ? f(m.prevBuckets) : null), both(G.map(m => m && m.prevBuckets ? m : null), m => f(m.prevBuckets))];
+    const diff = (cur, prev) => cur.map((c, i) => c != null && prev[i] != null ? { n: c - prev[i] } : null);
+    [['Keywords in top 3 (non-brand)', b => b.n.top3], ['Keywords in top 10 (non-brand)', b => b.n.top10], ['Keywords in positions 11–20 (non-brand, quick wins)', b => b.n.p11], ['Keywords in top 3 (brand)', b => b.b.top3], ['Keywords in top 10 (brand)', b => b.b.top10]]
+      .forEach(([l, f], j) => { const c = bk(f); row(V1, l, c, 'n', hasPrev ? diff(c, bkPrev(f)) : null, 'GSC', j ? '' : 'each query counted once per cluster; total = sum of both'); });
+    // 2. Traffic
+    const T2 = 'Traffic (GA4, organic)';
+    const ga = (f) => [...GAc.map(x => x ? f(x) : null), both(GAc, f)];
+    const yoy = (f, fy) => { const c = ga(f), p = ga(fy); return c.map((v, i) => pc(v, p[i])); };
+    row(T2, 'Organic sessions', ga(x => x.sessions), 'n', yoy(x => x.sessions, x => x.ySessions), 'GA4', 'change vs same dates last year');
+    row(T2, 'Organic new users', ga(x => x.newUsers), 'n', yoy(x => x.newUsers, x => x.yNewUsers), 'GA4');
+    row(T2, 'Sessions – desktop', ga(x => x.dev.desktop), 'n', yoy(x => x.dev.desktop, x => x.dev.yDesktop), 'GA4');
+    row(T2, 'Sessions – mobile', ga(x => x.dev.mobile), 'n', yoy(x => x.dev.mobile, x => x.dev.yMobile), 'GA4');
+    const stTxt = x => x.states.length ? x.states.map(([k, v]) => `${k} ${fmtN(Math.round(v))}`).join(', ') : '—';
+    const allStates = () => { const m = new Map(); GAc.forEach(x => x && x.stMap.forEach((v, k) => m.set(k, (m.get(k) || 0) + v))); return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${fmtN(Math.round(v))}`).join(', ') || '—'; };
+    R.push({ sec: T2, kpi: 'Top 3 states (sessions)', vals: [...GAc.map(x => x ? stTxt(x) : null), M ? allStates() : null], kind: 'text', chgs: [], src: 'GA4', note: '' });
+    row(T2, 'Landing pages with organic sessions', ga(x => x.landings), 'n', null, 'GA4');
+    // 3. Leads & signups
+    const L3 = 'Leads & signups (GA4)';
+    row(L3, 'Demo requests', ga(x => x.demo), 'n', null, 'GA4', 'event names: Funnel setup');
+    row(L3, 'Contact form submissions', ga(x => x.contact), 'n', null, 'GA4');
+    const leads = ga(x => x.demo + x.contact), ses = ga(x => x.sessions);
+    row(L3, 'Demo + contact per 1,000 sessions', leads.map((v, i) => v == null || !ses[i] ? null : v / ses[i] * 1000), 'dec', null, 'GA4');
+    row(L3, 'Employer / recruiter signups', ga(x => x.emp), 'n', null, 'GA4', 'needs the real employer signup event name');
+    row(L3, 'Employer signup CVR', ga(x => x.emp).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4', 'signups ÷ organic sessions');
+    row(L3, 'Pricing page sessions', ga(x => x.pricing), 'n', null, 'GA4', 'intent signal, not a lead');
+    // 4. Engagement
+    const E4 = 'Engagement (GA4)';
+    row(E4, 'Engaged sessions', ga(x => x.engaged), 'n', null, 'GA4');
+    row(E4, 'Engagement rate', ga(x => x.engaged).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4');
+    row(E4, 'Pages per session', ga(x => x.views).map((v, i) => v == null || !ses[i] ? null : v / ses[i]), 'dec', null, 'GA4');
+    row(E4, 'Scroll 90% per 100 page views', ga(x => x.scroll).map((v, i) => { const vw = ga(x => x.views)[i]; return v == null || !vw ? null : v / vw * 100; }), 'dec', null, 'GA4');
+    // 5. Technical
+    const S5 = 'Technical (PageSpeed)';
+    const ps = f => [...PS.map(x => x ? f(x) : null), null];
+    row(S5, 'Core Web Vitals pass rate (field data)', ps(x => x.pass), 'pct', null, 'PageSpeed', 'run from Workstream scorecards › Technical SEO');
+    row(S5, 'Median performance score (mobile)', ps(x => x.perf), 'n', null, 'PageSpeed');
+    row(S5, 'Pages tested', ps(x => x.tested), 'n', null, 'PageSpeed');
+    // 6. Needs CRM / finance (kept visible so nothing is silently missing)
+    const C6 = 'Pipeline & revenue';
+    ['MQLs from organic', 'Pipeline created – organic first touch', 'Pipeline created – organic assisted', 'Revenue closed – organic first touch', 'Revenue closed – organic assisted', 'Lead → opportunity rate', 'Cost per organic employer signup']
+      .forEach((l, j) => R.push({ sec: C6, kpi: l, vals: [null, null, null], kind: 'text', chgs: [], src: 'CRM / Finance', note: j ? '' : 'not available yet for any column: needs a CRM export (Leads & revenue screen) and the cost input in Funnel setup' }));
+
+    const heads = [...cols.map(c => c.name), 'Both (employer total)'];
+    const chgTxt = c => c == null ? '' : typeof c === 'object' ? (c.pos != null ? (c.pos > 0 ? '+' : '') + c.pos.toFixed(1) : (c.n > 0 ? '+' : '') + fmtN(c.n)) : (c > 0 ? '+' : '') + c.toFixed(1) + '%';
+    const chgHtml = (c, kpi) => { if (c == null) return ''; if (typeof c === 'object') { const v = c.pos != null ? c.pos : c.n; if (c.pos != null) return dchip(v, true, 'pos'); const good = /11–20/.test(kpi) ? null : v > 0; return `<span class="un-d ${v === 0 ? 'flat' : good === null ? 'flat' : good ? 'up' : 'down'}">${chgTxt(c)}</span>`; } return dchip(c); };
+    const cell = (r, i) => { const v = r.vals[i]; if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; return fmtV(v, r.kind); };
+    const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : 'later';
+    let lastSec = '';
+    const trs = R.map(r => { const s = r.sec !== lastSec ? `<tr class="un-b2e-sec"><th colspan="${heads.length * 2 + 2}">${esc(r.sec)}</th></tr>` : ''; lastSec = r.sec; return s + `<tr><td>${esc(r.kpi)}${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td>${heads.map((h, i) => `<td class="r"><b>${cell(r, i)}</b></td><td class="r un-b2e-d">${chgHtml(r.chgs[i], r.kpi)}</td>`).join('')}<td>${chip(status(r))}</td></tr>`; }).join('');
+    const tsv = () => {
+      const lines = [['Section', 'KPI', ...heads.flatMap(h => [h, h + ' change']), 'Source', 'Note'].join('\t')];
+      R.forEach(r => lines.push([r.sec, r.kpi, ...heads.flatMap((h, i) => [r.kind === 'text' ? (r.vals[i] == null ? '' : r.vals[i]) : (r.vals[i] == null || !isFinite(r.vals[i]) ? '' : r.kind === 'n' ? String(Math.round(r.vals[i])) : fmtV(r.vals[i], r.kind)), chgTxt(r.chgs[i])]), r.src, r.note].join('\t')));
+      return lines.join('\n');
+    };
+    const period = `${fmtD(D.start)} – ${fmtD(D.end)}${hasPrev ? ` · Search Console changes vs ${fmtD(D.prevStart)} – ${fmtD(D.prevEnd)}` : ' · turn on “Compare with the previous period” for week-on-week changes'}${g ? ` · GA4 ${fmtD(g.start)} – ${fmtD(g.end)}, changes vs same dates last year` : ''}`;
+    const notes = [];
+    if (loading) notes.push('Loading B2E and B2E (J&I) from Search Console…');
+    if (errs.length) notes.push(`<span class="start-error">Search Console: ${esc(errs.join('; '))}</span>`);
+    if (!g) notes.push('GA4 is not loaded: open <a href="#ga4">GA4 organic</a> and press Load GA4 data, then come back. Traffic, leads and engagement rows fill in.');
+    if (!live && D.source !== 'demo') notes.push('Search Console numbers here come from an upload; brand / non-brand split is an estimate. Connect Search Console for exact numbers.');
+    if (D.source === 'demo') notes.push('<b>Sample data.</b> Connect Search Console and GA4 for real numbers.');
+    // top landing pages
+    const top = (A.P || []).filter(r => cols.some(c => so(r.p) === c.id)).sort((a, b) => b.clicks - a.clicks).slice(0, 25).map(r => { const path = U.pathOnly(r.p), gp = M ? M.pages.find(p => p.path.toLowerCase() === path.toLowerCase()) : null; return { path, cluster: so.label(so(r.p)), clicks: r.clicks, impr: r.impr, pos: r.pos, sessions: gp ? gp.sessions : null, leads: gp ? gp.demo + gp.contact : null, emp: gp ? gp.emp : null }; });
+    const html = intro +
+      `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') +
+      `<div class="un-row" style="margin:6px 0 12px"><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Paste into the sheet with Ctrl/Cmd + V: one KPI per row, columns B2E, B2E (J&I), both.</span></div>` +
+      `<section class="panel"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
+      `<section class="panel"><div class="panel-h"><h2>Top employer landing pages</h2><p>By Search Console clicks${M ? ', with GA4 organic sessions and leads' : ''}.</p></div><div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Clicks</th><th class="r">Impr.</th><th class="r">Position</th>${M ? '<th class="r">Sessions</th><th class="r">Demo + contact</th><th class="r">Employer signups</th>' : ''}</tr></thead><tbody>${top.map(r => `<tr><td class="u"><a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a></td><td>${esc(r.cluster)}</td><td class="r">${fmtN(r.clicks)}</td><td class="r">${fmtN(r.impr)}</td><td class="r">${r.impr ? posTag(r.pos) : '—'}</td>${M ? `<td class="r">${r.sessions == null ? '—' : fmtN(Math.round(r.sessions))}</td><td class="r">${r.leads == null ? '—' : fmtN(Math.round(r.leads))}</td><td class="r">${r.emp == null ? '—' : fmtN(Math.round(r.emp))}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${M ? 8 : 5}" class="empty">No employer pages in this data.</td></tr>`}</tbody></table></div></div></section>`;
+    const mount = () => {
+      if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc)); } });
+      const msg = t => { const el = document.getElementById('un-b2e-msg'); if (el) el.textContent = t; };
+      const cp = document.getElementById('un-b2e-copy');
+      if (cp) cp.addEventListener('click', async () => {
+        const text = tsv();
+        try { await navigator.clipboard.writeText(text); msg('Copied. Paste into the sheet with Ctrl/Cmd + V.'); }
+        catch (e) { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (x) { } ta.remove(); msg(ok ? 'Copied. Paste into the sheet with Ctrl/Cmd + V.' : 'Copy was blocked by the browser: use Download CSV instead.'); }
+      });
+      const dl = document.getElementById('un-b2e-csv');
+      if (dl) dl.addEventListener('click', () => { const csv = tsv().split('\n').map(l => l.split('\t').map(v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v).join(',')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `unstop-b2e-dashboard-${D.start}-${D.end}.csv`; document.body.appendChild(a); a.click(); a.remove(); });
+      const rl = document.getElementById('un-b2e-reload');
+      if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); rerender(); });
+    };
+    return { html, mount };
+  };
+
   window.UN_VIEW = { GA, MOE, settings, sampleGa, sampleMoe };
 })();

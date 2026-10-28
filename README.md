@@ -6,6 +6,7 @@ GA4 organic traffic → signups → engagement → leads, and MoEngage signup qu
 
 ## Unstop funnel screens (sidebar › Unstop funnel)
 
+- **B2E dashboard**: the employer side on one page in three columns (B2E, B2E (J&I), both): Search Console visibility (brand and non-brand, keyword buckets, change vs the previous period), GA4 traffic vs last year (device, top states), demo / contact / employer signups / pricing visits, engagement and PageSpeed, plus the CRM rows still to come. **Copy for Google Sheets** puts exact numbers on the clipboard for the One-Page Dashboard.
 | Screen | Route | What it answers |
 |---|---|---|
 | Full funnel | `#funnel` | Visibility → Traffic → Signups → Engagement → Leads → Pipeline, every metric with source, owner, cadence, status (Live / Upload / Sample / Not connected / Next phase) and last refresh. Chain table by page type. First-review questions 1 and 2 (3 needs CRM). CSV export of all metrics |

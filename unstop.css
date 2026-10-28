@@ -107,3 +107,9 @@
 .un-bad{color:var(--risk)}
 .un-kpi .un-src{display:block;margin-top:4px;font-size:11.5px;line-height:1.35;color:var(--muted,#64748b);word-break:break-word}
 .un-kpi .un-src .un-warn{font-weight:500;color:#b45309}
+.un-b2e .un-b2e-sec th{background:var(--surface-2,#f1f5f9);text-align:left;font-size:12px;letter-spacing:.04em;text-transform:uppercase;padding:8px 10px}
+.un-b2e td,.un-b2e th{vertical-align:top}
+.un-b2e .un-b2e-d{font-size:12px;white-space:nowrap}
+.un-b2e td:first-child{min-width:220px}
+.un-b2e .un-b2e-t{display:block;max-width:190px;margin-left:auto;white-space:normal;font-weight:400;font-size:12px;line-height:1.35;text-align:right}
+.un-b2e td:first-child{min-width:200px;max-width:280px}
