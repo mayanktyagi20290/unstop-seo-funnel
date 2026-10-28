@@ -8,7 +8,7 @@ window.CW_CONFIG = {
   // (APIs & Services › Credentials). Add your site's origin, e.g.
   // https://yourdomain.com, under "Authorized JavaScript origins".
   // Enable "Google Search Console API" in the same project.
-  googleClientId: '347571023525-oc6dbi806vuhku6n0r814qt95g474pmc.apps.googleusercontent.com',
+  googleClientId: '303461488867-0bmr9c2749ebh6n8uvkmes7q1bfguopo.apps.googleusercontent.com',
 
   // Rows pulled per dimension through the API (GSC returns 25,000 per page).
   maxRows: 100000,
