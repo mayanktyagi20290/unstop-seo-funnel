@@ -18,7 +18,7 @@
     ga4Property: CFG.ga4PropertyId || '', pricingPaths: (CFG.pricingPaths || []).slice(), aiSources: (CFG.aiSources || []).slice(),
     pathTypes: ['opp', 'emp', 'org'], pathSections: null, owners: {}, monthlyCost: '', empCostShare: '', moeThreshold: 80, organicSources: ''
   });
-  function settings(site) { let s = null; try { s = JSON.parse(localStorage.getItem(KEY(site))); } catch (e) { } const d = DEF(); return s ? { ...d, ...s, events: { ...d.events, ...(s.events || {}) } } : d; }
+  function settings(site) { let s = null; try { s = JSON.parse(localStorage.getItem(KEY(site))); } catch (e) { } const d = DEF(); if (s && s.events && JSON.stringify(s.events.contactSubmit) === '["contact_form_submit","form_submit"]') s.events.contactSubmit = d.events.contactSubmit; return s ? { ...d, ...s, events: { ...d.events, ...(s.events || {}) } } : d; }
   function save(site, s) { try { localStorage.setItem(KEY(site), JSON.stringify(s)); } catch (e) { } }
   const ctx = new Map(); // site → { typeOf, clusterOf } rebuilt when settings change
   function tools(D) {
@@ -620,7 +620,7 @@
     const g = GA.get(D.site); if (!g) return null;
     const { typeOf, s } = tools(D);
     const sig = JSON.stringify([s.events, s.types, s.rootArticles, s.sections, s.pathSections]);
-    if (!g.model || g.sig !== sig) { g.model = U.ga4Model(g.raw, typeOf, s.events, { sectionOf: sectioner(D), pathSections: s.pathSections || U.DEFAULT_PATH_SECTIONS }); g.sig = sig; }
+    if (!g.model || g.sig !== sig) { g.model = U.ga4Model(g.raw, typeOf, s.events, { start: g.start, end: g.end, sectionOf: sectioner(D), pathSections: s.pathSections || U.DEFAULT_PATH_SECTIONS }); g.sig = sig; }
     return g.model;
   }
 
@@ -657,11 +657,11 @@
       `<div class="un-kpis">
         ${kp('Organic sessions', fmtN(t.sessions), dchip(M.dSessions), 'vs last year')}
         ${kp('Organic new users', fmtN(t.newUsers), dchip(M.dNewUsers), 'vs last year')}
-        ${kp('Student signups', fmtN(M.ev.stu), dchip(U.chg(M.ev.stu, M.ev.yStu)), 'events')}
-        ${kp('Employer signups', fmtN(M.ev.emp), dchip(U.chg(M.ev.emp, M.ev.yEmp)), 'events')}
+        ${kp('Student signups', fmtN(M.ev.stu), dchip(U.chg(M.ev.stu, M.ev.yStu)), evSrc(M, s.events, ['studentSignup']))}
+        ${kp('Employer signups', fmtN(M.ev.emp), dchip(U.chg(M.ev.emp, M.ev.yEmp)), evSrc(M, s.events, ['employerSignup']))}
         ${kp('Signup CVR', pct1(t.sessions ? (M.ev.stu + M.ev.emp) / t.sessions * 100 : null), '', 'signups ÷ sessions')}
         ${kp('Engagement rate', pct1(t.engRate), '', fmtN(t.pps ? +t.pps.toFixed(2) : null) + ' pages / session')}
-        ${kp('Demo + contact (organic)', fmtN(M.ev.demo + M.ev.contact), dchip(U.chg(M.ev.demo + M.ev.contact, M.ev.yDemo + M.ev.yContact)), '')}
+        ${kp('Demo + contact (organic)', fmtN(M.ev.demo + M.ev.contact), dchip(U.chg(M.ev.demo + M.ev.contact, M.ev.yDemo + M.ev.yContact)), evSrc(M, s.events, ['demoRequest', 'contactSubmit']))}
         ${kp('AI assistant sessions', fmtN(M.ai.reduce((a, r) => a + r.sessions, 0)), dchip(U.chg(M.ai.reduce((a, r) => a + r.sessions, 0), M.ai.reduce((a, r) => a + r.ySessions, 0))), 'all channels')}
       </div>` +
       `<section class="panel"><div class="panel-h"><h2>Organic sessions per day vs last year</h2></div><div class="panel-b"><div class="chart-box"><canvas id="un-ga-daily" aria-label="Organic sessions per day"></canvas></div></div></section>` +
@@ -723,6 +723,14 @@
     return { html, mount };
   };
   const STEP_LABEL = { oppClick: 'Click into an opportunity', studentSignup: 'Student signup', employerSignup: 'Employer signup', demoRequest: 'Demo request', contactSubmit: 'Contact submission', opportunityAction: 'Register / apply', productClick: 'Product click', scroll: 'Scroll' };
+  // Which GA4 event names make up an event tile, so every number can be traced back to GA4.
+  function evSrc(M, ev, keys) {
+    const want = new Set(keys.flatMap(k => (ev && ev[k]) || []).map(x => String(x).toLowerCase()));
+    const hit = (M.events || []).filter(e => want.has(String(e.name).toLowerCase()) && e.count > 0).sort((a, b) => b.count - a.count);
+    if (!hit.length) return `<span class="un-src">no matching GA4 event · <a href="#funnelsetup">set event names</a></span>`;
+    const list = hit.map(e => `${esc(e.name)} ${fmtN(e.count)}`).join(' + ');
+    return `<span class="un-src">GA4 events: ${list}${hit.length > 1 ? ' <b class="un-warn">· ' + hit.length + ' events added up: if one signup fires more than one of these it is counted twice. Keep only one in <a href="#funnelsetup">Funnel setup</a>.</b>' : ''}</span>`;
+  }
   function stepOf(name, ev) { const n = String(name).toLowerCase(); const hit = Object.keys(STEP_LABEL).filter(k => (ev[k] || []).some(x => String(x).toLowerCase() === n)); return hit.map(k => STEP_LABEL[k]).join(', ') || '—'; }
 
   // conversion-path coverage and organic traffic by URL cluster

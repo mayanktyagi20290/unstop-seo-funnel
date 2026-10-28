@@ -587,7 +587,13 @@
     }
     // daily trend with last year aligned by day index
     const D = R.daily || [];
-    const dc = D.filter(r => r.range === 'cur').sort((a, b) => a.date.localeCompare(b.date)), dy = D.filter(r => r.range === 'yoy').sort((a, b) => a.date.localeCompare(b.date));
+    // With two date ranges GA4 returns every date for both ranges, zero-filled outside the range, so keep only each range's own dates.
+    const ymd = x => String(x || '').replace(/-/g, '');
+    const inR = (r, a, b) => !a || (r.date >= ymd(a) && r.date <= ymd(b));
+    const cS = opt.start, cE = opt.end, yS = cS && shiftYear(cS), yE = cE && shiftYear(cE);
+    let dc = D.filter(r => r.range === 'cur' && inR(r, cS, cE)), dy = D.filter(r => r.range === 'yoy' && inR(r, yS, yE));
+    if (!cS) { const all = [...new Set(D.map(r => r.date))].sort(), half = Math.ceil(all.length / 2); if (all.length && dc.length === all.length && dy.length === all.length && dc.slice(0, all.length - half).every(r => !r.sessions)) { const later = new Set(all.slice(all.length - half)); dc = dc.filter(r => later.has(r.date)); dy = dy.filter(r => !later.has(r.date)); } }
+    dc.sort((a, b) => a.date.localeCompare(b.date)); dy.sort((a, b) => a.date.localeCompare(b.date));
     const daily = dc.map((r, i) => ({ d: r.date.slice(0, 4) + '-' + r.date.slice(4, 6) + '-' + r.date.slice(6), sessions: r.sessions, newUsers: r.newUsers, ySessions: dy[i] ? dy[i].sessions : null }));
     // returning visitors
     const RT = R.returning || [];

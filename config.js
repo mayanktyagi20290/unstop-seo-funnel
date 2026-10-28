@@ -34,7 +34,8 @@ window.CW_CONFIG = {
       studentSignup: ['sign_up', 'signup_complete', 'signup_email_verified'],
       employerSignup: ['employer_sign_up', 'recruiter_signup'],
       demoRequest: ['book_demo', 'demo_request', 'generate_lead'],
-      contactSubmit: ['contact_form_submit', 'form_submit'],
+      // not GA4's automatic form_submit: it fires on every form (search, login, registration)
+      contactSubmit: ['contact_form_submit', 'contact_submit'],
       opportunityAction: ['register', 'apply', 'opportunity_register', 'apply_now'],
       productClick: ['select_content', 'opportunity_click', 'cta_click'],
       oppClick: ['opportunity_click', 'view_opportunity', 'select_item', 'opportunity_view'],
