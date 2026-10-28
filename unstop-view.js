@@ -462,18 +462,18 @@
     f.addEventListener('submit', e => { e.preventDefault(); const v = u.value.trim(); location.hash = v ? focusHref({ u: U.pathOnly(v) }) : c.value ? focusHref({ c: c.value, f: fo.value }) : '#focus'; });
   }
   // live Search Console numbers for the scope (exact totals, its own query list)
-  async function loadScope(D, A, sc, key) {
+  async function loadScope(D, A, sc, key, ov) {
     const src = window.CW_SOURCE; if (!src || !src.gsc || !A.brandRx) return;
     FOC.set(key, { status: 'loading' }); rerender();
     try {
-      const so = sectioner(D), s = settings(D.site);
+      const so = (ov && ov.so) || sectioner(D), s = settings(D.site), secList = (ov && ov.sections) || s.sections;
       let filters;
       if (sc.kind === 'page') filters = [{ dimension: 'page', operator: 'includingRegex', expression: '^https?://[^/]+' + sc.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/?(\\?.*)?$' }];
       else {
         const sec = so.sections.find(x => x.id === sc.id);
         const rules = sc.kind === 'folder' ? sec.rules.filter(r => String(r).trim().replace(/^=/, '').replace(/\*$/, '…') === sc.folder) : sec.rules;
         filters = [{ dimension: 'page', operator: 'includingRegex', expression: U.sectionRegex({ id: sec.id, rules }, null) }];
-        const ex = U.sectionExclude(sec, s.sections); if (ex) filters.push({ dimension: 'page', operator: 'excludingRegex', expression: ex });
+        const ex = U.sectionExclude(sec, secList); if (ex) filters.push({ dimension: 'page', operator: 'excludingRegex', expression: ex });
       }
       const agg = (st, en, brand) => src.gsc.query({ startDate: st, endDate: en, type: 'web', rowLimit: 1, dimensionFilterGroups: [{ groupType: 'and', filters: filters.concat(brand == null ? [] : [{ dimension: 'query', operator: brand ? 'includingRegex' : 'excludingRegex', expression: A.brandRx }]) }] }).then(d => (d.rows || [])[0] || null);
       const qs = (st, en) => src.gsc.query({ startDate: st, endDate: en, type: 'web', dimensions: ['query'], rowLimit: 25000, dimensionFilterGroups: [{ groupType: 'and', filters }] }).then(d => (d.rows || []).map(r => ({ q: r.keys[0], clicks: r.clicks, impr: r.impressions, pos: r.position })));
@@ -2076,12 +2076,12 @@
     return { wStart: add(-7 * 16 + 1), end: D.end, curS: add(-6), prevS: add(-13), prevE: add(-7) };
   }
   // live: 6 Search Console calls per cluster (daily NB / brand for the trend, pages and queries for this week and last)
-  async function loadB2EX(D, A, ids) {
-    const src = window.CW_SOURCE, key = b2eKey(D); if (!src || !src.gsc) return;
+  async function loadB2EX(D, A, ids, ov, xkey) {
+    const src = window.CW_SOURCE, key = xkey || b2eKey(D); if (!src || !src.gsc) return;
     B2EX.set(key, { status: 'loading' }); rerender();
     try {
-      const so = sectioner(D), s = settings(D.site), W = b2eWindows(D), brandRx = A.brandRx;
-      const filt = id => { const sec = so.sections.find(x => x.id === id); const f = [{ dimension: 'page', operator: 'includingRegex', expression: U.sectionRegex(sec, null) }]; const ex = U.sectionExclude(sec, s.sections); if (ex) f.push({ dimension: 'page', operator: 'excludingRegex', expression: ex }); return f; };
+      const so = (ov && ov.so) || sectioner(D), s = settings(D.site), W = b2eWindows(D), brandRx = A.brandRx, secList = (ov && ov.sections) || s.sections;
+      const filt = id => { const sec = so.sections.find(x => x.id === id); const f = [{ dimension: 'page', operator: 'includingRegex', expression: U.sectionRegex(sec, null) }]; const ex = U.sectionExclude(sec, secList); if (ex) f.push({ dimension: 'page', operator: 'excludingRegex', expression: ex }); return f; };
       const q = body => src.gsc.query({ type: 'web', ...body }).then(d => d.rows || []);
       const out = { weekly: {}, cur: {}, prev: {} };
       await Promise.all(ids.map(async id => {
@@ -2097,8 +2097,8 @@
   }
   // uploads and sample data: alerts compare the loaded period with the previous one; sample data also gets a
   // generated weekly series so the screen can be previewed
-  function b2eFromRows(A, D, ids) {
-    const so = sectioner(D), isB = brandOf(A);
+  function b2eFromRows(A, D, ids, soOv) {
+    const so = soOv || sectioner(D), isB = brandOf(A);
     const out = { status: 'done', weekly: {}, cur: {}, prev: {}, W: null, sample: D.source === 'demo', periodBased: true };
     let seed = 11; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     const days = Math.max(1, Math.round((new Date(D.end) - new Date(D.start)) / 864e5) + 1);
@@ -2197,17 +2197,26 @@
   const B2E_LD = new Map(); // site → lead filter opened from a count
   const B2E_KW = new Map(); // site → { seg, k, i } keyword list opened from the table
   const B2E_COLS = [{ id: 'empb2b', name: 'B2E' }, { id: 'empjobboard', name: 'B2E (J&I)' }];
-  V.b2e = (A, D) => {
+  // One board, two set-ups: B2E (employer clusters, sales-form leads, CRM) and a common board for any
+  // folder or two (no B2B leads). cfg: { key, title, intro, so, sections, cols, employer, sales, bothName,
+  // productOf, productLabel, topicOf, picker }
+  const B2E_PRODUCT_FN = url => b2eProduct(url), B2E_TOPIC_FN = q => b2eTopic(q);
+  function board(A, D, cfg) {
     demoFill(D);
     window.CW_LAST_A = A;
-    const so = sectioner(D);
-    const cols = B2E_COLS.filter(c => so.sections.some(x => x.id === c.id)), s0 = settings(D.site), ids = cols.map(c => c.id);
-    const intro = head('B2E dashboard', 'Employer pages on one page: B2E (hiring platform, employer branding, assessments, AI agents, ATS, pricing) and B2E (J&I) (AI sourcing agent, hire-* and free job posting pages). Search Console, GA4 and PageSpeed together. Copy the table straight into the One-Page Dashboard sheet.');
+    const so = cfg.so || sectioner(D);
+    const SK = D.site + '|' + cfg.key;
+    const cols = cfg.cols || B2E_COLS.filter(c => so.sections.some(x => x.id === c.id)), s0 = settings(D.site), ids = cols.map(c => c.id);
+    const realIds = cols.filter(c => !c.dummy).map(c => c.id), bothName = cfg.bothName || 'B2E + B2E (J&I)';
+    const b2eProduct = cfg.productOf || B2E_PRODUCT_FN, b2eTopic = cfg.topicOf || B2E_TOPIC_FN;
+    const ov = cfg.so ? { so, sections: cfg.sections } : null;
+    const intro = cfg.intro ? head(cfg.title, cfg.intro) + (cfg.picker || '') : head('B2E dashboard', 'Employer pages on one page: B2E (hiring platform, employer branding, assessments, AI agents, ATS, pricing) and B2E (J&I) (AI sourcing agent, hire-* and free job posting pages). Search Console, GA4 and PageSpeed together. Copy the table straight into the One-Page Dashboard sheet.');
+ if (cfg.empty) return { html: intro + cfg.empty, mount: cfg.pickerMount };
     if (cols.length < 2) return { html: intro + '<div class="note">The B2E and B2E (J&I) clusters are missing from Funnel setup › URL clusters. Reset clusters to the defaults or add them back.</div>' };
     const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
     const scOf = id => ({ kind: 'cluster', id, label: so.label(id), test: x => so(x) === id });
-    const keyOf = sc => [D.site, D.start, D.end, D.prevStart || '', sc.kind, sc.id || '', sc.folder || '', sc.path || ''].join('|');
-    const F = cols.map(c => { const sc = scOf(c.id); return live ? FOC.get(keyOf(sc)) : { status: 'done', model: scopeFromRows(A, D, sc) }; });
+    const keyOf = sc => [D.site, D.start, D.end, D.prevStart || '', sc.kind, sc.id || '', sc.folder || '', sc.path || '', cfg.key === 'b2e' ? '' : JSON.stringify((so.sections.find(x => x.id === sc.id) || {}).rules || [])].join('|');
+    const F = cols.map(c => { if (c.dummy) return { status: 'done', model: null }; const sc = scOf(c.id); return live ? FOC.get(keyOf(sc)) : { status: 'done', model: scopeFromRows(A, D, sc) }; });
     const loading = live && F.some(f => !f || f.status === 'loading');
     const G = F.map(f => f && f.status === 'done' ? f.model : null);
     const errs = F.filter(f => f && f.status === 'error').map(f => f.error);
@@ -2218,7 +2227,7 @@
       if (!M) return null;
       const P = M.pages.filter(p => so(p.path) === id);
       const t = k => P.reduce((a, p) => a + (p[k] || 0), 0);
-      const o = { sessions: t('sessions'), ySessions: t('ySessions'), newUsers: t('newUsers'), yNewUsers: t('yNewUsers'), engaged: t('engaged'), views: t('views'), emp: t('emp'), demo: t('demo'), contact: t('contact'), scroll: t('scroll'), landings: P.filter(p => p.sessions > 0).length };
+      const o = { sessions: t('sessions'), ySessions: t('ySessions'), newUsers: t('newUsers'), yNewUsers: t('yNewUsers'), engaged: t('engaged'), views: t('views'), emp: t('emp'), stu: t('stu'), opp: t('opp'), prodClick: t('prodClick'), demo: t('demo'), contact: t('contact'), scroll: t('scroll'), landings: P.filter(p => p.sessions > 0).length };
       const dev = { desktop: 0, mobile: 0, tablet: 0, yDesktop: 0, yMobile: 0 }, st = new Map();
       if (g && g.raw) {
         if (g.raw.landingDevice) U.gaRows(g.raw.landingDevice).forEach(r => { if (so(U.pathOnly(r.landingPage)) !== id) return; const k = String(r.deviceCategory || '').toLowerCase(); if (r.range === 'yoy') { if (k === 'desktop') dev.yDesktop += r.sessions; if (k === 'mobile') dev.yMobile += r.sessions; } else if (k in dev) dev[k] += r.sessions; });
@@ -2234,8 +2243,8 @@
     const psiOf = id => { if (!psi || !psi.results) return null; const r = psi.results.filter(x => !x.error && so(U.pathOnly(x.url)) === id); if (!r.length) return null; const f = r.filter(x => x.hasField); return { tested: r.length, pass: f.length ? f.filter(x => x.pass).length / f.length * 100 : null, perf: r.map(x => x.perf).filter(x => x != null).sort((a, b) => a - b)[Math.floor(r.length / 2)] }; };
     const PS = cols.map(c => psiOf(c.id));
     // ── sales-form leads (the B2B leads sheet as CRM); organic only unless "All channels" is chosen below ──
-    if (D.source === 'demo' && !SALES.has(D.site)) SALES.set(D.site, sampleSales(D, A));
-    const SLd = SALES.get(D.site), SLr = SLd && SLd.res && SLd.res.ok ? SLd.res : null, SST = b2eState(D.site);
+    if (cfg.sales !== false && D.source === 'demo' && !SALES.has(D.site)) SALES.set(D.site, sampleSales(D, A));
+    const SLd = cfg.sales === false ? null : SALES.get(D.site), SLr = SLd && SLd.res && SLd.res.ok ? SLd.res : null, SST = b2eState(SK);
     const slIn = l => l.day && l.day >= D.start && l.day <= D.end;
     // every clickable lead count registers what it counts; clicking opens those leads
     const LDS = [];
@@ -2245,7 +2254,7 @@
       && (sp.path == null || (l.path || '') === sp.path) && (!sp.source || l.source === sp.source) && (!sp.month || l.month === sp.month) && (!sp.empOnly || salesPlace(l.path, so).group !== 'Other form pages');
     const slOf = (pred, opt) => SLr ? SLr.leads.filter(l => (opt.all || l.organic) && (opt.range === 'all' || slIn(l)) && pred(l)) : null;
     const slCol = cols.map(c => slOf(l => so(l.path || '/-') === c.id, {}));
-    const slT = slCol.map(x => x ? SL.tally(x) : null), slBoth = SLr ? SL.tally(slCol[0].concat(slCol[1])) : null;
+    const slT = slCol.map(x => x ? SL.tally(x) : null), slBoth = SLr ? SL.tally(slCol.flat()) : null;
 
     // ── combine the two clusters ──
     const sum = (a, b) => (a == null && b == null) ? null : (a || 0) + (b || 0);
@@ -2294,7 +2303,7 @@
     R.push({ sec: V1, kpi: 'Indexed vs submitted pages', vals: [null, null, null], kind: 'text', chgs: [], src: 'GSC', note: 'sitemap level (whole site)', link: ['#visibility', 'Sitemaps on Visibility by page type'] });
     const urlsOf = id => (A.P || []).filter(r => so(r.p) === id && +r.impr > 0);
     const urlC = cols.map(c => urlsOf(c.id).length), urlClk = cols.map(c => urlsOf(c.id).reduce((a, r) => a + (+r.clicks || 0), 0));
-    row(V1, 'URLs getting impressions', [...urlC, urlC[0] + urlC[1]], 'n', null, 'GSC', 'pages Google shows at least once (programmatic J&I pages: indexation check)');
+    row(V1, 'URLs getting impressions', [...urlC, urlC[0] + urlC[1]], 'n', null, 'GSC', cfg.employer === false ? 'pages Google shows at least once' : 'pages Google shows at least once (programmatic J&I pages: indexation check)');
     row(V1, 'Clicks per URL (traffic per page)', [...urlC.map((n, i) => n ? urlClk[i] / n : null), (urlC[0] + urlC[1]) ? (urlClk[0] + urlClk[1]) / (urlC[0] + urlC[1]) : null], 'dec', null, 'GSC');
     // 2. Traffic
     const T2 = 'Traffic (GA4, organic)';
@@ -2315,6 +2324,17 @@
     row(T2, 'AI assistant sessions landing here', [...aiC, M ? aiC[0] + aiC[1] : null], 'n', null, 'GA4', 'ChatGPT, Perplexity, Gemini, Copilot… referrals (all channels)');
     // 3. Leads & signups
     const L3 = 'Leads & signups (GA4)';
+    let AQ = { qsrc: null, cpsEmp: null }, AS = null;
+    if (cfg.employer === false) {
+      const ses2 = ga(x => x.sessions);
+      row(L3, 'Student signups', ga(x => x.stu), 'n', null, 'GA4', 'signup events in organic sessions that landed here (event names: Funnel setup)');
+      row(L3, 'Employer / recruiter signups', ga(x => x.emp), 'n', null, 'GA4');
+      row(L3, 'Signup CVR (all signups)', ga(x => x.stu + x.emp).map((v, i) => ratio(v, ses2[i])), 'pct', null, 'GA4', 'signups ÷ organic sessions');
+      row(L3, 'Register / apply', ga(x => x.opp), 'n', null, 'GA4');
+      row(L3, 'Register / apply per 100 sessions', ga(x => x.opp).map((v, i) => v == null || !ses2[i] ? null : v / ses2[i] * 100), 'dec', null, 'GA4');
+      row(L3, 'Product clicks (content → product)', ga(x => x.prodClick), 'n', null, 'GA4');
+      row(L3, 'Demo + contact', ga(x => x.demo + x.contact), 'n', null, 'GA4');
+    } else {
     row(L3, 'Demo requests', ga(x => x.demo), 'n', null, 'GA4', 'event names: Funnel setup');
     row(L3, 'Contact form submissions', ga(x => x.contact), 'n', null, 'GA4');
     const leads = ga(x => x.demo + x.contact), ses = ga(x => x.sessions);
@@ -2328,17 +2348,18 @@
     slRow('Campus-email leads (college / university)', t => t.campus, 'n', '', 'campus');
     slRow('Personal-email leads (Gmail, Yahoo…)', t => t.personal, 'n', '', 'personal');
     slRow('Official-email share', t => t.officialShare, 'pct');
-    const AQ = acqModel(D);
+    AQ = acqModel(D);
     R.push({ sec: L3, kpi: 'Cost per organic employer signup', vals: [null, null, AQ.cpsEmp != null ? '₹' + fmtN(Math.round(AQ.cpsEmp)) : null], kind: 'text', chgs: [], src: 'Cost input', note: AQ.cpsEmp != null ? `${AQ.empShare}% of ₹${fmtN(AQ.cost)} a month ÷ all organic employer signups${AQ.costSample ? ' (sample cost)' : ''}` : 'add monthly SEO cost and employer share in Funnel setup', link: AQ.cpsEmp != null ? null : ['#funnelsetup', 'Funnel setup'] });
     const qx = AQ.moe && AQ.moe.seg ? AQ.moe.seg : null;
     [['profile', 'Employer profile completion: organic vs other'], ['act7', 'Employer 7-day activation: organic vs other'], ['ret30', 'Employer 30-day retention: organic vs other']].forEach(([k, l]) => {
       const o = qx && qx.orgEmployer && qx.orgEmployer[k], t = qx && qx.othEmployer && qx.othEmployer[k];
       R.push({ sec: L3, kpi: l, vals: [null, null, o ? `${pct1(o.rate)} vs ${t ? pct1(t.rate) : '—'}` : null], kind: 'text', chgs: [], src: 'MoEngage', note: o ? '' : 'MoEngage export or live dashboard with an employer / recruiter user type', link: o ? null : ['#quality', 'Signup quality'] });
     });
-    const AS = assistedOf(D);
-    R.push({ sec: L3, kpi: 'Assisted employer conversions (organic started, closed elsewhere)', vals: [null, null, AS ? AS.cur.assisted.total : null], kind: 'n', chgs: [null, null, AS ? U.chg(AS.cur.assisted.total, AS.yoy.assisted.total) : null], src: 'GA4', note: 'demo / contact / employer signup events, first visit organic, converting visit another channel' });
+    AS = assistedOf(D);
+    }
+    if (cfg.employer !== false) R.push({ sec: L3, kpi: 'Assisted employer conversions (organic started, closed elsewhere)', vals: [null, null, AS ? AS.cur.assisted.total : null], kind: 'n', chgs: [null, null, AS ? U.chg(AS.cur.assisted.total, AS.yoy.assisted.total) : null], src: 'GA4', note: 'demo / contact / employer signup events, first visit organic, converting visit another channel' });
     // 4. Engagement
-    const E4 = 'Engagement (GA4)';
+    const E4 = 'Engagement (GA4)', ses = ga(x => x.sessions);
     row(E4, 'Engaged sessions', ga(x => x.engaged), 'n', null, 'GA4');
     row(E4, 'Engagement rate', ga(x => x.engaged).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4');
     row(E4, 'Pages per session', ga(x => x.views).map((v, i) => v == null || !ses[i] ? null : v / ses[i]), 'dec', null, 'GA4');
@@ -2356,12 +2377,12 @@
     row(S5, 'Crawl errors (4xx / 5xx)', [...crC, crR ? crC[0] + crC[1] : null], 'n', null, 'Crawl', crR ? '' : 'upload a Screaming Frog crawl in Workstream scorecards › Technical SEO');
     // 6. Needs CRM / finance (kept visible so nothing is silently missing)
     const C6 = 'Pipeline & revenue (CRM)';
-    const crm = crmOf(D), C = crm ? crm.res : null;
+    const crm = cfg.employer === false ? null : crmOf(D), C = crm ? crm.res : null;
     // first-touch numbers split by the lead's first landing page (when the CRM export has one)
     const lpOf = id => C && C.landing ? C.landing.filter(x => so(x.path) === id) : [];
     const lpSum = (id, k) => C && C.coverage && C.coverage.landing > 0 ? lpOf(id).reduce((a, x) => a + (x[k] || 0), 0) : null;
     const inr = v => v == null ? null : '₹' + fmtN(Math.round(v));
-    const crmRow = (kpi, perCol, total, note) => R.push({ sec: C6, kpi, vals: [...perCol, total], kind: 'text', chgs: [], src: 'CRM', note: C ? note || '' : (kpi.startsWith('MQL') ? 'upload a CRM export (lead source, landing page, stage, amount)' : ''), link: C ? null : (kpi.startsWith('MQL') ? ['#leads', 'Leads & revenue'] : null) });
+    const crmRow = (kpi, perCol, total, note) => cfg.employer === false ? null : R.push({ sec: C6, kpi, vals: [...perCol, total], kind: 'text', chgs: [], src: 'CRM', note: C ? note || '' : (kpi.startsWith('MQL') ? 'upload a CRM export (lead source, landing page, stage, amount)' : ''), link: C ? null : (kpi.startsWith('MQL') ? ['#leads', 'Leads & revenue'] : null) });
     crmRow('MQLs from organic (first touch)', cols.map(c => { const v = lpSum(c.id, 'mqls'); return v == null ? null : fmtN(v); }), C && C.ft.mqls != null ? fmtN(C.ft.mqls) : null, 'per column: by the lead’s first landing page');
     crmRow('Pipeline created – organic first touch', cols.map(c => inr(lpSum(c.id, 'pipeline'))), C ? inr(C.ft.pipeline) : null);
     crmRow('Pipeline created – organic in the journey (assisted)', [null, null], C ? inr(C.assisted.pipeline) : null, 'not split by page: assisted leads first landed elsewhere');
@@ -2375,16 +2396,16 @@
       [/^Sales-form|email leads|^Official-email share/, 'demo'], [/^Demo/, 'demo'], [/^Contact/, 'contact'], [/^Employer \/ recruiter signups/, 'emp'], [/^Employer signup CVR/, 'cvrEmp'], [/^Pricing/, 'pricing'], [/^Cost per organic employer/, 'cpsEmp'], [/^Employer profile/, 'profile'], [/^Employer 7-day/, 'act7'], [/^Employer 30-day/, 'ret30'], [/^Assisted/, 'assistedGa'],
       [/^Engaged sessions/, 'engaged'], [/^Engagement rate/, 'engRate'], [/^Pages per session/, 'pps'], [/^Scroll/, 'scrollKey'], [/^Return visits/, 'return4w'],
       [/^MQL/, 'mqls'], [/^Pipeline created – organic first/, 'pipeFT'], [/^Pipeline created – organic in/, 'pipeAssist'], [/^Revenue closed – organic first/, 'revFT'], [/^Revenue closed – organic in/, 'revAssist'], [/^Lead → opp/, 'l2o'], [/^Lead → close/, 'l2c']];
-    const ownerOf = r => { const m = MID.find(([rx]) => rx.test(r.kpi)); if (!m) return r.src === 'PageSpeed' || r.src === 'Crawl' ? 'Technical SEO + Engineering' : 'B2B SEO'; const mt = U.METRICS.find(x => x.id === m[1]); return (s0.owners || {})[m[1]] || (mt ? mt.owner : 'B2B SEO'); };
+    const ownerOf = r => { const m = MID.find(([rx]) => rx.test(r.kpi)); if (!m) return r.src === 'PageSpeed' || r.src === 'Crawl' ? 'Technical SEO + Engineering' : (cfg.employer === false ? 'SEO' : 'B2B SEO'); const mt = U.METRICS.find(x => x.id === m[1]); return (s0.owners || {})[m[1]] || (mt ? mt.owner : 'B2B SEO'); };
     R.forEach(r => { r.owner = ownerOf(r); });
-    const heads = [...cols.map(c => c.name), 'Combined (B2E + J&I)'];
+    const heads = [...cols.map(c => c.name), cfg.bothHead || 'Combined (B2E + J&I)'];
     const chgTxt = c => c == null ? '' : typeof c === 'object' ? (c.pos != null ? (c.pos > 0 ? '+' : '') + c.pos.toFixed(1) : (c.n > 0 ? '+' : '') + fmtN(c.n)) : (c > 0 ? '+' : '') + c.toFixed(1) + '%';
     const chgHtml = (c, kpi) => { if (c == null) return ''; if (typeof c === 'object') { const v = c.pos != null ? c.pos : c.n; if (c.pos != null) return dchip(v, true, 'pos'); const good = /11–20/.test(kpi) ? null : v > 0; return `<span class="un-d ${v === 0 ? 'flat' : good === null ? 'flat' : good ? 'up' : 'down'}">${chgTxt(c)}</span>`; } return dchip(c); };
     const cell = (r, i) => { const v = r.vals[i]; if (r.ldKind && v > 0) return ldLink(v, { range: 'period', kind: r.ldKind, cluster: i === 2 ? 'both' : ids[i], label: `${heads[i]} · ${r.kpi}` }, fmtV(v, r.kind)); if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; if (r.bucket && v > 0) return `<a href="#" class="un-b2e-kw" data-kw="${r.bucket.seg}|${r.bucket.k}|${i}" title="Show these keywords">${fmtV(v, r.kind)}</a>`; return fmtV(v, r.kind); };
     const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : r.src === 'Crawl' ? (!crR ? 'none' : cr.sample ? 'sample' : 'file') : r.src === 'CRM' ? (!C ? 'none' : crm.sample ? 'sample' : 'file') : r.src === 'MoEngage' ? (!AQ.qsrc ? 'none' : AQ.qsrc) : r.src === 'Cost input' ? (AQ.cpsEmp == null ? 'none' : AQ.costSample ? 'sample' : 'input') : r.src === 'Rank tracker' ? 'file' : r.src === 'Leads sheet' ? (!SLr ? 'none' : SLd.source === 'sample' ? 'sample' : SLd.source === 'sheet' ? 'live' : 'file') : 'later';
     let lastSec = '';
     // which columns to show and copy: all three, or just B2E, just B2E (J&I) or just the combined total
-    const VIEW = b2eState(D.site).view || 'all', shown = VIEW === 'all' ? [0, 1, 2] : [+VIEW];
+    const VIEW = cols[1].dummy ? '0' : (b2eState(SK).view || 'all'), shown = VIEW === 'all' ? [0, 1, 2] : [+VIEW];
     const trs = R.map(r => { const s = r.sec !== lastSec ? `<tr class="un-b2e-sec"><th colspan="${shown.length * 2 + 3}">${esc(r.sec)}</th></tr>` : ''; lastSec = r.sec; return s + `<tr><td>${esc(r.kpi)}${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td>${shown.map(i => `<td class="r"><b>${cell(r, i)}</b></td><td class="r un-b2e-d">${chgHtml(r.chgs[i], r.kpi)}</td>`).join('')}<td>${r.link ? `<a href="${esc(r.link[0])}">${esc(r.link[1])} →</a>` : chip(status(r))}</td><td class="un-b2e-o">${esc(r.owner)}</td></tr>`; }).join('');
     const tsv = () => {
       // changes go out as plain numbers ("46.5%", "-3.9") with no leading +, so Google Sheets reads them as numbers
@@ -2406,22 +2427,23 @@
       const isB = brandOf(A), qp = new Map();
       (D.QP || []).forEach(r => { const k = U.pathOnly(r.p).toLowerCase(); const o = qp.get(k) || { b: 0, n: 0 }; if (isB(r.q)) o.b += +r.clicks || 0; else o.n += +r.clicks || 0; qp.set(k, o); });
       const slByPage = new Map(); if (SLr) SLr.leads.filter(l => l.organic && slIn(l) && l.kind !== 'internal').forEach(l => { const o = slByPage.get(l.path) || { n: 0, off: 0 }; o.n++; if (l.kind === 'official') o.off++; slByPage.set(l.path, o); });
-      const pg = M ? M.pages.filter(p => cols.some(c => so(p.path) === c.id)).map(p => { const sl = slByPage.get(p.path.toLowerCase()) || { n: 0, off: 0 }; return { ...p, cluster: so.label(so(p.path)), sl: sl.n, slOff: sl.off, conv: p.emp + p.demo + p.contact + sl.n }; }) : [];
+      const pg = M ? M.pages.filter(p => cols.some(c => so(p.path) === c.id)).map(p => { const sl = slByPage.get(p.path.toLowerCase()) || { n: 0, off: 0 }; return { ...p, cluster: so.label(so(p.path)), sl: sl.n, slOff: sl.off, conv: cfg.employer === false ? p.stu + p.emp : p.emp + p.demo + p.contact + sl.n }; }) : [];
       const top = pg.filter(p => p.conv > 0).sort((a, b) => b.conv - a.conv || b.sessions - a.sessions).slice(0, 10);
       let wn = 0, wt = 0, covered = 0, all = 0;
       pg.forEach(p => { all += p.conv; const x = qp.get(p.path.toLowerCase()); if (!x || !(x.b + x.n)) return; covered += p.conv; wt += p.conv; wn += p.conv * x.n / (x.b + x.n); });
       const nbShare = wt ? wn / wt * 100 : null;
-      const q1 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : top.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Employer signups</th><th class="r">Demo + contact</th>${SLr ? '<th class="r">Sales-form leads (official)</th>' : ''}<th class="r">Sessions</th></tr></thead><tbody>${top.map(p => `<tr><td class="u"><a href="${esc(focusHref({ u: p.path }))}">${esc(p.path)}</a></td><td>${esc(p.cluster)}</td><td class="r">${fmtN(Math.round(p.emp))}</td><td class="r">${fmtN(Math.round(p.demo + p.contact))}</td>${SLr ? `<td class="r">${fmtN(p.sl)} (${fmtN(p.slOff)})</td>` : ''}<td class="r">${fmtN(Math.round(p.sessions))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="un-n">No employer signup, demo or contact events on these pages yet: check the event names in Funnel setup.</p>';
-      const q2 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : nbShare == null ? '<p class="un-n">Needs Search Console query × page rows for the employer pages.</p>' : `<p class="un-big"><b>${pct1(nbShare)}</b> <span>of employer signups + leads came from non-branded searches (estimate)</span></p><p class="hint">Each page’s signups and leads × that page’s non-branded share of clicks. Google does not tie a search to a signup, so this is a proxy, not an exact count. Covers ${pct1(all ? covered / all * 100 : 0)} of conversions (pages with query data).</p>`;
+      const EMP = cfg.employer !== false;
+      const q1 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : !EMP && top.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Folder</th><th class="r">Student signups</th><th class="r">Employer signups</th><th class="r">Register / apply</th><th class="r">Sessions</th></tr></thead><tbody>${top.map(p => `<tr><td class="u"><a href="${esc(focusHref({ u: p.path }))}">${esc(p.path)}</a></td><td>${esc(p.cluster)}</td><td class="r">${fmtN(Math.round(p.stu))}</td><td class="r">${fmtN(Math.round(p.emp))}</td><td class="r">${fmtN(Math.round(p.opp))}</td><td class="r">${fmtN(Math.round(p.sessions))}</td></tr>`).join('')}</tbody></table></div>` : top.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Employer signups</th><th class="r">Demo + contact</th>${SLr ? '<th class="r">Sales-form leads (official)</th>' : ''}<th class="r">Sessions</th></tr></thead><tbody>${top.map(p => `<tr><td class="u"><a href="${esc(focusHref({ u: p.path }))}">${esc(p.path)}</a></td><td>${esc(p.cluster)}</td><td class="r">${fmtN(Math.round(p.emp))}</td><td class="r">${fmtN(Math.round(p.demo + p.contact))}</td>${SLr ? `<td class="r">${fmtN(p.sl)} (${fmtN(p.slOff)})</td>` : ''}<td class="r">${fmtN(Math.round(p.sessions))}</td></tr>`).join('')}</tbody></table></div>` : `<p class="un-n">No ${EMP ? 'employer signup, demo or contact' : 'signup'} events on these pages yet: check the event names in Funnel setup.</p>`;
+      const q2 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : nbShare == null ? '<p class="un-n">Needs Search Console query × page rows for these pages.</p>' : `<p class="un-big"><b>${pct1(nbShare)}</b> <span>of ${EMP ? 'employer signups + leads' : 'signups'} came from non-branded searches (estimate)</span></p><p class="hint">Each page’s signups and leads × that page’s non-branded share of clicks. Google does not tie a search to a signup, so this is a proxy, not an exact count. Covers ${pct1(all ? covered / all * 100 : 0)} of conversions (pages with query data).</p>`;
       const q3 = C ? `<div class="grid-2 even"><p class="un-big"><b>${inr(C.ft.pipeline)}</b> <span>pipeline with organic as first touch</span></p><p class="un-big"><b>${inr(C.assisted.pipeline)}</b> <span>pipeline with organic in the journey (assisted)</span></p></div><p class="hint">Kept separate, never added together. ${fmtN(C.ft.leads)} organic first-touch leads, ${fmtN(C.ft.opps)} opportunities. Source known on ${pct1(C.coverage.source)} of CRM leads${C.coverage.landing ? `, landing page on ${pct1(C.coverage.landing)}` : ''}.${crm.sample ? ' Sample CRM data.' : ''}</p>` : `<p class="un-n">Not traceable yet: upload a CRM export with lead source, landing page, stage and amount on <a href="#leads">Leads & revenue</a>.</p>`;
-      return `<section class="panel"><div class="panel-h"><h2>First review: the three questions (employer side)</h2></div><div class="panel-b">
-        <h3 class="un-sub">1. Which employer pages drove the most signups and leads (not the most traffic)?</h3>${q1}
-        <h3 class="un-sub">2. What share of organic signups and leads comes from non-branded queries?</h3>${q2}
-        <h3 class="un-sub">3. How much pipeline can we trace to organic?</h3>${q3}
+      return `<section class="panel"><div class="panel-h"><h2>First review: ${EMP ? 'the three questions (employer side)' : 'signups from these pages'}</h2></div><div class="panel-b">
+        <h3 class="un-sub">1. Which ${EMP ? 'employer ' : ''}pages drove the most signups${EMP ? ' and leads' : ''} (not the most traffic)?</h3>${q1}
+        <h3 class="un-sub">2. What share of organic signups${EMP ? ' and leads' : ''} comes from non-branded queries?</h3>${q2}
+        ${EMP ? `<h3 class="un-sub">3. How much pipeline can we trace to organic?</h3>${q3}` : ''}
         <p class="hint">Cadence: <b>weekly</b> the Visibility rows (indexation, rankings, impressions) · <b>monthly</b> traffic → signups → leads · <b>quarterly</b> pipeline, revenue, cost and what to stop. Decisions and owners are logged on <a href="#reviews">Reviews</a>.</p></div></section>`;
     };
     // keywords behind a bucket count (clicked in the table)
-    const kwSel = B2E_KW.get(D.site);
+    const kwSel = B2E_KW.get(SK);
     delete TABLES['t-un-b2e-kw'];
     function kwPanel() {
       if (!kwSel) return '';
@@ -2429,15 +2451,15 @@
       const idx = i === 2 ? [0, 1] : [i];
       const isBr = brandOf(A);
       const rows = idx.flatMap(j => { const m = G[j]; if (!m) return []; const src = topic ? (m.allQueries || []).filter(r => b2eTopic(r.q) === topic && (seg === 'b') === !!isBr(r.q) && (k === 'all' || (k === 'top10' ? r.pos <= 10 : r.pos > 10 && r.pos <= 20))) : (m.bucketLists ? m.bucketLists[seg][k] : []); return src.map(r => ({ ...r, cluster: cols[j].name, ctr: r.impr ? r.clicks / r.impr * 100 : 0 })); }).sort((a, b) => b.impr - a.impr);
-      const title = `${i === 2 ? 'B2E + B2E (J&I)' : cols[i].name}: ${topic ? topic + ', ' : ''}${seg === 'n' ? 'non-brand' : 'brand'} keywords ${lab} (${fmtN(rows.length)})`.replace(/ \(/, ' (').replace(/\s+\(/, ' (');
+      const title = `${i === 2 ? bothName : cols[i].name}: ${topic ? topic + ', ' : ''}${seg === 'n' ? 'non-brand' : 'brand'} keywords ${lab} (${fmtN(rows.length)})`.replace(/ \(/, ' (').replace(/\s+\(/, ' (');
       return `<section class="panel" id="un-b2e-kwp"><div class="panel-h"><h2>${esc(title)}</h2><p>Search Console, ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}. Position is the average for this cluster’s pages. <button class="btn-quiet sm" type="button" id="un-b2e-kwx">Close</button></p></div>` +
         table('t-un-b2e-kw', [{ k: 'q', l: 'Keyword', cls: 'q', f: r => `<a href="https://www.google.com/search?q=${encodeURIComponent(r.q)}&gl=in&hl=en" target="_blank" rel="noopener">${esc(r.q)}</a>`, csv: r => r.q }, ...(i === 2 ? [{ k: 'cluster', l: 'Cluster' }] : []), { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos), csv: r => r.pos.toFixed(1) }],
-          rows, { file: 'unstop-b2e-' + (topic ? topic.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' : '') + (seg === 'n' ? 'nonbrand' : 'brand') + '-' + k, sort: 'impr', pageSize: 50, placeholder: 'Filter keywords' }) + '</section>';
+          rows, { file: cfg.file + '-' + (topic ? topic.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' : '') + (seg === 'n' ? 'nonbrand' : 'brand') + '-' + k, sort: 'impr', pageSize: 50, placeholder: 'Filter keywords' }) + '</section>';
     }
     // ═══ extra sections: alerts, weekly trend, products, topics, quick wins, all landing pages ═══
-    const ST = b2eState(D.site);
-    const XK = b2eKey(D);
-    const X = live ? B2EX.get(XK) : b2eFromRows(A, D, ids);
+    const ST = b2eState(SK);
+    const XK = b2eKey(D) + '|' + cfg.key + (cfg.key === 'b2e' ? '' : '|' + realIds.map(id => JSON.stringify((so.sections.find(x => x.id === id) || {}).rules)).join());
+    const X = live ? B2EX.get(XK) : b2eFromRows(A, D, realIds, cfg.so);
     const xReady = X && X.status === 'done';
     const isB = brandOf(A);
     const clusterName = id => (cols.find(c => c.id === id) || { name: so.label(id) }).name;
@@ -2461,8 +2483,8 @@
     if (live && (!X || X.status === 'loading')) alertHtml = '<p class="progress">Loading this week vs last week from Search Console…</p>';
     else if (X && X.status === 'error') alertHtml = `<p class="start-error">${esc(X.error)}</p>`;
     else if (xReady) {
-      const pd = ids.flatMap(id => b2eDrops(X.cur[id].pages, X.prev[id].pages, 10).map(r => ({ ...r, cluster: clusterName(id), path: U.pathOnly(r.k) })));
-      const kd = ids.flatMap(id => b2eDrops(X.cur[id].queries.filter(q => !isB(q.k)), X.prev[id].queries.filter(q => !isB(q.k)), 5).map(r => ({ ...r, cluster: clusterName(id) })));
+      const pd = realIds.flatMap(id => b2eDrops(X.cur[id].pages, X.prev[id].pages, 10).map(r => ({ ...r, cluster: clusterName(id), path: U.pathOnly(r.k) })));
+      const kd = realIds.flatMap(id => b2eDrops(X.cur[id].queries.filter(q => !isB(q.k)), X.prev[id].queries.filter(q => !isB(q.k)), 5).map(r => ({ ...r, cluster: clusterName(id) })));
       const win = X.periodBased ? `${fmtD(D.start)} – ${fmtD(D.end)} vs the previous period` : `${fmtD(X.W.curS)} – ${fmtD(X.W.end)} vs ${fmtD(X.W.prevS)} – ${fmtD(X.W.prevE)}`;
       const lost = pd.reduce((a, r) => a + r.lost, 0);
       alertTop = pd.length || kd.length ? `<div class="note un-b2e-alert"><b>${fmtN(pd.length)} page${pd.length === 1 ? '' : 's'} and ${fmtN(kd.length)} non-brand keyword${kd.length === 1 ? '' : 's'} dropped</b> (${esc(win)}): about ${fmtN(Math.round(lost))} clicks lost on pages. <a href="#" data-jump="un-b2e-alerts">See the drops and why →</a></div>` : `<div class="note">No drops this week (${esc(win)}).</div>`;
@@ -2474,10 +2496,10 @@
     let trendHtml = '';
     if (live && (!X || X.status === 'loading')) trendHtml = '<p class="progress">Loading 16 weeks from Search Console…</p>';
     else if (xReady && Object.keys(X.weekly).length) {
-      const wk = [...new Set(ids.flatMap(id => (X.weekly[id] ? X.weekly[id].nb : []).map(r => r.w)))].sort();
+      const wk = [...new Set(realIds.flatMap(id => (X.weekly[id] ? X.weekly[id].nb : []).map(r => r.w)))].sort();
       const val = (id, w, m) => { const s = X.weekly[id]; if (!s) return null; const r = (m === 'b' ? s.b : s.nb).find(x => x.w === w); return r ? r : null; };
       trendHtml = `<div class="un-tabs" role="tablist">${[['nb', 'Non-brand clicks'], ['nbi', 'Non-brand impressions'], ['pos', 'Non-brand position'], ['b', 'Brand clicks']].map(([k, l]) => `<button type="button" class="${ST.trend === k ? 'on' : ''}" data-b2t="${k}">${l}</button>`).join('')}</div><div class="chart-box un-tall"><canvas id="un-b2e-ch" aria-label="Weekly trend B2E vs B2E (J&I)"></canvas></div>
-        <div class="tw"><table class="un-mini"><thead><tr><th>Week starting</th>${cols.map(c => `<th class="r">${esc(c.name)} NB clicks</th><th class="r">${esc(c.name)} NB position</th><th class="r">${esc(c.name)} brand clicks</th>`).join('')}</tr></thead><tbody>${wk.slice().reverse().slice(0, 8).map(w => { const part = ids.some(id => { const r = val(id, w, 'nb'); return r && r.partial; }); return `<tr><td>${fmtD(w)}${part ? ' <span class="tag">partial</span>' : ''}</td>${ids.map(id => { const n = val(id, w, 'nb'), b = val(id, w, 'b'); return `<td class="r">${n ? fmtN(n.clicks) : '—'}</td><td class="r">${n && n.impr ? n.pos.toFixed(1) : '—'}</td><td class="r">${b ? fmtN(b.clicks) : '—'}</td>`; }).join('')}</tr>`; }).join('')}</tbody></table></div>${X.sample ? '<p class="hint">Sample weekly series generated from the sample totals.</p>' : `<p class="hint">Last 16 weeks to ${fmtD(D.end)}, Monday-start weeks.</p>`}`;
+        <div class="tw"><table class="un-mini"><thead><tr><th>Week starting</th>${cols.filter(c => !c.dummy).map(c => `<th class="r">${esc(c.name)} NB clicks</th><th class="r">${esc(c.name)} NB position</th><th class="r">${esc(c.name)} brand clicks</th>`).join('')}</tr></thead><tbody>${wk.slice().reverse().slice(0, 8).map(w => { const part = realIds.some(id => { const r = val(id, w, 'nb'); return r && r.partial; }); return `<tr><td>${fmtD(w)}${part ? ' <span class="tag">partial</span>' : ''}</td>${realIds.map(id => { const n = val(id, w, 'nb'), b = val(id, w, 'b'); return `<td class="r">${n ? fmtN(n.clicks) : '—'}</td><td class="r">${n && n.impr ? n.pos.toFixed(1) : '—'}</td><td class="r">${b ? fmtN(b.clicks) : '—'}</td>`; }).join('')}</tr>`; }).join('')}</tbody></table></div>${X.sample ? '<p class="hint">Sample weekly series generated from the sample totals.</p>' : `<p class="hint">Last 16 weeks to ${fmtD(D.end)}, Monday-start weeks.</p>`}`;
     } else trendHtml = '<p class="un-n">Weekly trend needs a live Search Console connection (an upload has no daily rows per cluster).</p>';
     // ── products ──
     const prodMap = new Map();
@@ -2491,7 +2513,7 @@
       { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + (D.prevStart ? dchip(r.dClicks) : ''), csv: r => r.clicks }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => r.impr ? posTag(r.pos) : '—', csv: r => r.pos.toFixed(1) },
       { k: 'nbC', l: 'Non-brand clicks', r: 1, f: r => nOr(r.nbC) }, { k: 'bC', l: 'Brand clicks', r: 1, f: r => nOr(r.bC) }, { k: 't10', l: 'NB keywords top 10', r: 1, f: r => nOr(r.t10) }, { k: 'p11', l: 'NB 11–20', r: 1, f: r => nOr(r.p11) },
       ...(M ? [{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.sessions == null ? '—' : fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSes), csv: r => r.sessions }, { k: 'leads', l: 'Demo + contact', r: 1, f: r => nOr(r.leads) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => nOr(r.emp) }] : [])
-    ], prods, { file: 'unstop-b2e-products', sort: 'clicks', pageSize: 40, search: false });
+    ], prods, { file: cfg.file + '-products', sort: 'clicks', pageSize: 40, search: false });
     // ── search topics: brand vs non-brand ──
     const tcol = ST.topicCol, tIdx = tcol === 2 ? [0, 1] : [tcol];
     const tq = tIdx.flatMap(j => G[j] && G[j].allQueries ? G[j].allQueries.map(r => ({ ...r, cluster: cols[j].name })) : []);
@@ -2501,13 +2523,13 @@
     delete TABLES['t-un-b2e-top'];
     const tLink = (v, topic, seg, k) => v ? `<a href="#" data-tkw="${esc(topic)}|${seg}|${k}" title="Show these keywords">${fmtN(Math.round(v))}</a>` : '0';
     const topicHtml = (live && G.some(m => !m)) ? '<p class="progress">Loading…</p>' : G.some(m => m && !m.allQueries) ? '<p class="un-n">Press Reload Search Console to load the full query list.</p>' :
-      `<label class="field un-f sm" style="max-width:260px"><span>Cluster</span><select id="un-b2e-tcol">${[[2, 'B2E + B2E (J&I)'], [0, cols[0].name], [1, cols[1].name]].map(([v, l]) => `<option value="${v}" ${tcol === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` +
+      `<label class="field un-f sm" style="max-width:260px"><span>Cluster</span><select id="un-b2e-tcol">${[[2, bothName], [0, cols[0].name], [1, cols[1].name]].filter(([v]) => !(v !== 0 && cols[1].dummy)).map(([v, l]) => `<option value="${v}" ${tcol === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` +
       table('t-un-b2e-top', [
         { k: 'topic', l: 'Search topic', f: r => `<b>${esc(r.topic)}</b>`, csv: r => r.topic },
         { k: 'nClicks', l: 'NB clicks', r: 1, f: r => fmtN(r.nClicks) }, { k: 'nImpr', l: 'NB impr.', r: 1, f: r => fmtN(r.nImpr) }, { k: 'nCtr', l: 'NB CTR', r: 1, f: r => pct1(r.nCtr) }, { k: 'nPos', l: 'NB position', r: 1, f: r => r.nPos == null ? '—' : posTag(r.nPos), csv: r => r.nPos },
         { k: 'nK', l: 'NB keywords', r: 1, f: r => tLink(r.nK, r.topic, 'n', 'all') }, { k: 't10', l: 'NB top 10', r: 1, f: r => tLink(r.t10, r.topic, 'n', 'top10') }, { k: 'p11', l: 'NB 11–20', r: 1, f: r => tLink(r.p11, r.topic, 'n', 'p11') },
         { k: 'bClicks', l: 'Brand clicks', r: 1, f: r => fmtN(r.bClicks) }, { k: 'bCtr', l: 'Brand CTR', r: 1, f: r => r.bImpr ? pct1(r.bCtr) : '—' }, { k: 'bPos', l: 'Brand position', r: 1, f: r => r.bPos == null ? '—' : posTag(r.bPos), csv: r => r.bPos }, { k: 'bK', l: 'Brand keywords', r: 1, f: r => tLink(r.bK, r.topic, 'b', 'all') }
-      ], topics, { file: 'unstop-b2e-search-topics', sort: 'nClicks', pageSize: 30, search: false });
+      ], topics, { file: cfg.file + '-search-topics', sort: 'nClicks', pageSize: 30, search: false });
     // ── quick wins: non-brand keywords in positions 11–20 with the page that ranks and the next step ──
     const qwAll = [0, 1].flatMap(j => G[j] && G[j].allQueries ? G[j].allQueries.filter(r => !isB(r.q) && r.pos > 10 && r.pos <= 20).map(r => ({ ...r, cluster: cols[j].name })) : []);
     const qw = qwAll.map(r => {
@@ -2525,7 +2547,7 @@
         { k: 'path', l: 'Page that ranks', cls: 'u', f: r => r.path ? `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` : '<span class="un-n">not found</span>', csv: r => r.path || '' },
         { k: 'action', l: 'Next step', f: r => `<small>${esc(r.action)}</small>` },
         { k: 'add', l: '', f: r => `<button class="btn-quiet sm" type="button" data-qw="${QW.indexOf(r)}">Add task</button>`, csv: () => '' }
-      ], QW, { file: 'unstop-b2e-quick-wins', sort: 'score', pageSize: 25, placeholder: 'Filter keywords or pages', searchKeys: ['q', 'path', 'topic'] });
+      ], QW, { file: cfg.file + '-quick-wins', sort: 'score', pageSize: 25, placeholder: 'Filter keywords or pages', searchKeys: ['q', 'path', 'topic'] });
     // ── all landing pages (filtered by a product when one is picked) ──
     delete TABLES['t-un-b2e-pages'];
     const pList = ST.product ? pagesAll.filter(r => r.product === ST.product) : pagesAll;
@@ -2536,9 +2558,9 @@
         { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) + ' ' + (D.prevStart ? dchip(r.dClicks) : ''), csv: r => r.clicks }, { k: 'impr', l: 'Impr.', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => r.impr ? posTag(r.pos) : '—', csv: r => r.pos.toFixed(1) },
         { k: 'nbC', l: 'Non-brand clicks', r: 1, f: r => nOr(r.nbC) }, { k: 'bC', l: 'Brand clicks', r: 1, f: r => nOr(r.bC) },
         ...(M ? [{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.sessions == null ? '—' : fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSes), csv: r => r.sessions }, { k: 'leads', l: 'Demo + contact', r: 1, f: r => nOr(r.leads) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => nOr(r.emp) }] : [])
-      ], pList, { file: 'unstop-b2e-landing-pages', sort: 'clicks', pageSize: 50, placeholder: 'Filter URLs or products', searchKeys: ['path', 'product', 'cluster'] });
+      ], pList, { file: cfg.file + '-landing-pages', sort: 'clicks', pageSize: 50, placeholder: 'Filter URLs or products', searchKeys: ['path', 'product', 'cluster'] });
     // ── the leads behind a clicked count ──
-    const LDSEL = B2E_LD.get(D.site); let ldTsv = '';
+    const LDSEL = B2E_LD.get(SK); let ldTsv = '';
     delete TABLES['t-un-b2e-ld'];
     function leadPanel() {
       if (!LDSEL || !SLr) return '';
@@ -2551,7 +2573,7 @@
           { k: 'domain', l: 'Email domain', f: r => r.kind === 'personal' ? `<span class="un-n">${esc(r.domain)}</span>` : `<b>${esc(r.domain)}</b>` }, { k: 'kind', l: 'Email type', f: r => esc(KN[r.kind] || r.kind), csv: r => KN[r.kind] || r.kind },
           { k: 'usertype', l: 'User type' }, { k: 'status', l: 'New / existing' },
           { k: 'path', l: 'Page', cls: 'u', f: r => r.path ? esc(r.path) : '<span class="un-n">not recorded</span>', csv: r => r.path }, { k: 'area', l: 'Product / area', f: r => esc(r.place.area), csv: r => r.place.area }, { k: 'source', l: 'Source' }
-        ], rows, { file: 'unstop-b2e-leads', sort: 'day', pageSize: 25, placeholder: 'Filter by name, domain, page or source', searchKeys: ['name', 'domain', 'path', 'source', 'usertype'] }) + '</section>';
+        ], rows, { file: cfg.file + '-leads', sort: 'day', pageSize: 25, placeholder: 'Filter by name, domain, page or source', searchKeys: ['name', 'domain', 'path', 'source', 'usertype'] }) + '</section>';
     }
     // ── sales-form leads section ──
     const slRange = SST.slRange || 'period', slAll = !!SST.slAll;
@@ -2595,13 +2617,14 @@
           { k: 'total', l: 'Leads', r: 1, f: r => ldLink(r.total, { ...base, kind: 'any', path: r.path, label: r.path || 'page not recorded' }), csv: r => r.total }, { k: 'official', l: 'Official', r: 1, f: r => ldLink(r.official, { ...base, kind: 'official', path: r.path, label: (r.path || 'page not recorded') + ' · official' }), csv: r => r.official }, { k: 'campus', l: 'Campus', r: 1, f: r => ldLink(r.campus, { ...base, kind: 'campus', path: r.path, label: (r.path || 'page not recorded') + ' · campus' }), csv: r => r.campus }, { k: 'personal', l: 'Personal', r: 1, f: r => ldLink(r.personal, { ...base, kind: 'personal', path: r.path, label: (r.path || 'page not recorded') + ' · personal' }), csv: r => r.personal },
           { k: 'officialShare', l: 'Official share', r: 1, f: r => pct1(r.officialShare), csv: r => r.officialShare == null ? '' : r.officialShare.toFixed(1) }, { k: 'newU', l: 'New users', r: 1, f: r => fmtN(r.newU) },
           { k: 'other', l: 'Other sources', r: 1, f: r => r.other ? `${ldLink(r.other, { range: slRange, nonOrg: true, kind: 'any', path: r.path, label: (r.path || 'page not recorded') + ' · other sources' })}<br><small class="un-n">${esc(r.otherSrc)}</small>` : '0', csv: r => r.other }, { k: 'otherOff', l: 'Other: official', r: 1, f: r => fmtN(r.otherOff) }, { k: 'orgShare', l: 'Organic share of all leads', r: 1, f: r => pct1(r.orgShare), csv: r => r.orgShare == null ? '' : r.orgShare.toFixed(1) }, { k: 'internal', l: 'Internal', r: 1, f: r => fmtN(r.internal) }
-        ], prow, { file: 'unstop-b2e-sales-form-leads', sort: 'total', pageSize: 30, placeholder: 'Filter pages or products', searchKeys: ['path', 'area', 'group'], filters: [{ key: 'group', label: 'Group', options: [['B2E', 'B2E'], ['B2E (J&I)', 'B2E (J&I)'], ['Other form pages', 'Other form pages']], test: (r, v) => r.group === v }] }) +
+        ], prow, { file: cfg.file + '-sales-form-leads', sort: 'total', pageSize: 30, placeholder: 'Filter pages or products', searchKeys: ['path', 'area', 'group'], filters: [{ key: 'group', label: 'Group', options: [['B2E', 'B2E'], ['B2E (J&I)', 'B2E (J&I)'], ['Other form pages', 'Other form pages']], test: (r, v) => r.group === v }] }) +
         `<h3 class="un-sub">By month (${slAll ? 'all channels' : 'organic'})</h3><div class="tw"><table class="un-mini"><thead><tr><th>Month</th><th class="r">B2E + J&I leads</th><th class="r">Official</th><th class="r">Campus</th><th class="r">Personal</th><th class="r">Official share</th><th class="r">All form pages</th><th class="r">All: official</th></tr></thead><tbody>${months.map(r => { const mb = { range: 'all', all: slAll, month: r.m, empOnly: true }; return `<tr><td>${esc(r.m)}</td><td class="r">${ldLink(r.e.total, { ...mb, kind: 'any', label: r.m + ' · B2E + J&I' })}</td><td class="r">${ldLink(r.e.official, { ...mb, kind: 'official', label: r.m + ' · B2E + J&I · official' })}</td><td class="r">${ldLink(r.e.campus, { ...mb, kind: 'campus', label: r.m + ' · B2E + J&I · campus' })}</td><td class="r">${ldLink(r.e.personal, { ...mb, kind: 'personal', label: r.m + ' · B2E + J&I · personal' })}</td><td class="r">${pct1(r.e.officialShare)}</td><td class="r">${fmtN(r.a.total)}</td><td class="r">${fmtN(r.a.official)}</td></tr>`; }).join('')}</tbody></table></div>
         <p class="hint">Official = company email domain. Campus = college or university domain (.ac.in, .edu, or a domain mostly used by students). Personal = Gmail, Yahoo, Outlook and other free mail. One class per domain.</p>`;
     }
     // ── AI assistants: visits by month (GA4, any channel), click a number for the landing pages ──
-    const aiScope = ST.aiScope || 'both', aiSel = B2E_AI.get(D.site);
+    const aiScope = ST.aiScope || 'both', aiSel = B2E_AI.get(SK);
     const AIR = M && M.aiMonthly ? M.aiMonthly.filter(r => aiScope === 'site' ? true : aiScope === 'both' ? ids.includes(so(r.path)) : so(r.path) === aiScope) : null;
+    if (cols[1].dummy && aiScope === 'both') ST.aiScope = ids[0];
     let aiHtml = '', aiTsv = '', aiDrillTsv = '';
     const AIL = [];
     const aiLink = (n, spec) => n ? `<a href="#" data-ai="${AIL.push(spec) - 1}" title="Show the landing pages">${fmtN(Math.round(n))}</a>` : '0';
@@ -2612,10 +2635,10 @@
       const srcs = [...srcT.entries()].sort((a, b) => b[1] - a[1]).map(x => x[0]);
       const mm = new Map(); AIR.forEach(r => { const o = mm.get(r.month) || { m: r.month, tot: 0, ke: 0, nu: 0, by: {} }; o.tot += r.sessions; o.ke += r.keyEvents; o.nu += r.newUsers; o.by[r.source] = (o.by[r.source] || 0) + r.sessions; mm.set(r.month, o); });
       const months = [...mm.values()].sort((a, b) => b.m.localeCompare(a.m));
-      const scName = aiScope === 'site' ? 'Whole site' : aiScope === 'both' ? 'B2E + B2E (J&I)' : clusterName(aiScope);
+      const scName = aiScope === 'site' ? 'Whole site' : aiScope === 'both' ? bothName : clusterName(aiScope);
       aiTsv = [['Month', 'All AI sessions', ...srcs, 'New users', 'Key events'].join('\t'), ...months.map(o => [o.m, Math.round(o.tot), ...srcs.map(x => Math.round(o.by[x] || 0)), Math.round(o.nu), Math.round(o.ke)].join('\t'))].join('\n');
       const last = months[0], prev = months[1];
-      aiHtml = `<div class="un-row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><label class="field un-f sm"><span>Pages</span><select id="un-ai-scope">${[['both', 'B2E + B2E (J&I)'], ['empb2b', cols[0].name], ['empjobboard', cols[1].name], ['site', 'Whole site']].map(([v, l]) => `<option value="${v}" ${aiScope === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label><button class="btn-primary sm" type="button" id="un-ai-copy">Copy for Google Sheets</button><span class="hint" id="un-ai-msg">${esc(scName)} · ${last ? `${esc(last.m)}: ${fmtN(Math.round(last.tot))} AI sessions${prev ? ' ' + dchip(U.chg(last.tot, prev.tot)) + ' vs ' + esc(prev.m) : ''}` : ''}</span></div>
+      aiHtml = `<div class="un-row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><label class="field un-f sm"><span>Pages</span><select id="un-ai-scope">${[['both', bothName], [ids[0], cols[0].name], [ids[1], cols[1].name], ['site', 'Whole site']].filter(([v]) => !(cols[1].dummy && (v === ids[1] || v === 'both'))).map(([v, l]) => `<option value="${v}" ${aiScope === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label><button class="btn-primary sm" type="button" id="un-ai-copy">Copy for Google Sheets</button><span class="hint" id="un-ai-msg">${esc(scName)} · ${last ? `${esc(last.m)}: ${fmtN(Math.round(last.tot))} AI sessions${prev ? ' ' + dchip(U.chg(last.tot, prev.tot)) + ' vs ' + esc(prev.m) : ''}` : ''}</span></div>
         <div class="chart-box"><canvas id="un-ai-ch" aria-label="AI assistant sessions by month"></canvas></div>
         <div class="tw"><table class="un-mini"><thead><tr><th>Month</th><th class="r">All AI</th>${srcs.map(x => `<th class="r"><a href="#" data-ai="${AIL.push({ source: x }) - 1}">${esc(x)}</a></th>`).join('')}<th class="r">New users</th><th class="r">Key events</th></tr></thead><tbody>${months.map(o => `<tr><td>${esc(o.m)}${o.m === (D.end || '').slice(0, 7) ? ' <span class="tag">partial</span>' : ''}</td><td class="r"><b>${aiLink(o.tot, { month: o.m })}</b></td>${srcs.map(x => `<td class="r">${aiLink(o.by[x], { month: o.m, source: x })}</td>`).join('')}<td class="r">${fmtN(Math.round(o.nu))}</td><td class="r">${fmtN(Math.round(o.ke))}</td></tr>`).join('')}</tbody></table></div>
         <p class="hint">GA4 sessions referred by AI assistants (ChatGPT, Perplexity, Gemini, Copilot, Claude…), any channel, landing on ${esc(scName.toLowerCase())}. Click a number for its landing pages; click an assistant name for all its months.</p>`;
@@ -2629,29 +2652,30 @@
         delete TABLES['t-un-b2e-ai'];
         aiHtml += `<section class="panel un-ldp" id="un-b2e-aip"><div class="panel-h"><h2>${esc(ttl)}</h2><p><button class="btn-primary sm" type="button" id="un-ai-dcopy">Copy for Google Sheets</button> <button class="btn-quiet sm" type="button" id="un-ai-x">Close</button> <span class="hint" id="un-ai-dmsg"></span></p></div>` +
           table('t-un-b2e-ai', [{ k: 'path', l: 'Landing page', cls: 'u', f: r => ids.includes(so(r.path)) ? `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` : esc(r.path), csv: r => r.path }, { k: 'cluster', l: 'Cluster' }, { k: 'product', l: 'Product' }, { k: 'sessions', l: 'AI sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) }, { k: 'newUsers', l: 'New users', r: 1, f: r => fmtN(Math.round(r.newUsers)) }, { k: 'engRate', l: 'Engagement rate', r: 1, f: r => pct1(r.engRate) }, { k: 'keyEvents', l: 'Key events', r: 1, f: r => fmtN(Math.round(r.keyEvents)) }, { k: 'srcTxt', l: 'By assistant', f: r => `<small>${esc(r.srcTxt)}</small>` }],
-            drows, { file: 'unstop-b2e-ai-landing-pages', sort: 'sessions', pageSize: 25, placeholder: 'Filter pages', searchKeys: ['path', 'cluster', 'product'] }) + '</section>';
+            drows, { file: cfg.file + '-ai-landing-pages', sort: 'sessions', pageSize: 25, placeholder: 'Filter pages', searchKeys: ['path', 'cluster', 'product'] }) + '</section>';
       }
       var aiChart = { months: months.slice().reverse(), srcs };
     }
-    const navLinks = [['un-b2e-sum', 'Summary'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    const navLinks = navLinks0.filter(([id]) => !(cfg.sales === false && id === 'un-b2e-sales')).map(([id, l]) => [id, id === 'un-b2e-prod' && cfg.productLabel ? cfg.productLabel : l]);
     const navHtml = `<nav class="un-b2e-nav">${navLinks.map(([id, l]) => `<a href="#" data-jump="${id}">${esc(l)}</a>`).join('')}</nav>`;
     const sec = (id, title, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
     const html = intro +
       `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') + alertTop + navHtml +
-      `<div class="un-row" style="margin:6px 0 12px;flex-wrap:wrap;gap:8px"><div class="un-tabs" role="tablist" aria-label="Columns">${[['all', 'All three'], ['0', heads[0] + ' only'], ['1', heads[1] + ' only'], ['2', 'Combined only']].map(([v, l]) => `<button type="button" class="${VIEW === v ? 'on' : ''}" data-b2v="${v}">${esc(l)}</button>`).join('')}</div><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Copies the columns shown: ${esc(shown.map(i => heads[i]).join(', '))}. Paste into the sheet with Ctrl/Cmd + V.</span></div>` +
+      `<div class="un-row" style="margin:6px 0 12px;flex-wrap:wrap;gap:8px"><div class="un-tabs" role="tablist" aria-label="Columns" ${cols[1].dummy ? 'hidden' : ''}>${[['all', 'All three'], ['0', heads[0] + ' only'], ['1', heads[1] + ' only'], ['2', 'Combined only']].map(([v, l]) => `<button type="button" class="${VIEW === v ? 'on' : ''}" data-b2v="${v}">${esc(l)}</button>`).join('')}</div><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Copies the columns shown: ${esc(shown.map(i => heads[i]).join(', '))}. Paste into the sheet with Ctrl/Cmd + V.</span></div>` +
       `<section class="panel" id="un-b2e-sum"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${shown.map(i => `<th class="r">${esc(heads[i])}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
       kwPanel() +
       sec('un-b2e-alerts', 'Drop alerts', 'Employer pages and non-brand keywords that lost clicks or ranking this week, with the likely reason.', alertHtml || '<p class="un-n">—</p>') +
-      sec('un-b2e-sales', 'Sales-form leads (B2B Form Leads sheet)', 'Every sales-form submission by the page it was filled on, split into official, campus and personal email. Organic only by default. This is the lead list (CRM) for B2E.', salesHtml) +
+      (cfg.sales === false ? '' : sec('un-b2e-sales', 'Sales-form leads (B2B Form Leads sheet)', 'Every sales-form submission by the page it was filled on, split into official, campus and personal email. Organic only by default. This is the lead list (CRM) for B2E.', salesHtml)) +
       sec('un-b2e-ai', 'AI assistant traffic by month', 'How many visits ChatGPT, Perplexity, Gemini and other assistants send each month, and to which pages.', aiHtml) +
-      sec('un-b2e-trend', 'Weekly trend: B2E vs B2E (J&I)', 'Non-brand and brand Search Console clicks, impressions and position per week.', trendHtml) +
-      sec('un-b2e-prod', 'Products', 'Every employer product (the folder after /employers). Click a product to list all its landing pages below.' + (QPe.length ? '' : ' Brand / non-brand and keyword counts need query × page rows.'), prodHtml) +
+      sec('un-b2e-trend', cols[1].dummy ? `Weekly trend: ${cols[0].name}` : `Weekly trend: ${cols[0].name} vs ${cols[1].name}`, 'Non-brand and brand Search Console clicks, impressions and position per week.', trendHtml) +
+      sec('un-b2e-prod', cfg.productLabel || 'Products', (cfg.productIntro || 'Every employer product (the folder after /employers).') + ' Click one to list all its landing pages below.' + (QPe.length ? '' : ' Brand / non-brand and keyword counts need query × page rows.'), prodHtml) +
       sec('un-b2e-topics', 'Search topics: brand vs non-brand', 'Searches that bring people to the employer pages, grouped by topic. Click a keyword count to see the keywords.', topicHtml) +
       sec('un-b2e-qw', 'Quick wins: non-brand keywords in positions 11–20', 'Each with the page that ranks and the next step. Add a task to put it on the Action board with an owner and due date.', qwHtml) +
-      sec('un-b2e-pages', 'All employer landing pages', `${fmtN(pagesAll.length)} pages with Search Console data${M ? ', with GA4 sessions, leads and employer signups' : ''}. Click a page to analyse it on its own.`, pagesHtml) +
+      sec('un-b2e-pages', cfg.pagesTitle || 'All employer landing pages', `${fmtN(pagesAll.length)} pages with Search Console data${M ? ', with GA4 sessions, leads and employer signups' : ''}. Click a page to analyse it on its own.`, pagesHtml) +
       `<div id="un-b2e-rev">${reviewPanel()}</div>`;
     const mount = () => {
-      if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc)); } });
+      if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc), ov); } });
       const msg = t => { const el = document.getElementById('un-b2e-msg'); if (el) el.textContent = t; };
       const cp = document.getElementById('un-b2e-copy');
       if (cp) cp.addEventListener('click', async () => {
@@ -2660,29 +2684,29 @@
         catch (e) { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (x) { } ta.remove(); msg(ok ? 'Copied. Paste into the sheet with Ctrl/Cmd + V.' : 'Copy was blocked by the browser: use Download CSV instead.'); }
       });
       const dl = document.getElementById('un-b2e-csv');
-      if (dl) dl.addEventListener('click', () => { const csv = tsv().split('\n').map(l => l.split('\t').map(v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v).join(',')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `unstop-b2e-dashboard-${VIEW === 'all' ? 'all' : VIEW === '0' ? 'b2e' : VIEW === '1' ? 'b2e-ji' : 'combined'}-${D.start}-${D.end}.csv`; document.body.appendChild(a); a.click(); a.remove(); });
-      document.querySelectorAll('[data-b2v]').forEach(b => b.addEventListener('click', () => { b2eState(D.site).view = b.dataset.b2v; rerender(); }));
+      if (dl) dl.addEventListener('click', () => { const csv = tsv().split('\n').map(l => l.split('\t').map(v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v).join(',')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `${cfg.file}-dashboard-${VIEW === 'all' ? 'all' : VIEW === '0' ? 'b2e' : VIEW === '1' ? 'b2e-ji' : 'combined'}-${D.start}-${D.end}.csv`; document.body.appendChild(a); a.click(); a.remove(); });
+      document.querySelectorAll('[data-b2v]').forEach(b => b.addEventListener('click', () => { b2eState(SK).view = b.dataset.b2v; rerender(); }));
       const tb = document.querySelector('.un-b2e');
-      if (tb) tb.addEventListener('click', e => { const el = e.target.closest('[data-kw]'); if (!el) return; e.preventDefault(); const [seg, k, i] = el.dataset.kw.split('|'); B2E_KW.set(D.site, { seg, k, i: +i }); rerender(); setTimeout(() => { const p = document.getElementById('un-b2e-kwp'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); });
+      if (tb) tb.addEventListener('click', e => { const el = e.target.closest('[data-kw]'); if (!el) return; e.preventDefault(); const [seg, k, i] = el.dataset.kw.split('|'); B2E_KW.set(SK, { seg, k, i: +i }); rerender(); setTimeout(() => { const p = document.getElementById('un-b2e-kwp'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); });
       if (document.getElementById('t-un-b2e-kw')) drawTable('t-un-b2e-kw');
-      const kx = document.getElementById('un-b2e-kwx'); if (kx) kx.addEventListener('click', () => { B2E_KW.delete(D.site); rerender(); });
+      const kx = document.getElementById('un-b2e-kwx'); if (kx) kx.addEventListener('click', () => { B2E_KW.delete(SK); rerender(); });
       const rl = document.getElementById('un-b2e-reload');
       if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); B2EX.delete(XK); rerender(); });
-      if (live && !B2EX.get(XK)) loadB2EX(D, A, ids);
+      if (live && !B2EX.get(XK)) loadB2EX(D, A, realIds, ov, XK);
       if (document.getElementById('t-un-b2e-sl')) drawTable('t-un-b2e-sl');
       if (document.getElementById('t-un-b2e-ld')) drawTable('t-un-b2e-ld');
-      ['un-b2e-sum', 'un-b2e-sales'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('click', e => { const a = e.target.closest('[data-ld]'); if (!a) return; e.preventDefault(); const sp = LDS[+a.dataset.ld]; if (!sp) return; B2E_LD.set(D.site, sp); rerender(); setTimeout(() => jump('un-b2e-ldp'), 60); }); });
+      ['un-b2e-sum', 'un-b2e-sales'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('click', e => { const a = e.target.closest('[data-ld]'); if (!a) return; e.preventDefault(); const sp = LDS[+a.dataset.ld]; if (!sp) return; B2E_LD.set(SK, sp); rerender(); setTimeout(() => jump('un-b2e-ldp'), 60); }); });
       // AI traffic: scope, drill-down, copy, chart
       const copyTsv = async (text, msgId) => { const msg = t => { const el = document.getElementById(msgId); if (el) el.textContent = t; }; try { await navigator.clipboard.writeText(text); msg('Copied. Paste into the sheet with Ctrl/Cmd + V.'); } catch (e) { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (x) { } ta.remove(); msg(ok ? 'Copied. Paste into the sheet with Ctrl/Cmd + V.' : 'Copy was blocked by the browser: use Export CSV.'); } };
       const aisc = document.getElementById('un-ai-scope'); if (aisc) aisc.addEventListener('change', () => { ST.aiScope = aisc.value; rerender(); setTimeout(() => jump('un-b2e-ai'), 60); });
-      const aiEl = document.getElementById('un-b2e-ai'); if (aiEl) aiEl.addEventListener('click', e => { const a = e.target.closest('[data-ai]'); if (!a) return; e.preventDefault(); const sp = AIL[+a.dataset.ai]; if (!sp) return; B2E_AI.set(D.site, sp); rerender(); setTimeout(() => jump('un-b2e-aip'), 60); });
+      const aiEl = document.getElementById('un-b2e-ai'); if (aiEl) aiEl.addEventListener('click', e => { const a = e.target.closest('[data-ai]'); if (!a) return; e.preventDefault(); const sp = AIL[+a.dataset.ai]; if (!sp) return; B2E_AI.set(SK, sp); rerender(); setTimeout(() => jump('un-b2e-aip'), 60); });
       const aic = document.getElementById('un-ai-copy'); if (aic) aic.addEventListener('click', () => copyTsv(aiTsv, 'un-ai-msg'));
       const aidc = document.getElementById('un-ai-dcopy'); if (aidc) aidc.addEventListener('click', () => copyTsv(aiDrillTsv, 'un-ai-dmsg'));
-      const aix = document.getElementById('un-ai-x'); if (aix) aix.addEventListener('click', () => { B2E_AI.delete(D.site); rerender(); setTimeout(() => jump('un-b2e-ai'), 60); });
+      const aix = document.getElementById('un-ai-x'); if (aix) aix.addEventListener('click', () => { B2E_AI.delete(SK); rerender(); setTimeout(() => jump('un-b2e-ai'), 60); });
       if (document.getElementById('t-un-b2e-ai')) drawTable('t-un-b2e-ai');
       if (typeof aiChart !== 'undefined' && aiChart && document.getElementById('un-ai-ch')) { const pal = ['--signal', '--good', '--orange', '--sky', '--teal', '--watch', '--bad']; chart('un-ai-ch', { type: 'line', data: { labels: aiChart.months.map(o => o.m), datasets: aiChart.srcs.slice(0, 7).map((x, i) => ({ label: x, data: aiChart.months.map(o => Math.round(o.by[x] || 0)), borderColor: cssVar(pal[i % pal.length]), backgroundColor: cssVar(pal[i % pal.length]), tension: .25, pointRadius: 2, borderWidth: 2 })) }, options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true } }, plugins: { legend: { position: 'bottom' } } } }); }
       const ldc = document.getElementById('un-ld-copy'); if (ldc) ldc.addEventListener('click', () => copyTsv(ldTsv, 'un-ld-msg'));
-      const ldx = document.getElementById('un-b2e-ldx'); if (ldx) ldx.addEventListener('click', () => { B2E_LD.delete(D.site); rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
+      const ldx = document.getElementById('un-b2e-ldx'); if (ldx) ldx.addEventListener('click', () => { B2E_LD.delete(SK); rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
       const slr = document.getElementById('un-sl-range'); if (slr) slr.addEventListener('change', () => { SST.slRange = slr.value; rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
       const slc = document.getElementById('un-sl-ch'); if (slc) slc.addEventListener('change', () => { SST.slAll = slc.value === 'all'; rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
       const sll = document.getElementById('un-sl-load'); if (sll) sll.addEventListener('click', async () => { const m = document.getElementById('un-sl-msg'); if (m) m.textContent = 'Loading the leads sheet…'; sll.disabled = true; try { await loadSalesSheet(D); } catch (e) { SALES.set(D.site, { error: e.message }); } rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
@@ -2695,7 +2719,7 @@
       const pall = document.getElementById('un-b2e-pall'); if (pall) pall.addEventListener('click', e => { e.preventDefault(); ST.product = ''; rerender(); setTimeout(() => jump('un-b2e-pages'), 60); });
       // topics: cluster picker and keyword lists
       const tc = document.getElementById('un-b2e-tcol'); if (tc) tc.addEventListener('change', () => { ST.topicCol = +tc.value; rerender(); setTimeout(() => jump('un-b2e-topics'), 60); });
-      const tEl = document.getElementById('un-b2e-topics'); if (tEl) tEl.addEventListener('click', e => { const a = e.target.closest('[data-tkw]'); if (!a) return; e.preventDefault(); const [topic, seg, k] = a.dataset.tkw.split('|'); B2E_KW.set(D.site, { topic, seg, k, i: ST.topicCol }); rerender(); setTimeout(() => jump('un-b2e-kwp'), 60); });
+      const tEl = document.getElementById('un-b2e-topics'); if (tEl) tEl.addEventListener('click', e => { const a = e.target.closest('[data-tkw]'); if (!a) return; e.preventDefault(); const [topic, seg, k] = a.dataset.tkw.split('|'); B2E_KW.set(SK, { topic, seg, k, i: ST.topicCol }); rerender(); setTimeout(() => jump('un-b2e-kwp'), 60); });
       // quick wins → Action board
       const addTask = r => { const GW = window.CW_GROWTH, TK = window.CW_TASKS; if (!GW || !TK) return false; const due = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10); return GW.upsert(D.site, TK.manual({ title: `Quick win: "${r.q}" (position ${r.pos.toFixed(1)})`, url: r.url || null, action: r.action, owner: ownerOf({ kpi: 'Keywords in positions 11', src: 'GSC' }), due }, D)); };
       const qmsg = t => { const el = document.getElementById('un-b2e-qwmsg'); if (el) el.textContent = t; };
@@ -2703,10 +2727,10 @@
       const q10 = document.getElementById('un-b2e-qw10'); if (q10) q10.addEventListener('click', () => { let n = 0; QW.slice(0, 10).forEach(r => { if (addTask(r)) n++; }); q10.disabled = true; qmsg(`Added ${n} quick wins to the Action board (due in 14 days).`); });
       // weekly chart
       if (xReady && document.getElementById('un-b2e-ch')) {
-        const wk = [...new Set(ids.flatMap(id => (X.weekly[id] ? X.weekly[id].nb : []).map(r => r.w)))].sort().filter(w => !ids.some(id => { const s = X.weekly[id]; const r = s && s.nb.find(x => x.w === w); return r && r.partial; }));
+        const wk = [...new Set(realIds.flatMap(id => (X.weekly[id] ? X.weekly[id].nb : []).map(r => r.w)))].sort().filter(w => !ids.some(id => { const s = X.weekly[id]; const r = s && s.nb.find(x => x.w === w); return r && r.partial; }));
         const colors = ['--signal', '--orange'];
         let ch = null;
-        const draw = () => { if (ch) { try { ch.destroy(); } catch (x) { } } const m = ST.trend; ch = chart('un-b2e-ch', { type: 'line', data: { labels: wk.map(w => fmtD(w)), datasets: ids.map((id, i) => { const s = X.weekly[id] || { nb: [], b: [] }; const src = m === 'b' ? s.b : s.nb; return { label: cols[i].name, data: wk.map(w => { const r = src.find(x => x.w === w); return !r ? null : m === 'nbi' ? r.impr : m === 'pos' ? +r.pos.toFixed(2) : r.clicks; }), borderColor: cssVar(colors[i]), backgroundColor: cssVar(colors[i]), tension: .25, pointRadius: 2, borderWidth: 2 }; }) }, options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { reverse: m === 'pos', beginAtZero: m !== 'pos' } }, plugins: { legend: { position: 'bottom' } } } }); };
+        const draw = () => { if (ch) { try { ch.destroy(); } catch (x) { } } const m = ST.trend; ch = chart('un-b2e-ch', { type: 'line', data: { labels: wk.map(w => fmtD(w)), datasets: realIds.map((id, i) => { const s = X.weekly[id] || { nb: [], b: [] }; const src = m === 'b' ? s.b : s.nb; return { label: cols[i].name, data: wk.map(w => { const r = src.find(x => x.w === w); return !r ? null : m === 'nbi' ? r.impr : m === 'pos' ? +r.pos.toFixed(2) : r.clicks; }), borderColor: cssVar(colors[i]), backgroundColor: cssVar(colors[i]), tension: .25, pointRadius: 2, borderWidth: 2 }; }) }, options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { reverse: m === 'pos', beginAtZero: m !== 'pos' } }, plugins: { legend: { position: 'bottom' } } } }); };
         draw();
         document.querySelectorAll('[data-b2t]').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('[data-b2t]').forEach(x => x.classList.toggle('on', x === b)); ST.trend = b.dataset.b2t; draw(); }));
       }
@@ -2714,8 +2738,45 @@
     return { html, mount };
   };
 
+  V.b2e = (A, D) => board(A, D, { key: 'b2e', file: 'unstop-b2e' });
+
+  // ════════════════════════════ FOLDER DASHBOARD (common) ════════════════════════════
+  // The B2E board for any folder: type a folder (and optionally a second one to compare) and every
+  // section follows it. No B2B sales-form leads or CRM rows here.
+  const BOARD_SO = new Map();
+  const normFolder = v => { let x = String(v || '').trim(); if (!x) return ''; try { if (/^https?:\/\//i.test(x)) x = new URL(x).pathname; } catch (e) { } x = x.split(/[?#]/)[0].trim(); if (!x.startsWith('/')) x = '/' + x; if (x.length > 1 && !x.endsWith('*')) x = x.replace(/\/+$/, ''); return x.toLowerCase(); };
+  V.board = (A, D) => {
+    const P = fParams(), a = normFolder(P.get('a')), b = normFolder(P.get('b'));
+    const s = settings(D.site), so0 = sectioner(D);
+    // folders people can pick: first-level and second-level folders with Search Console clicks
+    const fm = new Map(); (A.P || []).forEach(r => { const segs = U.pathOnly(r.p).toLowerCase().split('/').filter(Boolean); for (let n = 1; n <= Math.min(2, segs.length - (segs.length > 1 ? 1 : 0)); n++) { const f = '/' + segs.slice(0, n).join('/'); fm.set(f, (fm.get(f) || 0) + (+r.clicks || 0)); } });
+    const folders = [...fm.entries()].sort((x, y) => y[1] - x[1]).slice(0, 300);
+    const picker = `<form class="un-scope" id="un-bd-form"><span class="un-scope-t">Folders</span>
+      <label class="field un-grow"><span>Folder</span><input type="text" id="un-bd-a" list="un-bd-list" value="${esc(a)}" placeholder="/internship, /hackathons, /blog, /employers/ai-assessment-agent…" spellcheck="false" autocomplete="off" required></label>
+      <label class="field un-grow"><span>Compare with (optional)</span><input type="text" id="un-bd-b" list="un-bd-list" value="${esc(b)}" placeholder="/jobs" spellcheck="false" autocomplete="off"></label>
+      <datalist id="un-bd-list">${folders.map(([f, c]) => `<option value="${esc(f)}">${fmtN(c)} clicks</option>`).join('')}</datalist>
+      <button class="btn-primary sm" type="submit">Show</button></form>`;
+    const pickerMount = () => { const f = document.getElementById('un-bd-form'); if (!f) return; f.addEventListener('submit', e => { e.preventDefault(); const na = normFolder(document.getElementById('un-bd-a').value), nb = normFolder(document.getElementById('un-bd-b').value); if (!na) return; location.hash = '#board?' + new URLSearchParams(Object.entries({ a: na, b: nb }).filter(([, v]) => v)).toString(); }); };
+    const intro = 'Any folder on one page: Search Console visibility (brand vs non-brand, keyword buckets, search topics, quick wins, drops, weekly trend), GA4 traffic, signups and engagement, and AI assistant traffic. Type a folder, and a second one to compare. B2B sales-form leads are on the B2E dashboard only.';
+    const base = { key: 'common', title: 'Folder dashboard', intro, picker, file: 'unstop-folder', employer: false, sales: false };
+    if (!a) return board(A, D, { ...base, empty: `<div class="note">Type a folder to start, for example ${folders.slice(0, 6).map(([f]) => `<a href="#board?a=${encodeURIComponent(f)}">${esc(f)}</a>`).join(', ')}. It covers the folder and everything under it; end with * for a prefix (e.g. <code>/employers/hire-*</code>).</div>`, pickerMount });
+    const secA = { id: 'fa', name: a, type: 'other', rules: [a] }, secB = b ? { id: 'fb', name: b, type: 'other', rules: [b] } : null;
+    const bare = r => r.replace(/\*$/, '').replace(/\/$/, '');
+    // the narrower folder goes first so its pages are not counted in the wider one
+    const own = secB && bare(b).startsWith(bare(a) + (a.endsWith('*') ? '' : '/')) ? [secB, secA] : secB ? [secA, secB] : [secA];
+    const list = own.concat(s.sections || U.DEFAULT_SECTIONS);
+    const sk = D.site + '|' + JSON.stringify([list, s.rootArticles]);
+    let so = BOARD_SO.get(sk); if (!so) { so = U.makeSectioner(list, { rootArticles: s.rootArticles }); if (BOARD_SO.size > 20) BOARD_SO.clear(); BOARD_SO.set(sk, so); }
+    const cols = [{ id: 'fa', name: a }, b ? { id: 'fb', name: b } : { id: 'fb', name: '—', dummy: true }];
+    // sub-folder one level below the chosen folder (pages straight in the folder are grouped as the folder page)
+    const productOf = url => { const path = U.pathOnly(url).toLowerCase(); const id = so(path); const rule = id === 'fb' ? b : a; const r = bare(rule); if (rule.endsWith('*')) { const seg = path.slice(r.length).split('/')[0]; return r + (seg || '') ; } const rest = path.slice(r.length).split('/').filter(Boolean); return rest.length ? r + '/' + rest[0] : r + ' (folder page)'; };
+    const { clusterOf } = tools(D);
+    const out = board(A, D, { ...base, key: 'common|' + a + '|' + b, so, sections: list, cols, bothName: b ? `${a} + ${b}` : a, bothHead: 'Combined', productOf, productLabel: 'Sub-folders', productIntro: 'Every sub-folder one level below the folder.', topicOf: q => clusterOf(q), pagesTitle: 'All landing pages in these folders' });
+    const m = out.mount; return { ...out, mount: () => { pickerMount(); if (m) m(); } };
+  };
+
   // every funnel screen tries the one-sign-in GA4 load after it renders
-  ['b2e', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
+  ['b2e', 'board', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
     V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); if (k === 'b2e' || k === 'leads') salesAuto(D); } }; };
   });
