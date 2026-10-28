@@ -948,6 +948,7 @@
     { stage: 'Visibility', id: 'pos', label: 'Average position', src: 'GSC', owner: 'SEO', cadence: 'Weekly', def: 'Impression-weighted average position.' },
     { stage: 'Visibility', id: 'nbClicks', label: 'Non-branded clicks', src: 'GSC', owner: 'SEO', cadence: 'Weekly', def: 'Clicks on queries not matching the brand terms (queries Google anonymises are excluded).' },
     { stage: 'Visibility', id: 'top10', label: 'Non-branded keywords in top 10', src: 'GSC', owner: 'SEO', cadence: 'Weekly', def: 'Non-branded queries with average position ≤ 10 (also top 3 and 11–20 on the Visibility screen).' },
+    { stage: 'Visibility', id: 'sov', label: 'Share of voice vs 4 competitors', src: 'Rank tracker', owner: 'SEO + Competitive Intelligence', cadence: 'Monthly', def: 'Estimated clicks (volume × expected CTR at the position) for Unstop ÷ Unstop plus the named competitors, on the fixed keyword set (Visibility screen; competitors and keywords in Funnel setup).' },
     { stage: 'Visibility', id: 'p11', label: 'Keywords in positions 11–20', src: 'GSC', owner: 'SEO', cadence: 'Weekly', def: 'Non-branded quick-win candidates.' },
     { stage: 'Visibility', id: 'indexed', label: 'Pages getting impressions', src: 'GSC', owner: 'Technical SEO + Engineering', cadence: 'Weekly', def: 'URLs with at least one impression in the period (proxy for indexed and visible pages).' },
     { stage: 'Traffic', id: 'sessions', label: 'Organic sessions', src: 'GA4', owner: 'SEO + Analytics', cadence: 'Monthly', def: 'GA4 sessions with Default channel group = Organic Search.' },

@@ -91,6 +91,7 @@
         { k: 'b11', l: 'Branded 11–20', r: 1, f: r => cnt(r.b.p11, r.pb.p11, ranks.hasPrev) },
         { k: 'tot', l: 'Queries ranking', r: 1, f: r => fmtN(r.n.total + r.b.total) }
       ], ranks.byType.concat([{ key: 'all', name: 'All page types', ...ranks.total }]).map(bucketRow), { search: false, file: 'unstop-ranking-buckets', pageSize: 30 })}</section>` +
+      sovBlock(A, D) +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Query clusters</h2><p>Rules editable in Funnel setup.</p></div>
         ${table('t-un-vc', [
         { k: 'name', l: 'Cluster', f: r => `<b>${esc(r.name)}</b>` },
@@ -115,7 +116,7 @@
         { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos) }
       ], M.strike, { file: 'unstop-positions-11-20', sort: 'impr', pageSize: 15, searchKeys: ['q', 'path', 'type', 'cluster'], placeholder: 'Filter queries, pages, types',
         filters: [{ key: 'type', label: 'Page type', options: typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.type === v }] })}</section>` +
-      `<section class="panel"><div class="panel-h"><h2>Indexation by page type</h2><p>URLs submitted in sitemaps (Search Console API) next to URLs that got impressions. The API no longer reports indexed counts, so “visible ÷ submitted” is a proxy; check Pages › Indexing in Search Console per sitemap for exact indexed counts.</p></div><div class="panel-b" id="un-maps">${live ? mapsBlock(D, vis) : '<p class="empty">Needs a Search Console connection.</p>'}</div></section>` +
+      `<section class="panel"><div class="panel-h"><h2>Indexation by page type</h2><p>URLs submitted in sitemaps (Search Console API) next to URLs that got impressions. The API no longer reports indexed counts, so “visible ÷ submitted” is a proxy; upload the indexed count per sitemap from Search Console’s Pages report (below) for exact indexed ÷ submitted. Programmatic sitemaps (internships, jobs, company pages) are where indexation is usually the bottleneck.</p></div><div class="panel-b" id="un-maps">${mapsBlock(D, vis, live)}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Pages by cluster and folder</h2></div>
         ${table('t-un-vp', [
         { k: 'path', l: 'Page', cls: 'u', f: r => urlCell(r.p, r.path), csv: r => r.p }, { k: 'cluster', l: 'Cluster' }, { k: 'folder', l: 'Folder', f: r => `<code>${esc(r.folder)}</code>`, csv: r => r.folder },
@@ -124,12 +125,47 @@
         filters: [{ key: 'type', label: 'Page type', options: typeOf.types.map(t => [t.name, t.name]), test: (r, v) => r.typeName === v }, clusterFilter(D)] })}</section>`;
     const mount = () => {
       ['t-un-vt', 't-un-vr', 't-un-vc', 't-un-vrc', 't-un-vs', 't-un-vp'].forEach(drawTable);
-      if (live) { weeklyMount(D); mapsMount(D, vis); } scopeMount(D);
+      if (live) weeklyMount(D); mapsMount(D); sovMount(A, D); scopeMount(D); ['t-un-vsov'].forEach(drawTable);
     };
     return { html, mount };
   };
   const clusterFilter = (D, key) => { const so = sectioner(D); return { key: key || 'cl', label: 'Cluster', options: so.sections.map(x => [x.name, x.name]), test: (r, v) => r.cluster === v }; };
   const withCluster = (D, rows, keyOf) => { const so = sectioner(D); return rows.map(r => { const u = keyOf(r); return { ...r, cluster: so.label(so(u)), folder: so.folderOf(u) }; }); };
+
+  // ── share of voice against the named competitors on the fixed keyword set ──
+  const DEF_COMP = ['internshala.com', 'naukri.com', 'hackerearth.com', 'careers360.com'];
+  const compOf = s => (s.competitors && s.competitors.length ? s.competitors : DEF_COMP).slice(0, 8);
+  function sampleSov(D) {
+    let seed = 77; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const s = settings(D.site), comps = compOf(s);
+    const kws = [['internship', 220000, [8, 1, 5, 30, 12]], ['summer internship 2026', 48000, [5, 1, 9, 40, 7]], ['work from home internship', 26000, [12, 1, 6, null, 15]], ['hackathons', 90000, [2, 14, 11, 1, 9]], ['hackathon 2026', 52000, [3, null, 18, 2, 6]], ['online hackathons', 26000, [2, 25, null, 1, 12]], ['case study competition', 40000, [2, 6, null, 15, 4]], ['competitions for college students', 30000, [6, 3, null, 9, 2]], ['jobs for freshers', 70000, [12, 6, 1, 20, 8]], ['off campus drive 2026', 42000, [6, 9, 2, null, 5]], ['scholarships for students 2026', 36000, [12, 7, 10, null, 1]], ['campus ambassador program', 26000, [3, 1, 15, null, 8]], ['tcs nqt exam pattern', 30000, [6, 9, 5, 4, 1]], ['coding questions for placement', 14000, [9, 20, 12, 1, 7]], ['ats software', 22000, [24, null, 9, 30, null]], ['campus hiring platform', 4000, [10, 4, 3, 6, null]], ['online assessment platform', 9000, [13, null, 11, 2, null]], ['college fests 2026', 26000, [3, 20, null, null, 4]]];
+    const rows = [['Keyword', 'Volume', 'Domain', 'Position', 'Date']];
+    ['2026-09-01', '2026-10-01'].forEach((dt, k) => kws.forEach(([kw, v, pos]) => ['unstop.com'].concat(comps.slice(0, 4)).forEach((d, i) => { let p = pos[i]; if (p == null) return; p = Math.max(1, Math.round(p + (k ? (i === 0 ? -R() * 1.5 : R() * 1.2 - .4) : 0))); rows.push([kw, v, d, p, dt]); })));
+    return rows;
+  }
+  function sovOf(D) {
+    const X = scd(D.site), s = settings(D.site);
+    if (!X.sov && D.sampleOf === 'unstop') X.sov = { name: 'Sample rank tracking', sample: true, rows: sampleSov(D) };
+    if (!X.sov) return null;
+    return U && window.UN_SC.sovModel(X.sov.rows, { own: (D.site || 'unstop.com').replace(/^sc-domain:/, ''), competitors: compOf(s), keywords: s.sovKeywords || [], clusterOf: tools(D).clusterOf, ctr: CW.expCtr });
+  }
+  function sovBlock(A, D) {
+    const X = scd(D.site), s = settings(D.site), M = sovOf(D);
+    const head2 = `<section class="panel"><div class="panel-h"><h2>Share of voice vs ${esc(compOf(s).join(', '))}</h2><p>Fixed keyword set from a rank tracker (Semrush Position Tracking, Ahrefs Rank Tracker, SE Ranking, DataForSEO…). Share of voice = estimated clicks (search volume × expected CTR at the position) ÷ the same for Unstop and the competitors together. Competitors and the fixed keyword list are set in Funnel setup.</p></div><div class="panel-b"><div class="un-row"><label class="btn-quiet un-file">Upload rank tracking export<input type="file" id="un-sov-file" accept=".csv,.xlsx,.xls" hidden></label><button class="btn-quiet" type="button" id="un-sov-tpl">Template</button>${X.sov ? `<span class="hint">${esc(X.sov.name)}${X.sov.sample ? ' (sample)' : ''}</span>` : ''}</div>${M && !M.ok ? `<p class="start-error">${esc(M.error)}</p>` : ''}</div>`;
+    if (!M || !M.ok) return head2 + '</section>';
+    const per = M.cur.per.slice().sort((a, b) => (b.sov || 0) - (a.sov || 0));
+    const doms = M.domains;
+    return head2 + `<div class="panel-b"><p class="un-meta">${M.latest ? 'Latest check ' + fmtD(M.latest) + (M.prevDate ? ', compared with ' + fmtD(M.prevDate) : '') + ' · ' : ''}${fmtN(M.cur.keywords)} keywords${M.fixed ? ` of the ${M.fixed}-keyword fixed set${M.missing.length ? ` (${M.missing.length} not in the file)` : ''}` : ''}</p>
+      <div class="tw"><table class="un-mini"><thead><tr><th>Domain</th><th class="r">Share of voice</th><th class="r">Change</th><th class="r">Keywords ranking</th><th class="r">Top 3</th><th class="r">Top 10</th><th class="r">Average position</th><th>Share</th></tr></thead><tbody>${per.map(x => `<tr${x.own ? ' class="on"' : ''}><td><b>${esc(x.domain)}</b></td><td class="r">${pct1(x.sov)}</td><td class="r">${x.dSov == null ? '—' : `<span class="un-d ${x.dSov > 0 ? 'up' : x.dSov < 0 ? 'down' : 'flat'}">${x.dSov > 0 ? '+' : ''}${x.dSov.toFixed(1)} pts</span>`}</td><td class="r">${x.ranked}</td><td class="r">${x.top3}</td><td class="r">${x.top10}</td><td class="r">${x.avgPos == null ? '—' : x.avgPos.toFixed(1)}</td><td><span class="un-bar"><i style="width:${(x.sov || 0).toFixed(1)}%"></i></span></td></tr>`).join('')}</tbody></table></div></div>
+      ${M.byCluster.length ? `<div class="panel-b flush"><div class="tw"><table class="un-mini"><thead><tr><th>Query cluster</th><th class="r">Keywords</th><th class="r">Unstop share of voice</th><th>Leader</th><th class="r">Leader share</th></tr></thead><tbody>${M.byCluster.map(c => `<tr><td><b>${esc(c.cluster)}</b></td><td class="r">${c.keywords}</td><td class="r">${pct1(c.sov)}</td><td>${esc(c.leader || '—')}</td><td class="r">${pct1(c.leaderSov)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+      ${table('t-un-vsov', [{ k: 'kw', l: 'Keyword', cls: 'q' }, { k: 'vol', l: 'Volume', r: 1, f: r => r.vol == null ? '—' : fmtN(r.vol) }, { k: 'cluster', l: 'Cluster' }].concat(doms.map(d => ({ k: d, l: d, r: 1, f: r => r[d] == null ? '—' : posTag(r[d]) }))).concat([{ k: 'leader', l: 'Leader' }, { k: 'gap', l: 'Unstop gap', r: 1, f: r => r.gap == null ? 'not ranking' : r.gap === 0 ? 'leads' : '+' + r.gap.toFixed(0) }]), M.kwRows, { file: 'unstop-share-of-voice-keywords', sort: 'vol', pageSize: 15, placeholder: 'Filter keywords' })}</section>`;
+  }
+  function sovMount(A, D) {
+    const f = document.getElementById('un-sov-file');
+    if (f) f.addEventListener('change', async () => { const file = f.files[0]; if (!file) return; try { scd(D.site).sov = { name: file.name, rows: await readSheet(file) }; } catch (e) { scd(D.site).sov = { name: file.name, rows: [] }; } rerender(); });
+    const t = document.getElementById('un-sov-tpl');
+    if (t) t.addEventListener('click', () => download('share-of-voice-template.csv', 'Keyword,Volume,Domain,Position,Date\ninternship,220000,unstop.com,8,2026-10-01\ninternship,220000,internshala.com,1,2026-10-01\nhackathons,90000,unstop.com,2,2026-10-01\nhackathons,90000,hackerearth.com,11,2026-10-01\n'));
+  }
   function bucketRow(r) { return { ...r, n3: r.n.top3, n10: r.n.top10, n11: r.n.p11, b3: r.b.top3, b10: r.b.top10, b11: r.b.p11, tot: r.n.total + r.b.total }; }
   function cnt(c, p, hasPrev) { if (!hasPrev) return fmtN(c); const d = c - p; return `${fmtN(c)} <span class="un-d ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}">${d > 0 ? '+' : ''}${d === 0 ? '±0' : fmtN(d)}</span>`; }
 
@@ -183,28 +219,53 @@
     rerender();
   }
   // sitemaps
-  function mapsBlock(D, vis) {
-    const m = MAPS.get(D.site);
-    if (!m) return '<button class="btn-primary sm" type="button" id="un-maps-go">Load sitemaps</button>';
+  function sampleMaps(D) {
+    let seed = 5; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const { typeOf } = tools(D);
+    const list = [['sitemap-hackathons.xml', 4200], ['sitemap-competitions.xml', 9800], ['sitemap-internships.xml', 52000], ['sitemap-jobs.xml', 31000], ['sitemap-quiz.xml', 2100], ['sitemap-c.xml', 61000], ['sitemap-blog.xml', 3900], ['sitemap-employers.xml', 60], ['sitemap-misc.xml', 300]];
+    const rows = U.sitemapTypes(list.map(([f, n]) => ({ path: 'https://unstop.com/' + f, contents: [{ submitted: String(n) }], lastDownloaded: new Date(Date.now() - R() * 6 * 864e5).toISOString(), errors: 0, warnings: R() < .3 ? 1 : 0 })), typeOf);
+    const idx = new Map(list.map(([f, n]) => ['https://unstop.com/' + f, Math.round(n * (/internships|jobs|-c\./.test(f) ? .28 + R() * .2 : .7 + R() * .25))]));
+    return { status: 'done', rows, at: Date.now(), sample: true, idx };
+  }
+  // Indexed counts per sitemap come only from Search Console's Pages report (not the API): upload
+  // Sitemap, Indexed[, Not indexed][, Submitted].
+  function idxRows(rows) {
+    const map = window.UN_SC.headerMap(rows[0] || [], { sitemap: ['sitemap', 'sitemap url', 'sitemap path'], indexed: ['indexed', 'indexed pages'], not: ['not indexed', 'not indexed pages'], submitted: ['submitted', 'submitted urls'] });
+    if (map.sitemap == null || map.indexed == null) return { error: 'Expected Sitemap and Indexed columns.' };
+    const out = new Map(); rows.slice(1).forEach(r => { const sm = String(r[map.sitemap] || '').trim(); if (!sm) return; out.set(sm, { indexed: +String(r[map.indexed]).replace(/,/g, '') || 0, not: map.not != null ? +String(r[map.not]).replace(/,/g, '') || 0 : null, submitted: map.submitted != null ? +String(r[map.submitted]).replace(/,/g, '') || 0 : null }); });
+    return { map: out };
+  }
+  function mapsBlock(D, vis, live) {
+    let m = MAPS.get(D.site);
+    if (!m && D.sampleOf === 'unstop') { m = sampleMaps(D); MAPS.set(D.site, m); }
+    const X = scd(D.site), up = X.idx && X.idx.map ? X.idx.map : null;
+    const upl = `<div class="un-row"><label class="btn-quiet un-file">Upload indexed counts per sitemap<input type="file" id="un-idx-file" accept=".csv,.xlsx,.xls" hidden></label><button class="btn-quiet" type="button" id="un-idx-tpl">Template</button>${X.idx ? `<span class="hint">${esc(X.idx.name)}${X.idx.error ? ' · ' + esc(X.idx.error) : ''}</span>` : ''}</div><p class="hint">Search Console › Pages › filter by sitemap shows indexed and not-indexed counts (the API does not). Copy them into Sitemap, Indexed, Not indexed for exact indexed ÷ submitted.</p>`;
+    if (!m) return (live ? '<button class="btn-primary sm" type="button" id="un-maps-go">Load sitemaps</button>' : '<p class="empty">Sitemaps need a Search Console connection.</p>') + upl;
     if (m.status === 'loading') return '<p class="progress">Reading sitemaps from Search Console…</p>';
     if (m.status === 'error') return `<p class="start-error">${esc(m.error)}</p><button class="btn-quiet" type="button" id="un-maps-go">Try again</button>`;
-    const { typeOf } = tools(D);
+    const idxOf = r => { if (up) { const k = [...up.keys()].find(x => x === r.path || r.path.endsWith(x) || x.endsWith(r.path.replace(/^https?:\/\/[^/]+/, ''))); if (k) return up.get(k).indexed; } return m.idx ? m.idx.get(r.path) : null; };
     const byType = new Map();
-    m.rows.filter(r => !r.isIndex).forEach(r => { const k = r.type || 'none'; const o = byType.get(k) || { submitted: 0, maps: 0, errors: 0, warnings: 0 }; o.submitted += r.submitted; o.maps++; o.errors += r.errors; o.warnings += r.warnings; byType.set(k, o); });
-    const rows = vis.rows.map(v => { const s = byType.get(v.id); return { name: v.name, urls: v.urls, submitted: s ? s.submitted : 0, maps: s ? s.maps : 0, errors: s ? s.errors : 0, rate: s && s.submitted ? v.urls / s.submitted * 100 : null }; });
+    m.rows.filter(r => !r.isIndex).forEach(r => { const k = r.type || 'none'; const o = byType.get(k) || { submitted: 0, maps: 0, errors: 0, warnings: 0, indexed: null }; o.submitted += r.submitted; o.maps++; o.errors += r.errors; o.warnings += r.warnings; const ix = idxOf(r); if (ix != null) o.indexed = (o.indexed || 0) + ix; byType.set(k, o); });
+    const rows = vis.rows.map(v => { const s2 = byType.get(v.id); return { name: v.name, urls: v.urls, submitted: s2 ? s2.submitted : 0, maps: s2 ? s2.maps : 0, errors: s2 ? s2.errors : 0, indexed: s2 ? s2.indexed : null, rate: s2 && s2.submitted ? v.urls / s2.submitted * 100 : null, irate: s2 && s2.submitted && s2.indexed != null ? s2.indexed / s2.submitted * 100 : null }; });
+    const anyIdx = rows.some(r => r.indexed != null);
     const none = byType.get('none');
-    return `<div class="tw"><table class="un-mini"><thead><tr><th>Page type</th><th class="r">Sitemaps</th><th class="r">URLs submitted</th><th class="r">URLs with impressions</th><th class="r">Visible ÷ submitted</th><th class="r">Sitemap errors</th></tr></thead><tbody>${rows.map(r => `<tr><td><b>${esc(r.name)}</b></td><td class="r">${r.maps || '—'}</td><td class="r">${r.submitted ? fmtN(r.submitted) : '—'}</td><td class="r">${fmtN(r.urls)}</td><td class="r">${r.rate == null ? '—' : pct1(Math.min(999, r.rate))}</td><td class="r">${r.errors || '—'}</td></tr>`).join('')}${none ? `<tr><td>Sitemaps not matched to a type</td><td class="r">${none.maps}</td><td class="r">${fmtN(none.submitted)}</td><td colspan="3"></td></tr>` : ''}</tbody></table></div>
-      <details class="un-det"><summary>${m.rows.length} sitemaps</summary><div class="tw"><table class="un-mini"><thead><tr><th>Sitemap</th><th>Page type</th><th class="r">Submitted</th><th>Last read by Google</th><th class="r">Errors</th><th class="r">Warnings</th></tr></thead><tbody>${m.rows.map(r => `<tr><td class="u">${esc(r.path)}${r.isIndex ? ' <span class="tag">index</span>' : ''}</td><td>${esc(r.typeName)}</td><td class="r">${fmtN(r.submitted)}</td><td>${r.lastDownloaded ? fmtD(r.lastDownloaded.slice(0, 10)) : '—'}</td><td class="r">${r.errors}</td><td class="r">${r.warnings}</td></tr>`).join('')}</tbody></table></div></details>`;
+    return `${m.sample ? '<p class="hint"><b>Sample sitemaps and indexed counts.</b></p>' : ''}<div class="tw"><table class="un-mini"><thead><tr><th>Page type</th><th class="r">Sitemaps</th><th class="r">URLs submitted</th>${anyIdx ? '<th class="r">Indexed</th><th class="r">Indexed ÷ submitted</th>' : ''}<th class="r">URLs with impressions</th><th class="r">Visible ÷ submitted</th><th class="r">Sitemap errors</th></tr></thead><tbody>${rows.map(r => `<tr><td><b>${esc(r.name)}</b></td><td class="r">${r.maps || '—'}</td><td class="r">${r.submitted ? fmtN(r.submitted) : '—'}</td>${anyIdx ? `<td class="r">${r.indexed == null ? '—' : fmtN(r.indexed)}</td><td class="r">${r.irate == null ? '—' : `<b class="${r.irate < 50 ? 'un-bad' : ''}">${pct1(Math.min(100, r.irate))}</b>`}</td>` : ''}<td class="r">${fmtN(r.urls)}</td><td class="r">${r.rate == null ? '—' : pct1(Math.min(999, r.rate))}</td><td class="r">${r.errors || '—'}</td></tr>`).join('')}${none ? `<tr><td>Sitemaps not matched to a type</td><td class="r">${none.maps}</td><td class="r">${fmtN(none.submitted)}</td><td colspan="${anyIdx ? 5 : 3}"></td></tr>` : ''}</tbody></table></div>
+      <details class="un-det"><summary>${m.rows.length} sitemaps</summary><div class="tw"><table class="un-mini"><thead><tr><th>Sitemap</th><th>Page type</th><th class="r">Submitted</th>${anyIdx ? '<th class="r">Indexed</th>' : ''}<th>Last read by Google</th><th class="r">Errors</th><th class="r">Warnings</th></tr></thead><tbody>${m.rows.map(r => `<tr><td class="u">${esc(r.path)}${r.isIndex ? ' <span class="tag">index</span>' : ''}</td><td>${esc(r.typeName)}</td><td class="r">${fmtN(r.submitted)}</td>${anyIdx ? `<td class="r">${idxOf(r) == null ? '—' : fmtN(idxOf(r))}</td>` : ''}<td>${r.lastDownloaded ? fmtD(r.lastDownloaded.slice(0, 10)) : '—'}</td><td class="r">${r.errors}</td><td class="r">${r.warnings}</td></tr>`).join('')}</tbody></table></div></details>` + upl;
   }
   function mapsMount(D) {
-    const go = document.getElementById('un-maps-go'); if (!go) return;
-    go.addEventListener('click', async () => {
+    const go = document.getElementById('un-maps-go');
+    if (go) go.addEventListener('click', async () => {
       const src = window.CW_SOURCE; MAPS.set(D.site, { status: 'loading' }); rerender();
       try { const d = await src.gsc.sitemaps(); MAPS.set(D.site, { status: 'done', rows: U.sitemapTypes(d.sitemap || [], tools(D).typeOf), at: Date.now() }); }
       catch (e) { MAPS.set(D.site, { status: 'error', error: e.message }); }
       rerender();
     });
+    const f = document.getElementById('un-idx-file');
+    if (f) f.addEventListener('change', async () => { const file = f.files[0]; if (!file) return; try { const r = idxRows(await readSheet(file)); scd(D.site).idx = { name: file.name, map: r.map || null, error: r.error || '' }; } catch (e) { scd(D.site).idx = { name: file.name, error: e.message }; } rerender(); });
+    const t = document.getElementById('un-idx-tpl');
+    if (t) t.addEventListener('click', () => download('indexed-per-sitemap-template.csv', 'Sitemap,Indexed,Not indexed\nhttps://unstop.com/sitemap-internships.xml,18500,33500\n'));
   }
+
 
   // ════════════════════════════ URL CLUSTERS: BRANDED VS NON-BRANDED ════════════════════════════
   // With Search Console connected every cluster is queried on its own (page regex filter), so totals are
@@ -1731,6 +1792,7 @@
       ctr: [pct1(site.ctr), ps ? U.chg(site.ctr, ps.ctr) : null, gscSt, gscAt],
       pos: [site.pos ? site.pos.toFixed(1) : '—', ps && ps.pos && site.pos ? site.pos - ps.pos : null, gscSt, gscAt, 'pos'],
       nbClicks: [fmtN(nbTot.clicks), A.prev ? U.chg(nbTot.clicks, A.prev.nb.clicks) : null, gscSt, gscAt, null, `${pct1(nbTot.clicks / Math.max(1, nbTot.clicks + bTot.clicks) * 100)} of query clicks`],
+      sov: (() => { const M2 = sovOf(D); const me = M2 && M2.ok ? M2.cur.per.find(x => x.own) : null; return me ? [pct1(me.sov), me.dSov, scd(D.site).sov.sample ? 'sample' : 'file', null, 'pp', `vs ${compOf(s).length} competitors · ${M2.cur.keywords} keywords`] : null; })(),
       top10: [fmtN(tr.n.top10), G.ranks.hasPrev ? U.chg(tr.n.top10, tr.pn.top10) : null, gscSt, gscAt, null, `top 3: ${fmtN(tr.n.top3)}`],
       p11: [fmtN(tr.n.p11), G.ranks.hasPrev ? U.chg(tr.n.p11, tr.pn.p11) : null, gscSt, gscAt],
       indexed: [fmtN(visUrls), prevUrls ? U.chg(visUrls, prevUrls) : null, gscSt, gscAt, null, A.coverage && A.coverage.rowLimit ? 'capped by row limit' : ''],
@@ -1775,7 +1837,7 @@
     const card = mt => {
       const v = V2[mt.id];
       const st = mt.later ? 'later' : v ? v[2] : mt.src === 'MoEngage' ? 'none' : mt.src === 'Cost input' ? 'input' : 'none';
-      const need = mt.later ? 'CRM export (next phase)' : mt.src === 'CRM' ? '<a href="#leads">Upload CRM export</a>' : mt.src === 'GA4' ? '<a href="#ga4">Connect GA4</a>' : mt.src === 'MoEngage' ? '<a href="#quality">Connect MoEngage or upload an export</a>' : mt.src === 'Cost input' ? '<a href="#funnelsetup">Add monthly SEO cost</a>' : '';
+      const need = mt.later ? 'CRM export (next phase)' : mt.src === 'CRM' ? '<a href="#leads">Upload CRM export</a>' : mt.src === 'Rank tracker' ? '<a href="#visibility">Upload rank tracking</a>' : mt.src === 'GA4' ? '<a href="#ga4">Connect GA4</a>' : mt.src === 'MoEngage' ? '<a href="#quality">Connect MoEngage or upload an export</a>' : mt.src === 'Cost input' ? '<a href="#funnelsetup">Add monthly SEO cost</a>' : '';
       const d = v ? (v[4] === 'pos' ? dchip(v[1], true, 'pos') : v[4] === 'pp' ? (v[1] == null ? '' : `<span class="un-d ${v[1] > 0 ? 'up' : v[1] < 0 ? 'down' : 'flat'}">${v[1] > 0 ? '+' : ''}${v[1].toFixed(1)} pts</span>`) : dchip(v[1])) : '';
       return `<div class="un-m${v ? '' : ' empty'}" title="${esc(mt.def)}"><div class="un-m-top"><span>${esc(mt.label)}</span>${chip(st)}</div>
         <b>${v ? v[0] : '—'}</b><div class="un-m-sub">${v ? d + ' ' + esc(v[5] || (v[1] != null && mt.src === 'GSC' ? 'vs previous period' : '')) : need}</div>
@@ -1848,6 +1910,10 @@
         <textarea id="un-sections" rows="12" spellcheck="false">${esc(U.sectionsText(s.sections, s.types))}</textarea>
         ${(() => { const so = U.makeSectioner(s.sections, { rootArticles: s.rootArticles }); const o = new Map(); (A.P || []).forEach(r => { if (so(r.p) !== 'other') return; const seg = '/' + (U.pathOnly(r.p).split('/')[1] || ''); o.set(seg, (o.get(seg) || 0) + (+r.clicks || 0)); }); const u = [...o.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20); return u.length ? `<p class="hint">Folders no cluster covers, by clicks: ${u.map(([k, c]) => `<code>${esc(k)}</code> ${fmtN(c)}`).join(' · ')}</p>` : '<p class="hint">Every page in this data matches a cluster.</p>'; })()}
       </div></section>
+      <section class="panel"><div class="panel-h"><h2>Share of voice</h2><p>The named competitors and the fixed keyword set (one per line; empty = every keyword in the rank tracking file).</p></div><div class="panel-b un-grid2">
+        <label class="field"><span>Competitor domains (comma-separated, up to 8)</span><input type="text" id="un-comp" value="${esc(compOf(s).join(', '))}"></label>
+        <label class="field"><span>Fixed keyword set</span><textarea id="un-sovkw" rows="5" spellcheck="false" placeholder="internship&#10;hackathons&#10;jobs for freshers">${esc((s.sovKeywords || []).join('\n'))}</textarea></label>
+      </div></section>
       <section class="panel"><div class="panel-h"><h2>Query clusters</h2><p>One cluster per line: <code>Name: word, phrase, word</code>. First match wins.</p></div><div class="panel-b"><textarea id="un-clusters" rows="9" spellcheck="false">${esc(U.clustersText(s.clusters || U.DEFAULT_CLUSTERS))}</textarea></div></section>
       <section class="panel"><div class="panel-h"><h2>GA4 event names</h2><p>Comma-separated, exact GA4 event names. The GA4 screen lists every event recorded in organic sessions.</p></div><div class="panel-b un-grid2">
         ${evRow('studentSignup', 'Student signup')}${evRow('employerSignup', 'Employer / recruiter signup')}${evRow('demoRequest', 'Demo request')}${evRow('contactSubmit', 'Contact form submission')}${evRow('opportunityAction', 'Opportunity register / apply')}${evRow('productClick', 'Product click (blog → product)')}${evRow('oppClick', 'Click into an opportunity')}${evRow('scroll', 'Scroll')}
@@ -1888,7 +1954,8 @@
         n.pathSections = [...f.querySelectorAll('[data-path]')].filter(i => i.checked).map(i => i.dataset.path);
         n.monthlyCost = document.getElementById('un-cost').value.trim(); n.empCostShare = document.getElementById('un-cost-emp').value.trim();
         n.moeThreshold = +document.getElementById('un-moe-th').value || 80;
-        n.organicSources = document.getElementById('un-orgsrc').value.trim(); n.psiKey = document.getElementById('un-psi-key').value.trim();
+        n.organicSources = document.getElementById('un-orgsrc').value.trim();
+        n.competitors = document.getElementById('un-comp').value.split(',').map(x => x.trim()).filter(Boolean).slice(0, 8); n.sovKeywords = document.getElementById('un-sovkw').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 2000); n.psiKey = document.getElementById('un-psi-key').value.trim();
         n.keyPages = document.getElementById('un-keypages').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 200);
         const owners = {}; f.querySelectorAll('[data-owner]').forEach(i => { const def = U.METRICS.find(x => x.id === i.dataset.owner); if (i.value.trim() && def && i.value.trim() !== def.owner) owners[i.dataset.owner] = i.value.trim(); }); n.owners = owners;
         save(D.site, n);

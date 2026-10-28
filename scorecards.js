@@ -169,7 +169,57 @@
     return { ok: true, total: agg(runs), latest, engines, trend, queries, clusters, urls: [...um.entries()].map(([path, n]) => ({ path, n })).sort((a, b) => b.n - a.n) };
   }
 
-  const API = { CWV, psiUrl, psiParse, cwvSummary, crawlModel, publishingModel, linksModel, aiModel, engineName, headerMap, toDate };
+
+  // ── Share of voice on a fixed keyword set (rank tracker export: Semrush, Ahrefs, SE Ranking, DataForSEO…) ──
+  // Long format: keyword, domain (or URL), position, [volume], [date], [url].
+  // Wide format: keyword, [volume], one position column per domain (header contains the domain).
+  // Share of voice = estimated clicks (volume × CTR at the position) ÷ the same for every tracked domain.
+  const SOV_FIELDS = { keyword: ['keyword', 'query', 'search term', 'term'], domain: ['domain', 'competitor', 'site', 'website', 'ranking domain'], url: ['url', 'ranking url', 'landing page', 'page'], position: ['position', 'rank', 'pos', 'ranking', 'current position'], volume: ['volume', 'search volume', 'avg. monthly searches', 'msv', 'sv'], date: ['date', 'checked', 'tracked on', 'run date'] };
+  const host = v => { const s = String(v || '').trim().toLowerCase(); if (!s) return ''; try { return new URL(/^https?:/.test(s) ? s : 'https://' + s).hostname.replace(/^www\./, ''); } catch (e) { return s.replace(/^www\./, '').split('/')[0]; } };
+  function sovModel(rows, opt = {}) {
+    if (!rows || rows.length < 2) return { ok: false, error: 'The file has no rows.' };
+    const own = host(opt.own || 'unstop.com'), comps = (opt.competitors || []).map(host).filter(Boolean);
+    const domains = [own].concat(comps.filter(c => c !== own));
+    const match = h => domains.find(d => h === d || h.endsWith('.' + d)) || null;
+    const ctr = opt.ctr || (p => p <= 1 ? 28 : p <= 2 ? 15 : p <= 3 ? 10 : p <= 5 ? 6 : p <= 10 ? 2.5 : p <= 20 ? 0.8 : 0.2);
+    const header = rows[0], map = headerMap(header, SOV_FIELDS);
+    if (map.keyword == null) return { ok: false, error: 'Expected a keyword column.', header };
+    const obs = []; // { kw, date, domain, pos, url, vol }
+    const hl = header.map(x => String(x || '').toLowerCase());
+    // wide format when two or more headers name a tracked domain
+    const wideAll = hl.map((h, i) => ({ i, d: match(host(h.replace(/position|rank|pos|\(|\)|:|_/g, ' ').trim().split(/\s+/).find(x => x.includes('.')) || '')) })).filter(x => x.d);
+    const wideCols = wideAll.length >= 2 ? wideAll : [];
+    if (map.position == null && !wideCols.length) return { ok: false, error: 'Expected a position column (long format) or one position column per domain (wide format).', header };
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i], kw = String(r[map.keyword] || '').trim().toLowerCase(); if (!kw) continue;
+      const vol = map.volume != null ? num(r[map.volume]) : null, d = map.date != null ? iso(toDate(r[map.date])) : null;
+      if (wideCols.length) wideCols.forEach(c => { const p = num(r[c.i]); if (p != null && p > 0) obs.push({ kw, date: d, domain: c.d, pos: p, url: '', vol }); });
+      else { const dm = match(host(map.domain != null ? r[map.domain] : r[map.url])); const p = num(r[map.position]); if (dm && p != null && p > 0) obs.push({ kw, date: d, domain: dm, pos: p, url: map.url != null ? String(r[map.url] || '') : '', vol }); else if (dm == null && map.domain == null && map.url != null && p != null) { /* other domains are ignored */ } }
+    }
+    if (!obs.length) return { ok: false, error: `No positions found for ${domains.join(', ')}. Check the competitor domains in Funnel setup.`, header };
+    const dates = [...new Set(obs.map(o => o.date).filter(Boolean))].sort();
+    const latest = dates.length ? dates[dates.length - 1] : null, prevDate = dates.length > 1 ? dates[dates.length - 2] : null;
+    const fixed = (opt.keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    const inSet = fixed.length ? new Set(fixed) : null;
+    const pick = dt => { const m = new Map(); obs.filter(o => (!dt || o.date === dt) && (!inSet || inSet.has(o.kw))).forEach(o => { const k = o.kw + '|' + o.domain, x = m.get(k); if (!x || o.pos < x.pos) m.set(k, o); }); return [...m.values()]; };
+    const volOf = new Map(); obs.forEach(o => { if (o.vol != null && !volOf.has(o.kw)) volOf.set(o.kw, o.vol); });
+    const snap = list => {
+      const kws = [...new Set(list.map(o => o.kw))];
+      const per = domains.map(d => { const mine = list.filter(o => o.domain === d); const est = mine.reduce((a, o) => a + (volOf.get(o.kw) || 100) * ctr(o.pos) / 100, 0); return { domain: d, own: d === own, ranked: mine.length, top3: mine.filter(o => o.pos <= 3).length, top10: mine.filter(o => o.pos <= 10).length, avgPos: mine.length ? mine.reduce((a, o) => a + o.pos, 0) / mine.length : null, est }; });
+      const tot = per.reduce((a, x) => a + x.est, 0);
+      per.forEach(x => { x.sov = tot ? x.est / tot * 100 : null; });
+      return { keywords: kws.length, per };
+    };
+    const cur = snap(pick(latest)), prev = prevDate ? snap(pick(prevDate)) : null;
+    cur.per.forEach(x => { const p = prev && prev.per.find(y => y.domain === x.domain); x.dSov = p && p.sov != null && x.sov != null ? x.sov - p.sov : null; x.dTop10 = p ? x.top10 - p.top10 : null; });
+    // keyword table (latest snapshot)
+    const L = pick(latest), kwRows = [...new Set(L.map(o => o.kw))].map(kw => { const r = { kw, vol: volOf.get(kw) || null, cluster: opt.clusterOf ? opt.clusterOf(kw) : '' }; domains.forEach(d => { const o = L.find(x => x.kw === kw && x.domain === d); r[d] = o ? o.pos : null; if (d === own && o) r.url = o.url; }); const best = domains.filter(d => r[d] != null).sort((a, b) => r[a] - r[b])[0]; r.leader = best || null; r.gap = r[own] == null ? null : best && best !== own ? r[own] - r[best] : 0; return r; }).sort((a, b) => (b.vol || 0) - (a.vol || 0));
+    // by query cluster
+    const byCluster = opt.clusterOf ? [...new Set(kwRows.map(r => r.cluster))].map(c => { const s2 = snap(L.filter(o => opt.clusterOf(o.kw) === c)); const me = s2.per.find(x => x.own); const lead = s2.per.slice().sort((a, b) => (b.sov || 0) - (a.sov || 0))[0]; return { cluster: c, keywords: s2.keywords, sov: me ? me.sov : null, leader: lead && lead.sov ? lead.domain : null, leaderSov: lead ? lead.sov : null }; }).sort((a, b) => b.keywords - a.keywords) : [];
+    const trend = dates.map(dt => { const s2 = snap(pick(dt)); return { date: dt, ...Object.fromEntries(s2.per.map(x => [x.domain, x.sov])) }; });
+    return { ok: true, own, domains, latest, prevDate, fixed: fixed.length, covered: inSet ? kwRows.length : null, missing: inSet ? fixed.filter(k => !kwRows.some(r => r.kw === k)) : [], cur, kwRows, byCluster, trend };
+  }
+  const API = { sovModel, CWV, psiUrl, psiParse, cwvSummary, crawlModel, publishingModel, linksModel, aiModel, engineName, headerMap, toDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   else root.UN_SC = API;
 })(typeof window !== 'undefined' ? window : globalThis);

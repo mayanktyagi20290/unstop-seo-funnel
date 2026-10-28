@@ -104,3 +104,4 @@
 .un-steps{margin:0;padding-left:20px;display:grid;gap:8px;font-size:13px;line-height:1.5}
 .un-mini tr.on td{background:var(--signal-soft)}
 .un-period .btn-primary{margin-left:6px}
+.un-bad{color:var(--risk)}

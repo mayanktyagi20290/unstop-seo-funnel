@@ -41,4 +41,16 @@ test('AI answers: engines normalised, mention and citation rates, gaps first', (
   assert.equal(S.engineName('Google AI Overview'), 'Google AI Overviews'); assert.equal(m.urls[0].path, '/hackathons');
   assert.equal(m.queries[0].q, 'q1');
 });
+
+test('share of voice: long and wide rank-tracker formats, fixed keyword set, change between checks', () => {
+  const comps = ['internshala.com', 'naukri.com', 'hackerearth.com', 'careers360.com'];
+  const rows = [['Keyword', 'Volume', 'Domain', 'Position', 'Date'], ['hackathons', '9000', 'unstop.com', '2', '2026-10-01'], ['hackathons', '9000', 'hackerearth.com', '1', '2026-10-01'], ['internship', '50000', 'internshala.com', '1', '2026-10-01'], ['internship', '50000', 'www.unstop.com', '8', '2026-10-01'], ['hackathons', '9000', 'unstop.com', '4', '2026-09-01'], ['jobs', '100', 'unstop.com', '1', '2026-10-01']];
+  const m = S.sovModel(rows, { competitors: comps, keywords: ['hackathons', 'internship', 'tcs nqt'] });
+  assert.equal(m.ok, true); assert.equal(m.latest, '2026-10-01'); assert.equal(m.cur.keywords, 2); assert.equal(m.missing.join(), 'tcs nqt');
+  const me = m.cur.per.find(x => x.own), ish = m.cur.per.find(x => x.domain === 'internshala.com');
+  assert.ok(ish.sov > me.sov); assert.equal(me.top10, 2); assert.ok(me.dSov < 0);
+  assert.equal(m.kwRows.find(r => r.kw === 'internship').gap, 7);
+  const w = S.sovModel([['Keyword', 'Search Volume', 'unstop.com', 'internshala.com Position'], ['internship', '50000', '8', '1']], { competitors: ['internshala.com'] });
+  assert.equal(w.ok, true); assert.ok(w.cur.per.find(x => x.domain === 'internshala.com').sov > 80);
+});
 report('scorecards');
