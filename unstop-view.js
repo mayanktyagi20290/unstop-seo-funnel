@@ -636,7 +636,8 @@
   const GAAUTO = new Map(); // site|start|end → 'loading' | 'done' | 'noprop' | 'error'
   async function gaAuto(D) {
     if (!(window.CW_SOURCE && window.CW_SOURCE.kind === 'api') || !D || !D.start || !D.end) return;
-    const g = GA.get(D.site); if (g && !g.sample) return;
+    // reload when the dates changed, so GA4 always covers the same period as Search Console
+    const g = GA.get(D.site); if (g && !g.sample && g.start === D.start && g.end === D.end) return;
     if (!token()) return;
     const key = D.site + '|' + D.start + '|' + D.end; if (GAAUTO.has(key)) return;
     GAAUTO.set(key, 'loading'); rerender();
@@ -2418,6 +2419,7 @@
     };
     const period = `${fmtD(D.start)} – ${fmtD(D.end)}${hasPrev ? ` · Search Console changes vs ${fmtD(D.prevStart)} – ${fmtD(D.prevEnd)}` : ' · turn on “Compare with the previous period” for week-on-week changes'}${g ? ` · GA4 ${fmtD(g.start)} – ${fmtD(g.end)}, changes vs same dates last year` : ''}`;
     const notes = [];
+    if (g && !g.sample && (g.start !== D.start || g.end !== D.end)) notes.push(`<b class="un-warn">GA4 numbers are for ${esc(fmtD(g.start))} – ${esc(fmtD(g.end))}, not the Search Console dates. Reloading GA4 for ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}… Do not copy until this message goes away.</b>`);
     if (loading) notes.push('Loading B2E and B2E (J&I) from Search Console…');
     if (errs.length) notes.push(`<span class="start-error">Search Console: ${esc(errs.join('; '))}</span>`);
     if (!g) { const ga = gaAutoState(D); notes.push(ga === 'loading' ? 'Loading GA4 for the same dates…' : ga === 'noprop' ? 'Signed in, but no Unstop GA4 property was found on this account: pick it once on <a href="#ga4">GA4 organic</a>.' : ga === 'error' ? `${esc(MSG.ga)} · <a href="#ga4">Load it on GA4 organic</a>` : live ? 'GA4 loads automatically after <b>Connect Search Console</b> when GA4 access was allowed in the same sign-in. Otherwise press Connect GA4 on <a href="#ga4">GA4 organic</a>.' : 'GA4 is not loaded: open <a href="#ga4">GA4 organic</a> and press Load GA4 data.'); }
