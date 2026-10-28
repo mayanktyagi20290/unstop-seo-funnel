@@ -616,6 +616,31 @@
     if (!raw.landing && failed.length) throw new Error(failed[0].replace(/^\w+: /, ''));
     GA.set(D.site, { raw, property: o.property, propertyName: o.propertyName || o.property, start: o.start, end: o.end, at: Date.now(), failed, sample: false });
   }
+  // One sign-in for both: "Connect Search Console" already asks for GA4 access, so when this tab has that
+  // token and a GA4 property is known (saved, in config.js, or the one Unstop property on the account),
+  // GA4 loads by itself for the same dates as Search Console.
+  const GAAUTO = new Map(); // site|start|end → 'loading' | 'done' | 'noprop' | 'error'
+  async function gaAuto(D) {
+    if (!(window.CW_SOURCE && window.CW_SOURCE.kind === 'api') || !D || !D.start || !D.end) return;
+    const g = GA.get(D.site); if (g && !g.sample) return;
+    if (!token()) return;
+    const key = D.site + '|' + D.start + '|' + D.end; if (GAAUTO.has(key)) return;
+    GAAUTO.set(key, 'loading'); rerender();
+    const s = settings(D.site);
+    let property = s.ga4Property, name = property ? 'Property ' + property : '';
+    try {
+      if (!property) {
+        const list = await listProperties();
+        const pick = list.find(p => /unstop/i.test(p.name + ' ' + p.account)) || (list.length === 1 ? list[0] : null);
+        if (!pick) { GAAUTO.set(key, 'noprop'); rerender(); return; }
+        property = pick.id; name = `${pick.name} (${pick.id})`; s.ga4Property = property; save(D.site, s);
+      }
+      await loadGa4(D, { property, propertyName: name, start: D.start, end: D.end });
+      GAAUTO.set(key, 'done'); MSG.ga = '';
+    } catch (e) { GAAUTO.set(key, 'error'); MSG.ga = 'GA4 did not load automatically: ' + e.message; }
+    rerender();
+  }
+  const gaAutoState = D => GAAUTO.get(D.site + '|' + D.start + '|' + D.end);
   function gaModel(D) {
     const g = GA.get(D.site); if (!g) return null;
     const { typeOf, s } = tools(D);
@@ -2262,7 +2287,7 @@
     const notes = [];
     if (loading) notes.push('Loading B2E and B2E (J&I) from Search Console…');
     if (errs.length) notes.push(`<span class="start-error">Search Console: ${esc(errs.join('; '))}</span>`);
-    if (!g) notes.push('GA4 is not loaded: open <a href="#ga4">GA4 organic</a> and press Load GA4 data, then come back. Traffic, leads and engagement rows fill in.');
+    if (!g) { const ga = gaAutoState(D); notes.push(ga === 'loading' ? 'Loading GA4 for the same dates…' : ga === 'noprop' ? 'Signed in, but no Unstop GA4 property was found on this account: pick it once on <a href="#ga4">GA4 organic</a>.' : ga === 'error' ? `${esc(MSG.ga)} · <a href="#ga4">Load it on GA4 organic</a>` : live ? 'GA4 loads automatically after <b>Connect Search Console</b> when GA4 access was allowed in the same sign-in. Otherwise press Connect GA4 on <a href="#ga4">GA4 organic</a>.' : 'GA4 is not loaded: open <a href="#ga4">GA4 organic</a> and press Load GA4 data.'); }
     if (!live && D.source !== 'demo') notes.push('Search Console numbers here come from an upload; brand / non-brand split is an estimate. Connect Search Console for exact numbers.');
     if (D.source === 'demo') notes.push('<b>Sample data.</b> Connect Search Console and GA4 for real numbers.');
     // top landing pages
@@ -2458,5 +2483,10 @@
     return { html, mount };
   };
 
+  // every funnel screen tries the one-sign-in GA4 load after it renders
+  ['b2e', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
+    const f = V[k]; if (!f) return;
+    V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); } }; };
+  });
   window.UN_VIEW = { GA, MOE, settings, sampleGa, sampleMoe };
 })();

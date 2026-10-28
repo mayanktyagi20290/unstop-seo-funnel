@@ -28,7 +28,7 @@ window.CW_CONFIG = {
     // Searches containing any of these count as branded
     brandTerms: ['unstop', 'un stop', 'unstop.com', 'dare2compete', 'dare 2 compete', 'd2c'],
     // GA4 property ID (numbers only, from GA4 Admin › Property details). Can also be chosen after sign-in.
-    ga4PropertyId: '',
+    ga4PropertyId: '254253801',
     // GA4 event names. After connecting GA4 the app lists every event seen in organic sessions so these can be corrected.
     events: {
       studentSignup: ['sign_up', 'signup_complete', 'signup_email_verified'],
