@@ -3,7 +3,7 @@ main = "worker.js"
 compatibility_date = "2026-01-15"
 
 [vars]
-MOE_DC = "01"
+MOE_DC = "03"
 ALLOWED_ORIGINS = "https://mayanktyagi20290.github.io,http://localhost:8080"
 GSC_PROPERTY = "sc-domain:unstop.com"
 GA4_PROPERTY = ""
