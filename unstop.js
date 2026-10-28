@@ -437,6 +437,8 @@
       // assisted conversions: employer conversions by the channel that first brought the user and the channel of the converting session
       assisted: { dateRanges: both, dimensions: [{ name: 'firstUserDefaultChannelGroup' }, { name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.inList('eventName', leadEv.length ? leadEv : ['generate_lead']), limit: 10000 },
       ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 },
+      // organic sessions by search engine and landing page: Google only, to compare with Search Console clicks
+      orgSource: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'sessionSource' }], metrics: [{ name: 'sessions' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 },
       // AI assistant referrals month by month (16 months to the end date), by assistant and landing page
       aiMonthly: { optional: true, dateRanges: [{ startDate: monthsBack(o.end, 15), endDate: o.end }], dimensions: [{ name: 'yearMonth' }, { name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 }
     };
@@ -624,6 +626,7 @@
     AI.forEach(r => { const k = aiName(r.sessionSource); const o = aiBy.get(k) || { source: k, raw: new Set(), sessions: 0, ySessions: 0, engaged: 0, keyEvents: 0, newUsers: 0 }; o.raw.add(r.sessionSource); if (r.range === 'yoy') o.ySessions += r.sessions; else { o.sessions += r.sessions; o.engaged += r.engagedSessions; o.keyEvents += r.keyEvents; o.newUsers += r.newUsers; } aiBy.set(k, o); });
     // month × assistant × landing page (yearMonth "202610" → "2026-10")
     const aiMonthly = (R.aiMonthly || []).map(r => ({ month: String(r.yearMonth || '').replace(/^(\d{4})(\d{2})$/, '$1-$2'), source: aiName(r.sessionSource), path: pathOnly(r.landingPage), sessions: r.sessions, newUsers: r.newUsers, engaged: r.engagedSessions, keyEvents: r.keyEvents }));
+    const orgSrc = (R.orgSource || []).map(r => ({ path: pathOnly(r.landingPage), source: String(r.sessionSource || '(not set)').toLowerCase(), sessions: r.sessions }));
     const ai = [...aiBy.values()].map(o => ({ ...o, raw: [...o.raw].join(', '), dSessions: chg(o.sessions, o.ySessions), engRate: o.sessions ? o.engaged / o.sessions * 100 : null })).sort((a, b) => b.sessions - a.sessions);
     const aiPages = [];
     const apm = new Map();
@@ -633,7 +636,7 @@
       ok: cur.length > 0 || E.length > 0,
       total: { ...T, engRate: T.sessions ? T.engaged / T.sessions * 100 : null, pps: T.sessions ? T.views / T.sessions : null, avgEngSec: T.sessions ? T.dur / T.sessions : null },
       yoy: TY, dSessions: TY ? chg(T.sessions, TY.sessions) : null, dNewUsers: TY ? chg(T.newUsers, TY.newUsers) : null,
-      pages, types, device, country, region, typeDevice, typeRegion, sections, pathCov, daily, ai, aiPages, aiMonthly,
+      pages, types, device, country, region, typeDevice, typeRegion, sections, pathCov, daily, ai, aiPages, aiMonthly, orgSrc: R.orgSource ? orgSrc : null,
       events: [...evTot.values()].sort((a, b) => b.count - a.count),
       ev: { stu: evSum('stu'), emp: evSum('emp'), demo: evSum('demo'), contact: evSum('contact'), opp: evSum('opp'), prodClick: evSum('prodClick'), scroll: evSum('scroll'), yStu: yEv('studentSignup'), yEmp: yEv('employerSignup'), yDemo: yEv('demoRequest'), yContact: yEv('contactSubmit'), yOpp: yEv('opportunityAction') },
       returning: { cur: ret('cur'), yoy: ret('yoy') }, pricing, channels

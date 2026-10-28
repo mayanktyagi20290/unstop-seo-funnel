@@ -621,7 +621,7 @@
     const FIRST = ['landing', 'events', 'daily', 'device', 'region', 'landingDevice', 'landingRegion', 'eventsYoy', 'pricing', 'ai', 'assisted', 'channels', 'channelEvents'];
     keys.sort((a, b) => (FIRST.includes(a) ? FIRST.indexOf(a) : 99) - (FIRST.includes(b) ? FIRST.indexOf(b) : 99));
     // phase 1: what the dashboards show first; the screen renders as soon as these arrive
-    const first = keys.filter(k => FIRST.includes(k) || k === 'aiMonthly'), rest = keys.filter(k => !first.includes(k));
+    const first = keys.filter(k => FIRST.includes(k) || k === 'aiMonthly' || k === 'orgSource'), rest = keys.filter(k => !first.includes(k));
     const run = async list => { const queue = list.slice(); const worker = async () => { while (queue.length) { const k = queue.shift(); try { raw[k] = await runReport(o.property, reqs[k]); } catch (e) { if (!opt.has(k)) failed.push(k + ': ' + e.message); } finally { done++; if (prog) prog.textContent = `Loading GA4 reports… ${done} of ${keys.length}`; } } }; await Promise.all([worker(), worker(), worker(), worker()]); };
     await run(first);
     if (!raw.landing && failed.length) throw new Error(failed[0].replace(/^\w+: /, ''));
@@ -916,6 +916,7 @@
       channels: mk(['sessionDefaultChannelGroup'], ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'], chans.map(([c, f]) => ({ d: [c], m: [sumCur * f, sumCur * f * (c === 'Direct' ? .3 : .6), sumCur * f * .55, sumCur * f * .03] })), false),
       channelEvents: mk(['sessionDefaultChannelGroup', 'eventName'], ['eventCount'], chans.flatMap(([c, f]) => [ev.studentSignup[0], ev.employerSignup[0], ev.demoRequest[0], ev.contactSubmit[0]].map(n => ({ d: [c, n], m: [evTot(n) * f * (c === 'Organic Search' ? 1 : .5 + R())] }))), false),
       ...sampleEngagement(D, land, events, mk, R, ev),
+      orgSource: mk(['landingPage', 'sessionSource'], ['sessions'], land.filter(r => r.d[1] === 'cur').flatMap(r => [['google', .93], ['bing', .05], ['duckduckgo', .02]].map(([src, sh]) => ({ d: [r.d[0], src], m: [r.m[0] * sh * .7] }))), false),
       aiMonthly: (() => { const aiP = pages.filter(p => /\/employers|saas-pricing/.test(p.path)).slice(0, 10).concat(pages.slice(0, 6)); const e = new Date((D.end || '2026-10-25') + 'T00:00:00Z'); const rows = []; for (let i = 15; i >= 0; i--) { const d = new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth() - i, 1)); const ym = d.toISOString().slice(0, 7).replace('-', ''), g = Math.pow(1.13, 15 - i); [['chatgpt.com', 9], ['perplexity.ai', 2.4], ['gemini.google.com', 1.6], ['copilot.microsoft.com', .6], ['claude.ai', .4]].forEach(([src, w]) => aiP.forEach(p => { const v = w * g * (p.clicks / 400 + .3) * (.7 + R() * .6); if (v >= .5) rows.push({ d: [ym, src, p.path], m: [v, v * .6, v * .55, v * .04] }); })); } return mk(['yearMonth', 'sessionSource', 'landingPage'], ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'], rows, false); })(),
       ai: mk(['sessionSource', 'landingPage'], ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'], [['chatgpt.com', .006], ['perplexity.ai', .0015], ['gemini.google.com', .0012], ['copilot.microsoft.com', .0004]].flatMap(([src, sh]) => pages.slice(0, 8).flatMap(p => [{ d: [src, p.path, 'cur'], m: [sumCur * sh / 8, sumCur * sh / 8 * .7, sumCur * sh / 8 * .04, sumCur * sh / 8 * .6] }, { d: [src, p.path, 'yoy'], m: [sumY * sh / 8 * .35, sumY * sh / 8 * .25, 0, sumY * sh / 8 * .2] }])), true)
     };
@@ -2276,23 +2277,24 @@
     const chgOf = (cur, prev) => cur.map((c, i) => pc(c, prev[i]));
     const V1 = 'Visibility (Search Console)';
     const nbImpr = tot('nb', x => x.impr), nbClicks = tot('nb', x => x.clicks);
-    row(V1, 'Impressions (non-brand)', nbImpr, 'n', hasPrev ? chgOf(nbImpr, totPrev('nb', x => x.impr)) : null, 'GSC');
-    row(V1, 'Clicks (non-brand)', nbClicks, 'n', hasPrev ? chgOf(nbClicks, totPrev('nb', x => x.clicks)) : null, 'GSC');
+    const kwRow = (seg) => { R[R.length - 1].bucket = { seg, k: 'all' }; };
+    row(V1, 'Impressions (non-brand)', nbImpr, 'n', hasPrev ? chgOf(nbImpr, totPrev('nb', x => x.impr)) : null, 'GSC'); kwRow('n');
+    row(V1, 'Clicks (non-brand)', nbClicks, 'n', hasPrev ? chgOf(nbClicks, totPrev('nb', x => x.clicks)) : null, 'GSC'); kwRow('n');
     row(V1, 'CTR (non-brand)', nbClicks.map((c, i) => ratio(c, nbImpr[i])), 'pct', null, 'GSC');
     const nbPos = [...G.map(m => m && m.nb.impr ? m.nb.pos : null), wPos(G.filter(Boolean), 'nb')];
     const nbPosPrev = [...G.map(m => m && m.prev && m.prev.nb.impr ? m.prev.nb.pos : null), wPos(G.filter(m => m && m.prev).map(m => m.prev), 'nb')];
     row(V1, 'Average position (non-brand)', nbPos, 'pos', hasPrev ? nbPos.map((v, i) => v != null && nbPosPrev[i] != null ? { pos: v - nbPosPrev[i] } : null) : null, 'GSC');
     const bImpr = tot('b', x => x.impr), bClicks = tot('b', x => x.clicks);
-    row(V1, 'Impressions (brand)', bImpr, 'n', hasPrev ? chgOf(bImpr, totPrev('b', x => x.impr)) : null, 'GSC');
-    row(V1, 'Clicks (brand)', bClicks, 'n', hasPrev ? chgOf(bClicks, totPrev('b', x => x.clicks)) : null, 'GSC');
+    row(V1, 'Impressions (brand)', bImpr, 'n', hasPrev ? chgOf(bImpr, totPrev('b', x => x.impr)) : null, 'GSC'); kwRow('b');
+    row(V1, 'Clicks (brand)', bClicks, 'n', hasPrev ? chgOf(bClicks, totPrev('b', x => x.clicks)) : null, 'GSC'); kwRow('b');
     row(V1, 'CTR (brand)', bClicks.map((c, i) => ratio(c, bImpr[i])), 'pct', null, 'GSC');
     const aImpr = tot('tot', x => x.impr), aClicks = tot('tot', x => x.clicks);
-    row(V1, 'Impressions (all queries)', aImpr, 'n', hasPrev ? chgOf(aImpr, totPrev('tot', x => x.impr)) : null, 'GSC', 'includes queries Google anonymises');
-    row(V1, 'Clicks (all queries)', aClicks, 'n', hasPrev ? chgOf(aClicks, totPrev('tot', x => x.clicks)) : null, 'GSC');
+    row(V1, 'Impressions (all queries)', aImpr, 'n', hasPrev ? chgOf(aImpr, totPrev('tot', x => x.impr)) : null, 'GSC', 'includes searches Google hides, so it is more than brand + non-brand'); kwRow('all');
+    row(V1, 'Clicks (all queries)', aClicks, 'n', hasPrev ? chgOf(aClicks, totPrev('tot', x => x.clicks)) : null, 'GSC'); kwRow('all');
     // brand + non-brand + hidden = all: Google keeps most low-volume searches private, so this closes the gap
     const hidC = G.map(m => m ? Math.max(0, m.tot.clicks - m.b.clicks - m.nb.clicks) : null), hidI = G.map(m => m ? Math.max(0, m.tot.impr - m.b.impr - m.nb.impr) : null);
-    row(V1, 'Clicks from hidden searches', [...hidC, hidC.every(v => v == null) ? null : (hidC[0] || 0) + (hidC[1] || 0)], 'n', null, 'GSC', 'searches Google does not show (anonymised); brand + non-brand + hidden = all queries');
-    row(V1, 'Hidden share of clicks', hidC.map((v, i) => v == null || !aClicks[i] ? null : v / aClicks[i] * 100).concat([aClicks[2] ? ((hidC[0] || 0) + (hidC[1] || 0)) / aClicks[2] * 100 : null]), 'pct', null, 'GSC');
+    row(V1, 'Clicks from hidden searches', [...hidC, hidC.every(v => v == null) ? null : (hidC[0] || 0) + (hidC[1] || 0)], 'n', null, 'GSC', 'searches Google does not show (anonymised); brand + non-brand + hidden = all queries'); R[R.length - 1].why = 1;
+    row(V1, 'Hidden share of clicks', hidC.map((v, i) => v == null || !aClicks[i] ? null : v / aClicks[i] * 100).concat([aClicks[2] ? ((hidC[0] || 0) + (hidC[1] || 0)) / aClicks[2] * 100 : null]), 'pct', null, 'GSC'); R[R.length - 1].why = 1;
     const bk = (f) => [...G.map(m => m ? f(m.buckets) : null), both(G, m => f(m.buckets))];
     const bkPrev = (f) => [...G.map(m => m && m.prevBuckets ? f(m.prevBuckets) : null), both(G.map(m => m && m.prevBuckets ? m : null), m => f(m.prevBuckets))];
     const diff = (cur, prev) => cur.map((c, i) => c != null && prev[i] != null ? { n: c - prev[i] } : null);
@@ -2310,18 +2312,20 @@
     const ga = (f) => [...GAc.map(x => x ? f(x) : null), both(GAc, f)];
     const yoy = (f, fy) => { const c = ga(f), p = ga(fy); return c.map((v, i) => pc(v, p[i])); };
     row(T2, 'Organic sessions', ga(x => x.sessions), 'n', yoy(x => x.sessions, x => x.ySessions), 'GA4', 'change vs same dates last year');
+    const gOrg = id => M && M.orgSrc ? M.orgSrc.filter(r => /(^|\.)google(\.|$)/.test(r.source) && so(r.path) === id).reduce((a, r) => a + r.sessions, 0) : null;
+    const gSes = cols.map(c => c.dummy ? null : gOrg(c.id)), gSesAll = [...gSes, gSes.every(v => v == null) ? null : (gSes[0] || 0) + (gSes[1] || 0)];
+    row(T2, 'Organic sessions from Google only', gSesAll, 'n', null, 'GA4', 'organic search minus Bing, Yahoo, DuckDuckGo…; compare with Search Console clicks');
+    row(T2, 'Google sessions per 100 Search Console clicks', gSesAll.map((v, i) => v == null || !aClicks[i] ? null : v / aClicks[i] * 100), 'dec', null, 'GA4', 'below 100 is normal (consent, ad blockers, people who leave before the page loads); see Why the numbers differ');
+    R[R.length - 1].why = 1; R[R.length - 2].why = 1;
     row(T2, 'Organic new users', ga(x => x.newUsers), 'n', yoy(x => x.newUsers, x => x.yNewUsers), 'GA4');
     row(T2, 'Sessions – desktop', ga(x => x.dev.desktop), 'n', yoy(x => x.dev.desktop, x => x.dev.yDesktop), 'GA4');
     row(T2, 'Sessions – mobile', ga(x => x.dev.mobile), 'n', yoy(x => x.dev.mobile, x => x.dev.yMobile), 'GA4');
     const stTxt = x => x.states.length ? x.states.map(([k, v]) => `${k} ${fmtN(Math.round(v))}`).join(', ') : '—';
     const allStates = () => { const m = new Map(); GAc.forEach(x => x && x.stMap.forEach((v, k) => m.set(k, (m.get(k) || 0) + v))); return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${fmtN(Math.round(v))}`).join(', ') || '—'; };
     R.push({ sec: T2, kpi: 'Top 3 states (sessions)', vals: [...GAc.map(x => x ? stTxt(x) : null), M ? allStates() : null], kind: 'text', chgs: [], src: 'GA4', note: '' });
-    row(T2, 'Landing pages with organic sessions', ga(x => x.landings), 'n', null, 'GA4');
     const pathIds = new Set(s0.pathSections || U.DEFAULT_PATH_SECTIONS);
-    R.push({ sec: T2, kpi: 'Share of sessions on pages with a conversion path', vals: [...cols.map((c, i) => GAc[i] ? (pathIds.has(c.id) ? 100 : 0) : null), M ? (both(GAc, x => x.sessions) ? cols.reduce((a, c, i) => a + (pathIds.has(c.id) && GAc[i] ? GAc[i].sessions : 0), 0) / both(GAc, x => x.sessions) * 100 : null) : null], kind: 'pct', chgs: [], src: 'GA4', note: 'clusters marked as having a conversion path (demo / post a job) in Funnel setup' });
     const aiOf = id => M && M.aiPages ? M.aiPages.filter(p => so(p.path) === id).reduce((a, p) => a + p.sessions, 0) : null;
     const aiC = cols.map(c => aiOf(c.id));
-    row(T2, 'AI assistant sessions landing here', [...aiC, M ? aiC[0] + aiC[1] : null], 'n', null, 'GA4', 'ChatGPT, Perplexity, Gemini, Copilot… referrals (all channels)');
     // 3. Leads & signups
     const L3 = 'Leads & signups (GA4)';
     let AQ = { qsrc: null, cpsEmp: null }, AS = null;
@@ -2338,10 +2342,8 @@
     row(L3, 'Demo requests', ga(x => x.demo), 'n', null, 'GA4', 'event names: Funnel setup');
     row(L3, 'Contact form submissions', ga(x => x.contact), 'n', null, 'GA4');
     const leads = ga(x => x.demo + x.contact), ses = ga(x => x.sessions);
-    row(L3, 'Demo + contact per 1,000 sessions', leads.map((v, i) => v == null || !ses[i] ? null : v / ses[i] * 1000), 'dec', null, 'GA4');
     row(L3, 'Employer / recruiter signups', ga(x => x.emp), 'n', null, 'GA4', 'needs the real employer signup event name');
     row(L3, 'Employer signup CVR', ga(x => x.emp).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4', 'signups ÷ organic sessions');
-    row(L3, 'Pricing page sessions', ga(x => x.pricing), 'n', null, 'GA4', 'intent signal, not a lead');
     const slRow = (kpi, f, kind, note, ldKind) => R.push({ sec: L3, kpi, vals: [...slT.map(t => t ? f(t) : null), slBoth ? f(slBoth) : null], kind, chgs: [], src: 'Leads sheet', note: note || '', ldKind, link: SLr ? null : (kpi.startsWith('Sales-form leads') ? ['#un-b2e-sales', 'Load the leads sheet'] : null) });
     slRow('Sales-form leads (leads sheet, organic)', t => t.total, 'n', SLr ? 'click a number to see the leads; organic form submissions on these pages, unstop.com emails excluded' : 'connect the B2B Form Leads sheet below', 'any');
     slRow('Official-email leads (company domain)', t => t.official, 'n', '', 'official');
@@ -2401,7 +2403,7 @@
     const heads = [...cols.map(c => c.name), cfg.bothHead || 'Combined (B2E + J&I)'];
     const chgTxt = c => c == null ? '' : typeof c === 'object' ? (c.pos != null ? (c.pos > 0 ? '+' : '') + c.pos.toFixed(1) : (c.n > 0 ? '+' : '') + fmtN(c.n)) : (c > 0 ? '+' : '') + c.toFixed(1) + '%';
     const chgHtml = (c, kpi) => { if (c == null) return ''; if (typeof c === 'object') { const v = c.pos != null ? c.pos : c.n; if (c.pos != null) return dchip(v, true, 'pos'); const good = /11–20/.test(kpi) ? null : v > 0; return `<span class="un-d ${v === 0 ? 'flat' : good === null ? 'flat' : good ? 'up' : 'down'}">${chgTxt(c)}</span>`; } return dchip(c); };
-    const cell = (r, i) => { const v = r.vals[i]; if (r.ldKind && v > 0) return ldLink(v, { range: 'period', kind: r.ldKind, cluster: i === 2 ? 'both' : ids[i], label: `${heads[i]} · ${r.kpi}` }, fmtV(v, r.kind)); if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; if (r.bucket && v > 0) return `<a href="#" class="un-b2e-kw" data-kw="${r.bucket.seg}|${r.bucket.k}|${i}" title="Show these keywords">${fmtV(v, r.kind)}</a>`; return fmtV(v, r.kind); };
+    const cell = (r, i) => { const v = r.vals[i]; if (r.ldKind && v > 0) return ldLink(v, { range: 'period', kind: r.ldKind, cluster: i === 2 ? 'both' : ids[i], label: `${heads[i]} · ${r.kpi}` }, fmtV(v, r.kind)); if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; if (r.bucket && v > 0) return `<a href="#" class="un-b2e-kw" data-kw="${r.bucket.seg}|${r.bucket.k}|${i}" title="Show these keywords">${fmtV(v, r.kind)}</a>`; if (r.why && v != null && isFinite(v)) return `<a href="#" class="un-b2e-kw" data-jump="un-b2e-why" title="Why the numbers differ">${fmtV(v, r.kind)}</a>`; return fmtV(v, r.kind); };
     const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : r.src === 'Crawl' ? (!crR ? 'none' : cr.sample ? 'sample' : 'file') : r.src === 'CRM' ? (!C ? 'none' : crm.sample ? 'sample' : 'file') : r.src === 'MoEngage' ? (!AQ.qsrc ? 'none' : AQ.qsrc) : r.src === 'Cost input' ? (AQ.cpsEmp == null ? 'none' : AQ.costSample ? 'sample' : 'input') : r.src === 'Rank tracker' ? 'file' : r.src === 'Leads sheet' ? (!SLr ? 'none' : SLd.source === 'sample' ? 'sample' : SLd.source === 'sheet' ? 'live' : 'file') : 'later';
     let lastSec = '';
     // which columns to show and copy: all three, or just B2E, just B2E (J&I) or just the combined total
@@ -2448,12 +2450,17 @@
     function kwPanel() {
       if (!kwSel) return '';
       const { seg, k, i, topic } = kwSel, lab = { top3: 'in top 3', top10: 'in top 10', p11: 'in positions 11–20', all: '' }[k];
+      const segOk = (q, isBr) => seg === 'all' ? true : (seg === 'b') === !!isBr(q);
       const idx = i === 2 ? [0, 1] : [i];
       const isBr = brandOf(A);
-      const rows = idx.flatMap(j => { const m = G[j]; if (!m) return []; const src = topic ? (m.allQueries || []).filter(r => b2eTopic(r.q) === topic && (seg === 'b') === !!isBr(r.q) && (k === 'all' || (k === 'top10' ? r.pos <= 10 : r.pos > 10 && r.pos <= 20))) : (m.bucketLists ? m.bucketLists[seg][k] : []); return src.map(r => ({ ...r, cluster: cols[j].name, ctr: r.impr ? r.clicks / r.impr * 100 : 0 })); }).sort((a, b) => b.impr - a.impr);
-      const title = `${i === 2 ? bothName : cols[i].name}: ${topic ? topic + ', ' : ''}${seg === 'n' ? 'non-brand' : 'brand'} keywords ${lab} (${fmtN(rows.length)})`.replace(/ \(/, ' (').replace(/\s+\(/, ' (');
-      return `<section class="panel" id="un-b2e-kwp"><div class="panel-h"><h2>${esc(title)}</h2><p>Search Console, ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}. Position is the average for this cluster’s pages. <button class="btn-quiet sm" type="button" id="un-b2e-kwx">Close</button></p></div>` +
-        table('t-un-b2e-kw', [{ k: 'q', l: 'Keyword', cls: 'q', f: r => `<a href="https://www.google.com/search?q=${encodeURIComponent(r.q)}&gl=in&hl=en" target="_blank" rel="noopener">${esc(r.q)}</a>`, csv: r => r.q }, ...(i === 2 ? [{ k: 'cluster', l: 'Cluster' }] : []), { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos), csv: r => r.pos.toFixed(1) }],
+      const rows = idx.flatMap(j => { const m = G[j]; if (!m) return []; const src = topic ? (m.allQueries || []).filter(r => b2eTopic(r.q) === topic && (seg === 'b') === !!isBr(r.q) && (k === 'all' || (k === 'top10' ? r.pos <= 10 : r.pos > 10 && r.pos <= 20))) : k === 'all' ? (m.allQueries || []).filter(r => segOk(r.q, isBr)) : (m.bucketLists ? m.bucketLists[seg][k] : []); const qp = new Map(); QPe.forEach(x => { if (so(x.p) !== cols[j].id) return; const L = qp.get(x.q) || []; L.push(x); qp.set(x.q, L); }); return src.map(r => { const L = (qp.get(r.q) || []).slice().sort((a, b) => (+b.clicks || 0) - (+a.clicks || 0) || (+b.impr || 0) - (+a.impr || 0)); return { ...r, cluster: cols[j].name, ctr: r.impr ? r.clicks / r.impr * 100 : 0, pages: L.map(x => ({ path: U.pathOnly(x.p), clicks: +x.clicks || 0, impr: +x.impr || 0 })) }; }); }).sort((a, b) => b.impr - a.impr);
+      const title = `${i === 2 ? bothName : cols[i].name}: ${topic ? topic + ', ' : ''}${seg === 'n' ? 'non-brand' : seg === 'b' ? 'brand' : 'all'} keywords ${lab} (${fmtN(rows.length)})`.replace(/ \(/, ' (').replace(/\s+\(/, ' (');
+      return `<section class="panel" id="un-b2e-kwp"><div class="panel-h"><h2>${esc(title)}</h2><p>Search Console, ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}. Position is the average for this cluster’s pages. <button class="btn-quiet sm" type="button" id="un-b2e-kwx">Close</button></p></div>` + (k === 'all' && !topic ? (() => {
+          const key = seg === 'n' ? 'nb' : seg === 'b' ? 'b' : 'tot', agg = idx.reduce((a, j) => { const m = G[j]; if (m) { a.c += m[key].clicks; a.i += m[key].impr; a.tc += m.tot.clicks; a.ti += m.tot.impr; } return a; }, { c: 0, i: 0, tc: 0, ti: 0 });
+          const sc = rows.reduce((a, r) => a + (+r.clicks || 0), 0), si = rows.reduce((a, r) => a + (+r.impr || 0), 0);
+          return `<div class="note">These ${fmtN(rows.length)} keywords add up to <b>${fmtN(sc)} clicks</b> and <b>${fmtN(si)} impressions</b>. Search Console total for these pages: <b>${fmtN(agg.tc)} clicks</b>, ${fmtN(agg.ti)} impressions${seg !== 'all' ? ` (${seg === 'n' ? 'non-brand' : 'brand'} row: ${fmtN(agg.c)} clicks, ${fmtN(agg.i)} impressions)` : ''}. ${(() => { const o = idx.reduce((a, j) => { const m = G[j]; if (m) { a.b += m.b.clicks; a.n += m.nb.clicks; a.h += Math.max(0, m.tot.clicks - m.b.clicks - m.nb.clicks); a.hi += Math.max(0, m.tot.impr - m.b.impr - m.nb.impr); } return a; }, { b: 0, n: 0, h: 0, hi: 0 }); return `Split of the total: brand <b>${fmtN(o.b)}</b> + non-brand <b>${fmtN(o.n)}</b> + hidden searches <b>${fmtN(o.h)}</b> clicks (hidden impressions ${fmtN(o.hi)}). Google never reveals the hidden searches, so they cannot be listed keyword by keyword; the page-by-page table under “Why the numbers differ” shows which pages they land on.`; })()} <a href="#" data-jump="un-b2e-why">Why the numbers differ →</a></div>`;
+        })() : '') +
+        table('t-un-b2e-kw', [{ k: 'q', l: 'Keyword', cls: 'q', f: r => `<a href="https://www.google.com/search?q=${encodeURIComponent(r.q)}&gl=in&hl=en" target="_blank" rel="noopener">${esc(r.q)}</a>`, csv: r => r.q }, ...(i === 2 ? [{ k: 'cluster', l: 'Cluster' }] : []), { k: 'clicks', l: 'Clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'ctr', l: 'CTR', r: 1, f: r => pct1(r.ctr) }, { k: 'pos', l: 'Position', r: 1, f: r => posTag(r.pos), csv: r => r.pos.toFixed(1) }, { k: 'pg', l: 'Landing page (clicks / impressions)', cls: 'u', f: r => r.pages.length ? r.pages.slice(0, 3).map(x => `<a href="${esc(focusHref({ u: x.path }))}">${esc(x.path)}</a> <span class="un-n">${fmtN(x.clicks)} / ${fmtN(x.impr)}</span>`).join('<br>') + (r.pages.length > 3 ? `<br><span class="un-n">+${r.pages.length - 3} more</span>` : '') : '<span class="un-n">—</span>', csv: r => r.pages.map(x => `${x.path} (${x.clicks}/${x.impr})`).join('; ') }],
           rows, { file: cfg.file + '-' + (topic ? topic.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' : '') + (seg === 'n' ? 'nonbrand' : 'brand') + '-' + k, sort: 'impr', pageSize: 50, placeholder: 'Filter keywords' }) + '</section>';
     }
     // ═══ extra sections: alerts, weekly trend, products, topics, quick wins, all landing pages ═══
@@ -2656,7 +2663,57 @@
       }
       var aiChart = { months: months.slice().reverse(), srcs };
     }
-    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    // ── why the numbers differ: brand + non-brand vs all, Search Console clicks vs GA4 sessions ──
+    delete TABLES['t-un-b2e-why'];
+    const whyHtml = (() => {
+      const isG = src => /(^|\.)google(\.|$)/.test(src);
+      const srcRows = M && M.orgSrc ? M.orgSrc : null;
+      const engines = id => { if (!srcRows) return null; const o = { google: 0, other: 0, list: new Map() }; srcRows.forEach(r => { if (so(r.path) !== id) return; if (isG(r.source)) o.google += r.sessions; else { o.other += r.sessions; o.list.set(r.source, (o.list.get(r.source) || 0) + r.sessions); } }); return o; };
+      const EN = cols.map(c => c.dummy ? null : engines(c.id));
+      const sum = (arr, f) => arr.every(x => x == null) ? null : arr.reduce((a, x) => a + (x == null ? 0 : f(x)), 0);
+      const val = (i, f, arr) => i === 2 ? sum(arr.slice(0, 2), f) : arr[i] == null ? null : f(arr[i]);
+      const lines = [
+        ['Search Console clicks, all searches', i => val(i, m => m.tot.clicks, G)],
+        ['… brand searches', i => val(i, m => m.b.clicks, G)],
+        ['… non-brand searches', i => val(i, m => m.nb.clicks, G)],
+        ['… hidden searches (Google does not list them)', i => val(i, m => Math.max(0, m.tot.clicks - m.b.clicks - m.nb.clicks), G)],
+        ['Search Console impressions, all searches', i => val(i, m => m.tot.impr, G)],
+        ['… brand', i => val(i, m => m.b.impr, G)],
+        ['… non-brand', i => val(i, m => m.nb.impr, G)],
+        ['… hidden', i => val(i, m => Math.max(0, m.tot.impr - m.b.impr - m.nb.impr), G)],
+        ['GA4 organic sessions, all search engines', i => val(i, x => x.sessions, GAc)],
+        ['… from Google', i => val(i, x => x.google, EN)],
+        ['… from Bing, Yahoo, DuckDuckGo and others', i => val(i, x => x.other, EN)],
+        ['GA4 Google sessions per 100 Search Console clicks', i => { const a = val(i, x => x.google, EN), b = val(i, m => m.tot.clicks, G); return a == null || !b ? null : Math.round(a / b * 100); }]
+      ];
+      const tbl = `<div class="tw"><table class="un-mini"><thead><tr><th></th>${shown.map(i => `<th class="r">${esc(heads[i])}</th>`).join('')}</tr></thead><tbody>${lines.map(([l, f]) => `<tr${l.startsWith('…') ? '' : ' class="un-b2e-sec"'}><td>${esc(l)}</td>${shown.map(i => { const v = f(i); return `<td class="r">${v == null ? '<span class="un-n">—</span>' : fmtN(Math.round(v))}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`;
+      const otherEng = (() => { const m = new Map(); EN.forEach(e => e && e.list.forEach((v, k) => m.set(k, (m.get(k) || 0) + v))); return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${fmtN(Math.round(v))}`).join(', '); })();
+      const reasons = `<h3 class="un-sub">Why brand + non-brand is less than all searches</h3><ul class="un-why">
+        <li>Google hides searches that very few people make (privacy). They count in the page total but never appear as a keyword, so they cannot be called brand or non-brand. On employer pages most searches are rare, so the hidden part is large. That is the “hidden searches” line above; brand + non-brand + hidden = all.</li>
+        <li>Click any brand, non-brand or all-searches number in the summary to see the keywords behind it, with how much of the total they cover.</li></ul>
+        <h3 class="un-sub">Why Search Console clicks and GA4 sessions differ</h3><ul class="un-why">
+        <li><b>GA4 counts every search engine</b>; Search Console is Google only. Compare Search Console clicks with the “from Google” line${otherEng ? ` (other engines here: ${esc(otherEng)})` : ''}.</li>
+        <li><b>GA4 only sees visits where its tag runs</b>: people who block cookies or trackers, use ad blockers or leave before the page loads are clicks in Search Console but no session in GA4. 60–90 Google sessions per 100 clicks is common.</li>
+        <li><b>Redirects and changed URLs</b>: Search Console credits the URL shown in Google; GA4 credits the page the visitor lands on after any redirect. Old URLs that redirect to new ones show clicks with no sessions, and the new URL gets sessions without the clicks.</li>
+        <li><b>A click is not a session</b>: one click can give two sessions (the visitor comes back after 30 minutes idle), and a returning visitor from Google within the same session adds a click but no new session.</li>
+        <li><b>Dates</b>: Search Console uses Pacific time and its last 2–3 days are still filling in; GA4 uses the property's time zone (India).</li>
+        <li><b>Landing page “(not set)”</b> and Discover / News visits: GA4 can't place some sessions on a page, and Google Discover visits can appear as Google organic in GA4 but are not in Search Console web search.</li></ul>`;
+      // page by page: Search Console clicks vs GA4 Google sessions
+      let pageTbl = '';
+      {
+        const gp = new Map(); (srcRows || []).forEach(r => { if (!isG(r.source)) return; const k = r.path.toLowerCase(); gp.set(k, (gp.get(k) || 0) + r.sessions); });
+        const seen = new Set();
+        const rows = pagesAll.map(r => { const k = r.path.toLowerCase(); seen.add(k); const gs = gp.get(k) || 0; return { path: r.path, cluster: r.cluster, clicks: r.clicks, impr: r.impr, bC: r.bC, nbC: r.nbC, hC: r.bC == null ? null : Math.max(0, r.clicks - r.bC - r.nbC), gs, ses: r.sessions || 0, ratio: r.clicks ? gs / r.clicks * 100 : null }; });
+        gp.forEach((v, k) => { if (seen.has(k) || !ids.includes(so(k))) return; rows.push({ path: k, cluster: clusterName(so(k)), clicks: 0, impr: 0, bC: null, nbC: null, hC: null, gs: v, ses: v, ratio: null }); });
+        const flag = r => !srcRows ? '' : r.clicks >= 5 && r.gs === 0 ? 'Clicks but no GA4 visits: redirect, missing tag or URL mismatch' : r.clicks === 0 && r.gs >= 5 ? 'GA4 visits but no Search Console clicks: a redirect target or Discover' : r.ratio != null && r.clicks >= 20 && r.ratio < 40 ? 'Far fewer visits than clicks: check redirects and tag' : r.ratio != null && r.clicks >= 20 && r.ratio > 150 ? 'More visits than clicks: redirect target, Discover or repeat sessions' : '';
+        rows.forEach(r => { r.flag = flag(r); });
+        pageTbl = `<h3 class="un-sub">Page by page</h3>` + table('t-un-b2e-why', [{ k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` }, ...(cols[1].dummy ? [] : [{ k: 'cluster', l: 'Cluster' }]), { k: 'impr', l: 'Impressions', r: 1, f: r => fmtN(r.impr) }, { k: 'clicks', l: 'Search Console clicks', r: 1, f: r => fmtN(r.clicks) }, { k: 'bC', l: 'from brand', r: 1, f: r => r.bC == null ? '—' : fmtN(r.bC) }, { k: 'nbC', l: 'from non-brand', r: 1, f: r => r.nbC == null ? '—' : fmtN(r.nbC) }, { k: 'hC', l: 'from hidden searches', r: 1, f: r => r.hC == null ? '—' : fmtN(r.hC) }, { k: 'gs', l: 'GA4 Google sessions', r: 1, f: r => fmtN(Math.round(r.gs)) }, { k: 'ses', l: 'GA4 organic sessions (all engines)', r: 1, f: r => fmtN(Math.round(r.ses)) }, { k: 'ratio', l: 'Google sessions per 100 clicks', r: 1, f: r => r.ratio == null ? '—' : fmtN(Math.round(r.ratio)), csv: r => r.ratio == null ? '' : Math.round(r.ratio) }, { k: 'flag', l: 'Check', f: r => r.flag ? `<span class="un-warn">${esc(r.flag)}</span>` : '' }],
+          rows, { file: cfg.file + '-gsc-vs-ga4', sort: 'clicks', pageSize: 25, placeholder: 'Filter pages' });
+      }
+      if (M && !srcRows) pageTbl = '<p class="hint">Press Reload GA4 once to get the Google-only sessions per page.</p>' + pageTbl;
+      return tbl + (M ? '' : '<p class="hint">Connect GA4 for the GA4 lines.</p>') + reasons + pageTbl;
+    })();
+    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-why', 'Why numbers differ'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
     const navLinks = navLinks0.filter(([id]) => !(cfg.sales === false && id === 'un-b2e-sales')).map(([id, l]) => [id, id === 'un-b2e-prod' && cfg.productLabel ? cfg.productLabel : l]);
     const navHtml = `<nav class="un-b2e-nav">${navLinks.map(([id, l]) => `<a href="#" data-jump="${id}">${esc(l)}</a>`).join('')}</nav>`;
     const sec = (id, title, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
@@ -2665,6 +2722,7 @@
       `<div class="un-row" style="margin:6px 0 12px;flex-wrap:wrap;gap:8px"><div class="un-tabs" role="tablist" aria-label="Columns" ${cols[1].dummy ? 'hidden' : ''}>${[['all', 'All three'], ['0', heads[0] + ' only'], ['1', heads[1] + ' only'], ['2', 'Combined only']].map(([v, l]) => `<button type="button" class="${VIEW === v ? 'on' : ''}" data-b2v="${v}">${esc(l)}</button>`).join('')}</div><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Copies the columns shown: ${esc(shown.map(i => heads[i]).join(', '))}. Paste into the sheet with Ctrl/Cmd + V.</span></div>` +
       `<section class="panel" id="un-b2e-sum"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${shown.map(i => `<th class="r">${esc(heads[i])}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
       kwPanel() +
+      sec('un-b2e-why', 'Why the numbers differ', 'Brand + non-brand vs all searches, and Search Console clicks vs GA4 sessions, with the numbers for these pages.', whyHtml) +
       sec('un-b2e-alerts', 'Drop alerts', 'Employer pages and non-brand keywords that lost clicks or ranking this week, with the likely reason.', alertHtml || '<p class="un-n">—</p>') +
       (cfg.sales === false ? '' : sec('un-b2e-sales', 'Sales-form leads (B2B Form Leads sheet)', 'Every sales-form submission by the page it was filled on, split into official, campus and personal email. Organic only by default. This is the lead list (CRM) for B2E.', salesHtml)) +
       sec('un-b2e-ai', 'AI assistant traffic by month', 'How many visits ChatGPT, Perplexity, Gemini and other assistants send each month, and to which pages.', aiHtml) +
@@ -2689,6 +2747,7 @@
       const tb = document.querySelector('.un-b2e');
       if (tb) tb.addEventListener('click', e => { const el = e.target.closest('[data-kw]'); if (!el) return; e.preventDefault(); const [seg, k, i] = el.dataset.kw.split('|'); B2E_KW.set(SK, { seg, k, i: +i }); rerender(); setTimeout(() => { const p = document.getElementById('un-b2e-kwp'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); });
       if (document.getElementById('t-un-b2e-kw')) drawTable('t-un-b2e-kw');
+      if (document.getElementById('t-un-b2e-why')) drawTable('t-un-b2e-why');
       const kx = document.getElementById('un-b2e-kwx'); if (kx) kx.addEventListener('click', () => { B2E_KW.delete(SK); rerender(); });
       const rl = document.getElementById('un-b2e-reload');
       if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); B2EX.delete(XK); rerender(); });
