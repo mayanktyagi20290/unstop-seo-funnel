@@ -121,3 +121,5 @@
 .un-mini tr.un-hl td{background:var(--surface-2,#eef2ff)}
 
 .un-why{margin:4px 0 12px 18px;padding:0;line-height:1.5}.un-why li{margin:4px 0}
+
+.un-verify{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.un-verify-c{border:1px solid var(--line,#e5e5e5);border-radius:8px;padding:10px 12px}.un-verify-c p{margin:6px 0}

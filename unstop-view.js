@@ -2715,7 +2715,45 @@
       if (M && !srcRows) pageTbl = '<p class="hint">Press Reload GA4 once to get the Google-only sessions per page.</p>' + pageTbl;
       return tbl + (M ? '' : '<p class="hint">Connect GA4 for the GA4 lines.</p>') + reasons + pageTbl;
     })();
-    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-why', 'Why numbers differ'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    // ── open the same numbers in Search Console and GA4 (same dates, same pages) so anyone can check them ──
+    const verifyHtml = (() => {
+      const site = D.siteUrl || ('sc-domain:' + D.site), host = String(D.site || '').replace(/^sc-domain:/, '');
+      const ymd = d => String(d || '').replace(/-/g, '');
+      const rxEsc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Search Console regex (RE2, no look-ahead): the cluster's own rules when they need no exclusion, else the exact pages
+      const pageRx = idList => {
+        const secs = idList.map(id => so.sections.find(x => x.id === id)).filter(Boolean);
+        const narrower = so.sections.slice(0, so.sections.findIndex(x => x.id === idList[0])).filter(x => !idList.includes(x.id));
+        const rulesOk = secs.every(sc => !narrower.some(o => o.rules.some(r => sc.rules.some(q => { const a = r.replace(/^=|\*$/g, '').replace(/\/$/, ''), b = q.replace(/^=|\*$/g, '').replace(/\/$/, ''); return a.startsWith(b + '/') || a.startsWith(b) && q.endsWith('*'); }))));
+        if (rulesOk) { const parts = secs.flatMap(sc => sc.rules.map(r => r.startsWith('=') ? rxEsc(r.slice(1)) + '$' : r.endsWith('*') ? rxEsc(r.slice(0, -1)) : rxEsc(r.replace(/\/$/, '')) + '(/|$|\\?)')); return { rx: '^https://' + rxEsc(host) + '(' + parts.join('|') + ')', exact: false }; }
+        const paths = [...new Set((A.P || []).filter(r => idList.includes(so(r.p))).map(r => U.pathOnly(r.p)))];
+        return { rx: '^https://' + rxEsc(host) + '(' + paths.map(rxEsc).join('|') + ')/?([?#].*)?$', exact: true, n: paths.length };
+      };
+      const brandRx = A.brandRx || 'unstop';
+      const gsc = (rx, brand) => 'https://search.google.com/search-console/performance/search-analytics?' + Object.entries(Object.assign({ resource_id: site, start_date: ymd(D.start), end_date: ymd(D.end), page: '~' + rx, metrics: 'CLICKS,IMPRESSIONS,CTR,POSITION' }, brand ? { query: '~' + brandRx } : {})).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+      const gaProp = String(s0.ga4Property || '').replace(/\D/g, '');
+      const gaStart = g && !g.sample ? g.start : D.start, gaEnd = g && !g.sample ? g.end : D.end;
+      const ga4 = term => gaProp ? `https://analytics.google.com/analytics/web/#/p${gaProp}/reports/explorer?params=${encodeURIComponent(`_u..nav=maui&_u.date00=${ymd(gaStart)}&_u.date01=${ymd(gaEnd)}&_r.explorerCard..filterTerm=${term}`)}&r=landing-page` : null;
+      const colIds = i => i === 2 ? realIds : [ids[i]];
+      const cards = shown.map(i => {
+        if (cols[i] && cols[i].dummy) return '';
+        const pr = pageRx(colIds(i)), v = j => fmtN(Math.round(j));
+        const m = i === 2 ? null : G[i];
+        const tc = i === 2 ? G.reduce((a, x) => a + (x ? x.tot.clicks : 0), 0) : m ? m.tot.clicks : null;
+        const ti = i === 2 ? G.reduce((a, x) => a + (x ? x.tot.impr : 0), 0) : m ? m.tot.impr : null;
+        const bc = i === 2 ? G.reduce((a, x) => a + (x ? x.b.clicks : 0), 0) : m ? m.b.clicks : null;
+        const ses = GAc && (i === 2 ? both(GAc, x => x.sessions) : GAc[i] ? GAc[i].sessions : null);
+        const firstRule = ((so.sections.find(x => x.id === colIds(i)[0]) || {}).rules || [''])[0].replace(/^=|\*$/g, '');
+        const ga = ga4(firstRule);
+        return `<div class="un-verify-c"><b>${esc(heads[i])}</b>
+          <p><a href="${esc(gsc(pr.rx))}" target="_blank" rel="noopener">Open in Search Console →</a><br><span class="un-n">should show ${tc == null ? '—' : v(tc)} clicks, ${ti == null ? '—' : v(ti)} impressions</span></p>
+          <p><a href="${esc(gsc(pr.rx, true))}" target="_blank" rel="noopener">Brand searches only →</a><br><span class="un-n">should show ${bc == null ? '—' : v(bc)} clicks. Non-brand = the Queries table without these; hidden searches are in the total only.</span></p>
+          ${ga ? `<p><a href="${esc(ga)}" target="_blank" rel="noopener">Open in GA4 (landing pages) →</a><br><span class="un-n">${ses == null ? '' : `tool: ${v(ses)} organic sessions. `}Then click + next to “Landing page”, add <b>Session default channel group</b> and read the Organic Search rows. Do not use the report filter: on this property it turns the report into a sample (about 4% of data).</span></p>` : ''}
+          <p class="un-n">Page filter: ${pr.exact ? `the ${pr.n} exact pages of this cluster` : 'the cluster rules'} (regex, copied into the link).</p></div>`;
+      }).join('');
+      return `<p class="hint">Same dates as this dashboard: Search Console ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}${g && !g.sample ? ` · GA4 ${esc(fmtD(gaStart))} – ${esc(fmtD(gaEnd))}` : ''}. Each link opens Google's own report with the same pages and dates, so the numbers can be checked without the tool.</p><div class="un-verify">${cards}</div>`;
+    })();
+    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-verify', 'Check in Google'], ['un-b2e-why', 'Why numbers differ'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
     const navLinks = navLinks0.filter(([id]) => !(cfg.sales === false && id === 'un-b2e-sales')).map(([id, l]) => [id, id === 'un-b2e-prod' && cfg.productLabel ? cfg.productLabel : l]);
     const navHtml = `<nav class="un-b2e-nav">${navLinks.map(([id, l]) => `<a href="#" data-jump="${id}">${esc(l)}</a>`).join('')}</nav>`;
     const sec = (id, title, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
@@ -2724,6 +2762,7 @@
       `<div class="un-row" style="margin:6px 0 12px;flex-wrap:wrap;gap:8px"><div class="un-tabs" role="tablist" aria-label="Columns" ${cols[1].dummy ? 'hidden' : ''}>${[['all', 'All three'], ['0', heads[0] + ' only'], ['1', heads[1] + ' only'], ['2', 'Combined only']].map(([v, l]) => `<button type="button" class="${VIEW === v ? 'on' : ''}" data-b2v="${v}">${esc(l)}</button>`).join('')}</div><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Copies the columns shown: ${esc(shown.map(i => heads[i]).join(', '))}. Paste into the sheet with Ctrl/Cmd + V.</span></div>` +
       `<section class="panel" id="un-b2e-sum"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${shown.map(i => `<th class="r">${esc(heads[i])}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
       kwPanel() +
+      sec('un-b2e-verify', 'Check these numbers in Search Console and GA4', '', verifyHtml) +
       sec('un-b2e-why', 'Why the numbers differ', 'Brand + non-brand vs all searches, and Search Console clicks vs GA4 sessions, with the numbers for these pages.', whyHtml) +
       sec('un-b2e-alerts', 'Drop alerts', 'Employer pages and non-brand keywords that lost clicks or ranking this week, with the likely reason.', alertHtml || '<p class="un-n">—</p>') +
       (cfg.sales === false ? '' : sec('un-b2e-sales', 'Sales-form leads (B2B Form Leads sheet)', 'Every sales-form submission by the page it was filled on, split into official, campus and personal email. Organic only by default. This is the lead list (CRM) for B2E.', salesHtml)) +
