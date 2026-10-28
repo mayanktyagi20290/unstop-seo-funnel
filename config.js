@@ -29,6 +29,8 @@ window.CW_CONFIG = {
     brandTerms: ['unstop', 'un stop', 'unstop.com', 'dare2compete', 'dare 2 compete', 'd2c'],
     // GA4 property ID (numbers only, from GA4 Admin › Property details). Can also be chosen after sign-in.
     ga4PropertyId: '254253801',
+    // B2B Form Leads Google Sheet (sales-form leads, used as the CRM for B2E). Read-only.
+    salesSheet: '1OGpQV0MR0y5MV1Ronb59VBrIW1hhhn6rPlHMxYg6Yho',
     // GA4 event names. After connecting GA4 the app lists every event seen in organic sessions so these can be corrected.
     events: {
       studentSignup: ['sign_up', 'signup_complete', 'signup_email_verified'],

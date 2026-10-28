@@ -184,7 +184,7 @@
     tokenClient = tokenClient || google.accounts.oauth2.initTokenClient({
       client_id: CFG.googleClientId,
       // Search Console + GA4 (read-only) in one sign-in; GA4 can also be connected later from the GA4 screen
-      scope: 'https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly',
+      scope: 'https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/spreadsheets.readonly',
       callback: r => {
         if (r.error) { startError('Sign-in was not completed: ' + r.error); return; }
         token = r.access_token; tokenExpires = Date.now() + (+r.expires_in || 3600) * 1000; sess.set('tok', { t: token, exp: tokenExpires });

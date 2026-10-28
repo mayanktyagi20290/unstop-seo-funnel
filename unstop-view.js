@@ -7,7 +7,7 @@
   const { head, table, drawTable, TABLES, chart, cssVar, posTag, pctf, urlCell } = ui;
   const CW = window.CW, U = window.UN, fmtN = CW.fmtN;
   const CFG = (window.CW_CONFIG && window.CW_CONFIG.unstop) || {};
-  const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly'; // webmasters too: the MoEngage proxy checks Search Console access
+  const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly https://www.googleapis.com/auth/spreadsheets.readonly'; // webmasters too: the MoEngage proxy checks Search Console access
   const rerender = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
 
   // ── per-site settings ──
@@ -1957,6 +1957,7 @@
         <label class="field"><span>Pricing page paths</span><input type="text" id="un-pricing" value="${esc(s.pricingPaths.join(', '))}"></label>
         <label class="field"><span>AI assistant sources (GA4 session source contains)</span><input type="text" id="un-ai" value="${esc(s.aiSources.join(', '))}"></label>
         <label class="field"><span>GA4 property ID</span><input type="text" id="un-prop" inputmode="numeric" value="${esc(s.ga4Property)}"></label>
+        <label class="field"><span>Sales-form leads Google Sheet (link or ID), used as the B2E lead list</span><input type="text" id="un-sales-sheet" value="${esc(s.salesSheet || CFG.salesSheet || '')}" spellcheck="false"></label>
       </div></section>
       <section class="panel"><div class="panel-h"><h2>Conversion paths, cost and MoEngage</h2></div><div class="panel-b un-grid2">
         <fieldset class="field"><span>URL clusters with a clear conversion path (register, apply, post a job, book a demo)</span>${(() => { const ps = s.pathSections || U.DEFAULT_PATH_SECTIONS; return U.makeSectioner(s.sections).sections.filter(x => x.id !== 'other').map(x => `<label class="check"><input type="checkbox" data-path="${esc(x.id)}" ${ps.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join(''); })()}</fieldset>
@@ -1988,6 +1989,7 @@
         n.pricingPaths = document.getElementById('un-pricing').value.split(',').map(x => x.trim()).filter(Boolean);
         n.aiSources = document.getElementById('un-ai').value.split(',').map(x => x.trim()).filter(Boolean);
         n.ga4Property = document.getElementById('un-prop').value.trim().replace(/^properties\//, '');
+        const prevSheet = n.salesSheet || CFG.salesSheet || ''; n.salesSheet = document.getElementById('un-sales-sheet').value.trim(); if (n.salesSheet !== prevSheet) { SALES.delete(D.site); SALESAUTO.delete(D.site); }
         n.pathSections = [...f.querySelectorAll('[data-path]')].filter(i => i.checked).map(i => i.dataset.path);
         n.monthlyCost = document.getElementById('un-cost').value.trim(); n.empCostShare = document.getElementById('un-cost-emp').value.trim();
         n.moeThreshold = +document.getElementById('un-moe-th').value || 80;
@@ -2013,7 +2015,9 @@
   // together, from Search Console (exact per cluster), GA4 and PageSpeed. "Copy for Google Sheets" puts the
   // whole table on the clipboard, ready to paste.
   // ── B2E: products, search topics, weekly trend and drop alerts ──
-  const B2E_PRODUCTS = { 'ai-sourcing-agent': 'AI Sourcing Agent', 'ai-assessment-agent': 'AI Assessment Agent', 'ai-interview-agent': 'AI Interview Agent', 'ai-screening-agent': 'AI Screening Agent', 'ai-proctoring-agent': 'AI Proctoring Agent', 'ai-calling-agent': 'AI Calling Agent', 'ai-scheduling-agent': 'AI Scheduling Agent', 'ats-software': 'ATS Software', 'employer-branding': 'Employer Branding', 'brand-and-advertise': 'Brand & Advertise', 'campus-hiring': 'Campus Hiring', 'lateral-hiring': 'Lateral Hiring', 'virtual-hiring': 'Virtual Hiring', 'hiring-talent-platform': 'Hiring Talent Platform', 'hackathon-hiring': 'Hackathon Hiring', 'online-assessment-platform': 'Online Assessment Platform', 'ai-interview': 'AI Interview' };
+  const B2E_PRODUCTS = { 'ai-sourcing-agent': 'AI Sourcing Agent', 'ai-assessment-agent': 'AI Assessment Agent', 'ai-interview-agent': 'AI Interview Agent', 'ai-screening-agent': 'AI Screening Agent', 'ai-proctoring-agent': 'AI Proctoring Agent', 'ai-calling-agent': 'AI Calling Agent', 'ai-scheduling-agent': 'AI Scheduling Agent', 'ats-software': 'ATS Software', 'employer-branding': 'Employer Branding', 'brand-and-advertise': 'Brand & Advertise', 'campus-hiring': 'Campus Hiring', 'lateral-hiring': 'Lateral Hiring', 'virtual-hiring': 'Virtual Hiring', 'hiring-talent-platform': 'Hiring Talent Platform', 'hackathon-hiring': 'Hackathon Hiring', 'online-assessment-platform': 'AI Assessment Agent', 'ai-interview': 'AI Interview Agent',
+    // older employer URLs roll up into today's products
+    'virtual-interview-platform': 'AI Interview Agent', 'hiring-automation-platform-applicant-tracking-system-ats': 'ATS Software', 'screen-candidates-powered-by-ai': 'AI Screening Agent', 'contact-us': 'Contact us (employers)', 'clients': 'Clients & testimonials', 'testimonials': 'Clients & testimonials' };
   const titleCase = x => String(x || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
   // the product a B2E URL belongs to: the folder after /employers (hire-* and free job posting pages grouped)
   function b2eProduct(url) {
@@ -2112,6 +2116,64 @@
   }
   const B2E_STATE = new Map(); // site → { product, topicCol, trend }
   const b2eState = site => { if (!B2E_STATE.has(site)) B2E_STATE.set(site, { product: '', topicCol: 2, trend: 'nb' }); return B2E_STATE.get(site); };
+  // ── B2B sales-form leads (Google Sheet "B2B Form Leads", used as the CRM for B2E) ──
+  const SALES = new Map(); // site → { res, name, at, source: 'sheet' | 'file' | 'sample', error }
+  const SALESAUTO = new Map();
+  const SL = window.UN_SALES;
+  const sheetIdOf = v => { const s = String(v || '').trim(); const m = s.match(/\/d\/([A-Za-z0-9_-]{20,})/); return m ? m[1] : /^[A-Za-z0-9_-]{20,}$/.test(s) ? s : ''; };
+  const salesSheetOf = D => settings(D.site).salesSheet || CFG.salesSheet || '';
+  async function loadSalesSheet(D) {
+    const id = sheetIdOf(salesSheetOf(D)), t = googleTok();
+    if (!id) throw new Error('Add the Google Sheet link in Funnel setup › Sales-form leads.');
+    if (!t) throw new Error('Sign in with Google first (Connect Search Console + GA4).');
+    const get = async url => { const r = await fetch(url, { headers: { Authorization: 'Bearer ' + t } }); const j = await r.json().catch(() => ({})); if (!r.ok) { const msg = (j.error && j.error.message) || r.statusText; if (r.status === 403 && /scope|insufficient/i.test(msg)) throw new Error('This sign-in did not allow Google Sheets. Sign out, then Connect Search Console + GA4 again and keep the Google Sheets box ticked.'); if (r.status === 403 && /has not been used|disabled/i.test(msg)) throw new Error('The Google Sheets API is not enabled in the Google Cloud project yet.'); if (r.status === 403 || r.status === 404) throw new Error('This Google account cannot open the leads sheet. Ask the owner to share it (view access is enough).'); throw new Error(msg); } return j; };
+    const meta = await get(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=properties.title,sheets.properties.title`);
+    const titles = (meta.sheets || []).map(s => s.properties.title);
+    const vr = await get(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${titles.map(x => 'ranges=' + encodeURIComponent(`'${x.replace(/'/g, "''")}'`)).join('&')}`);
+    const res = SL.salesModel((vr.valueRanges || []).map((v, i) => ({ name: titles[i], rows: v.values || [] })));
+    if (!res.ok) throw new Error(res.error);
+    SALES.set(D.site, { res, name: (meta.properties && meta.properties.title) || 'Leads sheet', at: Date.now(), source: 'sheet' });
+  }
+  async function readAllSheets(file) {
+    if (!window.XLSX) throw new Error('The spreadsheet reader is still loading. Try again in a moment.');
+    const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array', raw: false, cellDates: false });
+    return wb.SheetNames.map(n => ({ name: n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: false }) }));
+  }
+  function salesAuto(D) {
+    if (!(window.CW_SOURCE && window.CW_SOURCE.kind === 'api') || SALES.has(D.site) || SALESAUTO.has(D.site) || !googleTok() || !sheetIdOf(salesSheetOf(D))) return;
+    SALESAUTO.set(D.site, 'loading'); rerender();
+    loadSalesSheet(D).then(() => SALESAUTO.set(D.site, 'done'), e => { SALESAUTO.set(D.site, 'error'); SALES.set(D.site, { error: e.message }); }).finally(rerender);
+  }
+  // sample leads for the preview: the same shape as the sheet, spread over the employer pages
+  function sampleSales(D, A) {
+    let seed = 21; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const so = sectioner(D), emp = (A.P || []).filter(r => ['empb2b', 'empjobboard'].includes(so(r.p))).sort((a, b) => b.clicks - a.clicks).slice(0, 14).map(r => U.pathOnly(r.p));
+    const pages = [...emp.map((p, i) => [p, Math.max(2, 40 - i * 3)]), ['/contact-us', 30], ['/organiser-panel/dashboard', 45], ['/organiser-panel/assessment', 20], ['/employers/contact-us', 10], ['/institutions', 5]];
+    const tot = pages.reduce((a, [, w]) => a + w, 0);
+    const doms = { official: ['acme-hr.com', 'brightcorp.in', 'nova-tech.io', 'pixelworks.co', 'finedge.in', 'retailone.com'], campus: ['sample.ac.in', 'demo-university.edu.in', 'example.edu'], personal: ['gmail.com', 'yahoo.com', 'outlook.com'], internal: ['unstop.com'] };
+    const header = ['name', 'usertype', 'type', 'created_at', 'link', 'Channel', 'User Status', 'Email Domain'], rows = [header];
+    const end = new Date(D.end + 'T00:00:00Z');
+    for (let i = 0; i < 1400; i++) {
+      let x = R() * tot, page = pages[0][0]; for (const [p, w] of pages) { x -= w; if (x <= 0) { page = p; break; } }
+      const k = R(), kind = /hire-|sourcing/.test(page) ? (k < .34 ? 'official' : k < .5 ? 'campus' : k < .97 ? 'personal' : 'internal') : (k < .24 ? 'official' : k < .39 ? 'campus' : k < .97 ? 'personal' : 'internal');
+      const d = new Date(end); d.setUTCDate(d.getUTCDate() - Math.floor(Math.pow(R(), 1.3) * 540));
+      const ds = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) + ', 10:00 AM';
+      rows.push(['Sample lead ' + i, kind === 'campus' ? 'College Students' : kind === 'official' ? 'Working Professionals' : ['Fresher', 'College Students', 'Working Professionals'][Math.floor(R() * 3)], 'salesForm', ds, 'https://unstop.com' + page, R() < .9 ? 'Organic' : 'jnigads210', R() < .35 ? 'New User' : 'Existing User', doms[kind][Math.floor(R() * doms[kind].length)]]);
+    }
+    return { res: SL.salesModel([{ name: 'Sample leads', rows }]), name: 'Sample leads', at: Date.now(), source: 'sample' };
+  }
+  // where a form page sits: the two B2E clusters, or the other places the sales form appears
+  function salesPlace(path, so) {
+    if (!path) return { group: 'Other form pages', area: 'Page not recorded' };
+    const id = so(path);
+    if (id === 'empb2b') return { group: 'B2E', area: b2eProduct(path) };
+    if (id === 'empjobboard') return { group: 'B2E (J&I)', area: b2eProduct(path) };
+    if (/^\/organiser-panel|^\/user\//.test(path)) return { group: 'Other form pages', area: 'Organiser panel / account (logged in)' };
+    if (/contact-us/.test(path)) return { group: 'Other form pages', area: 'Contact us' };
+    if (/^\/institutions/.test(path)) return { group: 'Other form pages', area: 'Institutions (B2I)' };
+    if (path === '/') return { group: 'Other form pages', area: 'Home page' };
+    return { group: 'Other form pages', area: so.label(id) };
+  }
   const B2E_KW = new Map(); // site → { seg, k, i } keyword list opened from the table
   const B2E_COLS = [{ id: 'empb2b', name: 'B2E' }, { id: 'empjobboard', name: 'B2E (J&I)' }];
   V.b2e = (A, D) => {
@@ -2150,6 +2212,13 @@
     const psi = scd(D.site).psi;
     const psiOf = id => { if (!psi || !psi.results) return null; const r = psi.results.filter(x => !x.error && so(U.pathOnly(x.url)) === id); if (!r.length) return null; const f = r.filter(x => x.hasField); return { tested: r.length, pass: f.length ? f.filter(x => x.pass).length / f.length * 100 : null, perf: r.map(x => x.perf).filter(x => x != null).sort((a, b) => a - b)[Math.floor(r.length / 2)] }; };
     const PS = cols.map(c => psiOf(c.id));
+    // ── sales-form leads (the B2B leads sheet as CRM); organic only unless "All channels" is chosen below ──
+    if (D.source === 'demo' && !SALES.has(D.site)) SALES.set(D.site, sampleSales(D, A));
+    const SLd = SALES.get(D.site), SLr = SLd && SLd.res && SLd.res.ok ? SLd.res : null, SST = b2eState(D.site);
+    const slIn = l => l.day && l.day >= D.start && l.day <= D.end;
+    const slOf = (pred, opt) => SLr ? SLr.leads.filter(l => (opt.all || l.organic) && (opt.range === 'all' || slIn(l)) && pred(l)) : null;
+    const slCol = cols.map(c => slOf(l => so(l.path || '/-') === c.id, {}));
+    const slT = slCol.map(x => x ? SL.tally(x) : null), slBoth = SLr ? SL.tally(slCol[0].concat(slCol[1])) : null;
 
     // ── combine the two clusters ──
     const sum = (a, b) => (a == null && b == null) ? null : (a || 0) + (b || 0);
@@ -2222,6 +2291,12 @@
     row(L3, 'Employer / recruiter signups', ga(x => x.emp), 'n', null, 'GA4', 'needs the real employer signup event name');
     row(L3, 'Employer signup CVR', ga(x => x.emp).map((v, i) => ratio(v, ses[i])), 'pct', null, 'GA4', 'signups ÷ organic sessions');
     row(L3, 'Pricing page sessions', ga(x => x.pricing), 'n', null, 'GA4', 'intent signal, not a lead');
+    const slRow = (kpi, f, kind, note) => R.push({ sec: L3, kpi, vals: [...slT.map(t => t ? f(t) : null), slBoth ? f(slBoth) : null], kind, chgs: [], src: 'Leads sheet', note: note || '', link: SLr ? null : (kpi.startsWith('Sales-form leads') ? ['#un-b2e-sales', 'Load the leads sheet'] : null) });
+    slRow('Sales-form leads (leads sheet, organic)', t => t.total, 'n', SLr ? 'organic form submissions on these pages; unstop.com emails excluded' : 'connect the B2B Form Leads sheet below');
+    slRow('Official-email leads (company domain)', t => t.official, 'n');
+    slRow('Campus-email leads (college / university)', t => t.campus, 'n');
+    slRow('Personal-email leads (Gmail, Yahoo…)', t => t.personal, 'n');
+    slRow('Official-email share', t => t.officialShare, 'pct');
     const AQ = acqModel(D);
     R.push({ sec: L3, kpi: 'Cost per organic employer signup', vals: [null, null, AQ.cpsEmp != null ? '₹' + fmtN(Math.round(AQ.cpsEmp)) : null], kind: 'text', chgs: [], src: 'Cost input', note: AQ.cpsEmp != null ? `${AQ.empShare}% of ₹${fmtN(AQ.cost)} a month ÷ all organic employer signups${AQ.costSample ? ' (sample cost)' : ''}` : 'add monthly SEO cost and employer share in Funnel setup', link: AQ.cpsEmp != null ? null : ['#funnelsetup', 'Funnel setup'] });
     const qx = AQ.moe && AQ.moe.seg ? AQ.moe.seg : null;
@@ -2266,7 +2341,7 @@
 
     const MID = [[/^Impressions/, 'impr'], [/^Clicks \(non-brand/, 'nbClicks'], [/^Clicks/, 'clicks'], [/^CTR/, 'ctr'], [/^Average position/, 'pos'], [/^Keywords in positions 11/, 'p11'], [/^Keywords in top/, 'top10'], [/^Share of voice/, 'sov'], [/^Indexed|^URLs getting/, 'indexed'], [/^Clicks per URL/, 'clicks'],
       [/^Organic sessions|^Sessions –|^Top 3 states|^Landing pages/, 'sessions'], [/^Organic new users/, 'newUsers'], [/^Share of sessions on pages/, 'pathCov'], [/^AI assistant/, 'aiSessions'],
-      [/^Demo/, 'demo'], [/^Contact/, 'contact'], [/^Employer \/ recruiter signups/, 'emp'], [/^Employer signup CVR/, 'cvrEmp'], [/^Pricing/, 'pricing'], [/^Cost per organic employer/, 'cpsEmp'], [/^Employer profile/, 'profile'], [/^Employer 7-day/, 'act7'], [/^Employer 30-day/, 'ret30'], [/^Assisted/, 'assistedGa'],
+      [/^Sales-form|email leads|^Official-email share/, 'demo'], [/^Demo/, 'demo'], [/^Contact/, 'contact'], [/^Employer \/ recruiter signups/, 'emp'], [/^Employer signup CVR/, 'cvrEmp'], [/^Pricing/, 'pricing'], [/^Cost per organic employer/, 'cpsEmp'], [/^Employer profile/, 'profile'], [/^Employer 7-day/, 'act7'], [/^Employer 30-day/, 'ret30'], [/^Assisted/, 'assistedGa'],
       [/^Engaged sessions/, 'engaged'], [/^Engagement rate/, 'engRate'], [/^Pages per session/, 'pps'], [/^Scroll/, 'scrollKey'], [/^Return visits/, 'return4w'],
       [/^MQL/, 'mqls'], [/^Pipeline created – organic first/, 'pipeFT'], [/^Pipeline created – organic in/, 'pipeAssist'], [/^Revenue closed – organic first/, 'revFT'], [/^Revenue closed – organic in/, 'revAssist'], [/^Lead → opp/, 'l2o'], [/^Lead → close/, 'l2c']];
     const ownerOf = r => { const m = MID.find(([rx]) => rx.test(r.kpi)); if (!m) return r.src === 'PageSpeed' || r.src === 'Crawl' ? 'Technical SEO + Engineering' : 'B2B SEO'; const mt = U.METRICS.find(x => x.id === m[1]); return (s0.owners || {})[m[1]] || (mt ? mt.owner : 'B2B SEO'); };
@@ -2275,7 +2350,7 @@
     const chgTxt = c => c == null ? '' : typeof c === 'object' ? (c.pos != null ? (c.pos > 0 ? '+' : '') + c.pos.toFixed(1) : (c.n > 0 ? '+' : '') + fmtN(c.n)) : (c > 0 ? '+' : '') + c.toFixed(1) + '%';
     const chgHtml = (c, kpi) => { if (c == null) return ''; if (typeof c === 'object') { const v = c.pos != null ? c.pos : c.n; if (c.pos != null) return dchip(v, true, 'pos'); const good = /11–20/.test(kpi) ? null : v > 0; return `<span class="un-d ${v === 0 ? 'flat' : good === null ? 'flat' : good ? 'up' : 'down'}">${chgTxt(c)}</span>`; } return dchip(c); };
     const cell = (r, i) => { const v = r.vals[i]; if (r.kind === 'text') return v == null ? '<span class="un-n">—</span>' : `<span class="un-b2e-t">${esc(v)}</span>`; if (r.bucket && v > 0) return `<a href="#" class="un-b2e-kw" data-kw="${r.bucket.seg}|${r.bucket.k}|${i}" title="Show these keywords">${fmtV(v, r.kind)}</a>`; return fmtV(v, r.kind); };
-    const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : r.src === 'Crawl' ? (!crR ? 'none' : cr.sample ? 'sample' : 'file') : r.src === 'CRM' ? (!C ? 'none' : crm.sample ? 'sample' : 'file') : r.src === 'MoEngage' ? (!AQ.qsrc ? 'none' : AQ.qsrc) : r.src === 'Cost input' ? (AQ.cpsEmp == null ? 'none' : AQ.costSample ? 'sample' : 'input') : r.src === 'Rank tracker' ? 'file' : 'later';
+    const status = r => r.src === 'GSC' ? (live ? 'live' : D.source === 'demo' ? 'sample' : 'file') : r.src === 'GA4' ? (!g ? 'none' : g.sample ? 'sample' : 'live') : r.src === 'PageSpeed' ? (!psi ? 'none' : psi.sample ? 'sample' : 'live') : r.src === 'Crawl' ? (!crR ? 'none' : cr.sample ? 'sample' : 'file') : r.src === 'CRM' ? (!C ? 'none' : crm.sample ? 'sample' : 'file') : r.src === 'MoEngage' ? (!AQ.qsrc ? 'none' : AQ.qsrc) : r.src === 'Cost input' ? (AQ.cpsEmp == null ? 'none' : AQ.costSample ? 'sample' : 'input') : r.src === 'Rank tracker' ? 'file' : r.src === 'Leads sheet' ? (!SLr ? 'none' : SLd.source === 'sample' ? 'sample' : SLd.source === 'sheet' ? 'live' : 'file') : 'later';
     let lastSec = '';
     const trs = R.map(r => { const s = r.sec !== lastSec ? `<tr class="un-b2e-sec"><th colspan="${heads.length * 2 + 3}">${esc(r.sec)}</th></tr>` : ''; lastSec = r.sec; return s + `<tr><td>${esc(r.kpi)}${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td>${heads.map((h, i) => `<td class="r"><b>${cell(r, i)}</b></td><td class="r un-b2e-d">${chgHtml(r.chgs[i], r.kpi)}</td>`).join('')}<td>${r.link ? `<a href="${esc(r.link[0])}">${esc(r.link[1])} →</a>` : chip(status(r))}</td><td class="un-b2e-o">${esc(r.owner)}</td></tr>`; }).join('');
     const tsv = () => {
@@ -2295,12 +2370,13 @@
     const reviewPanel = () => {
       const isB = brandOf(A), qp = new Map();
       (D.QP || []).forEach(r => { const k = U.pathOnly(r.p).toLowerCase(); const o = qp.get(k) || { b: 0, n: 0 }; if (isB(r.q)) o.b += +r.clicks || 0; else o.n += +r.clicks || 0; qp.set(k, o); });
-      const pg = M ? M.pages.filter(p => cols.some(c => so(p.path) === c.id)).map(p => ({ ...p, cluster: so.label(so(p.path)), conv: p.emp + p.demo + p.contact })) : [];
+      const slByPage = new Map(); if (SLr) SLr.leads.filter(l => l.organic && slIn(l) && l.kind !== 'internal').forEach(l => { const o = slByPage.get(l.path) || { n: 0, off: 0 }; o.n++; if (l.kind === 'official') o.off++; slByPage.set(l.path, o); });
+      const pg = M ? M.pages.filter(p => cols.some(c => so(p.path) === c.id)).map(p => { const sl = slByPage.get(p.path.toLowerCase()) || { n: 0, off: 0 }; return { ...p, cluster: so.label(so(p.path)), sl: sl.n, slOff: sl.off, conv: p.emp + p.demo + p.contact + sl.n }; }) : [];
       const top = pg.filter(p => p.conv > 0).sort((a, b) => b.conv - a.conv || b.sessions - a.sessions).slice(0, 10);
       let wn = 0, wt = 0, covered = 0, all = 0;
       pg.forEach(p => { all += p.conv; const x = qp.get(p.path.toLowerCase()); if (!x || !(x.b + x.n)) return; covered += p.conv; wt += p.conv; wn += p.conv * x.n / (x.b + x.n); });
       const nbShare = wt ? wn / wt * 100 : null;
-      const q1 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : top.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Employer signups</th><th class="r">Demo + contact</th><th class="r">Sessions</th></tr></thead><tbody>${top.map(p => `<tr><td class="u"><a href="${esc(focusHref({ u: p.path }))}">${esc(p.path)}</a></td><td>${esc(p.cluster)}</td><td class="r">${fmtN(Math.round(p.emp))}</td><td class="r">${fmtN(Math.round(p.demo + p.contact))}</td><td class="r">${fmtN(Math.round(p.sessions))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="un-n">No employer signup, demo or contact events on these pages yet: check the event names in Funnel setup.</p>';
+      const q1 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : top.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Page</th><th>Cluster</th><th class="r">Employer signups</th><th class="r">Demo + contact</th>${SLr ? '<th class="r">Sales-form leads (official)</th>' : ''}<th class="r">Sessions</th></tr></thead><tbody>${top.map(p => `<tr><td class="u"><a href="${esc(focusHref({ u: p.path }))}">${esc(p.path)}</a></td><td>${esc(p.cluster)}</td><td class="r">${fmtN(Math.round(p.emp))}</td><td class="r">${fmtN(Math.round(p.demo + p.contact))}</td>${SLr ? `<td class="r">${fmtN(p.sl)} (${fmtN(p.slOff)})</td>` : ''}<td class="r">${fmtN(Math.round(p.sessions))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="un-n">No employer signup, demo or contact events on these pages yet: check the event names in Funnel setup.</p>';
       const q2 = !M ? '<p class="un-n">Load GA4 data to answer this.</p>' : nbShare == null ? '<p class="un-n">Needs Search Console query × page rows for the employer pages.</p>' : `<p class="un-big"><b>${pct1(nbShare)}</b> <span>of employer signups + leads came from non-branded searches (estimate)</span></p><p class="hint">Each page’s signups and leads × that page’s non-branded share of clicks. Google does not tie a search to a signup, so this is a proxy, not an exact count. Covers ${pct1(all ? covered / all * 100 : 0)} of conversions (pages with query data).</p>`;
       const q3 = C ? `<div class="grid-2 even"><p class="un-big"><b>${inr(C.ft.pipeline)}</b> <span>pipeline with organic as first touch</span></p><p class="un-big"><b>${inr(C.assisted.pipeline)}</b> <span>pipeline with organic in the journey (assisted)</span></p></div><p class="hint">Kept separate, never added together. ${fmtN(C.ft.leads)} organic first-touch leads, ${fmtN(C.ft.opps)} opportunities. Source known on ${pct1(C.coverage.source)} of CRM leads${C.coverage.landing ? `, landing page on ${pct1(C.coverage.landing)}` : ''}.${crm.sample ? ' Sample CRM data.' : ''}</p>` : `<p class="un-n">Not traceable yet: upload a CRM export with lead source, landing page, stage and amount on <a href="#leads">Leads & revenue</a>.</p>`;
       return `<section class="panel"><div class="panel-h"><h2>First review: the three questions (employer side)</h2></div><div class="panel-b">
@@ -2423,7 +2499,51 @@
         { k: 'nbC', l: 'Non-brand clicks', r: 1, f: r => nOr(r.nbC) }, { k: 'bC', l: 'Brand clicks', r: 1, f: r => nOr(r.bC) },
         ...(M ? [{ k: 'sessions', l: 'Organic sessions', r: 1, f: r => r.sessions == null ? '—' : fmtN(Math.round(r.sessions)) + ' ' + dchip(r.dSes), csv: r => r.sessions }, { k: 'leads', l: 'Demo + contact', r: 1, f: r => nOr(r.leads) }, { k: 'emp', l: 'Employer signups', r: 1, f: r => nOr(r.emp) }] : [])
       ], pList, { file: 'unstop-b2e-landing-pages', sort: 'clicks', pageSize: 50, placeholder: 'Filter URLs or products', searchKeys: ['path', 'product', 'cluster'] });
-    const navLinks = [['un-b2e-sum', 'Summary'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    // ── sales-form leads section ──
+    const slRange = SST.slRange || 'period', slAll = !!SST.slAll;
+    let salesHtml = '';
+    const slAuto = SALESAUTO.get(D.site);
+    const slCtl = `<div class="un-row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <label class="field un-f sm"><span>Dates</span><select id="un-sl-range"><option value="period" ${slRange === 'period' ? 'selected' : ''}>Dashboard dates (${esc(fmtD(D.start))} – ${esc(fmtD(D.end))})</option><option value="all" ${slRange === 'all' ? 'selected' : ''}>Everything in the sheet</option></select></label>
+        <label class="field un-f sm"><span>Channel</span><select id="un-sl-ch"><option value="org" ${!slAll ? 'selected' : ''}>Organic only</option><option value="all" ${slAll ? 'selected' : ''}>All channels</option></select></label>
+        <button class="btn-quiet sm" type="button" id="un-sl-load">${SLd && SLd.source === 'sheet' ? 'Reload the Google Sheet' : 'Load from the Google Sheet'}</button>
+        <label class="btn-quiet sm un-file">Upload the sheet (.xlsx / .csv)<input type="file" id="un-sl-file" accept=".xlsx,.xls,.csv" hidden></label>
+        <span class="hint" id="un-sl-msg">${slAuto === 'loading' ? 'Loading the leads sheet…' : ''}</span></div>`;
+    if (!SLr) salesHtml = slCtl + `<div class="note">${SLd && SLd.error ? `<span class="start-error">${esc(SLd.error)}</span><br>` : ''}Reads the <b>B2B Form Leads</b> sheet (every tab, duplicates dropped) as the lead list: which page the sales form was filled on, and whether the email is an <b>official</b> company address, a <b>campus</b> (college / university) address or a <b>personal</b> one (Gmail etc.). Only rows whose Channel is Organic count unless you pick All channels. unstop.com emails are left out as internal. Names, emails and phone numbers are not shown or kept. Sheet: ${sheetIdOf(salesSheetOf(D)) ? `<a href="https://docs.google.com/spreadsheets/d/${esc(sheetIdOf(salesSheetOf(D)))}/edit" target="_blank" rel="noopener">open</a> · change it in <a href="#funnelsetup">Funnel setup</a>` : 'add the link in <a href="#funnelsetup">Funnel setup</a>'}.</div>`;
+    else {
+      const L = SLr.leads.filter(l => (slAll || l.organic) && (slRange === 'all' || slIn(l)));
+      const t = SL.tally(L);
+      const kpS = (l, v, sub) => `<div class="un-kpi"><span>${esc(l)}</span><b>${v}</b><small>${sub || ''}</small></div>`;
+      // every page with leads from any source in the date range: organic vs other sources side by side
+      const LA = SLr.leads.filter(l => slRange === 'all' || slIn(l));
+      const pm = new Map();
+      LA.forEach(l => { const k = l.path || ''; if (!pm.has(k)) pm.set(k, { path: k, ...salesPlace(k, so), list: [] }); pm.get(k).list.push(l); });
+      const prow = [...pm.values()].map(o => { const shown = o.list.filter(l => slAll || l.organic), org = SL.tally(o.list.filter(l => l.organic)), oth = o.list.filter(l => !l.organic && l.kind !== 'internal'); const sc = new Map(); oth.forEach(l => sc.set(l.source, (sc.get(l.source) || 0) + 1)); const all = SL.tally(o.list); return { ...o, ...SL.tally(shown), list: undefined, org: org.total, orgOff: org.official, other: oth.length, otherOff: oth.filter(l => l.kind === 'official').length, orgShare: all.total ? org.total / all.total * 100 : null, otherSrc: [...sc.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ') }; }).filter(r => r.total + r.internal + r.other > 0);
+      // sources for the employer pages (B2E + J&I) in the date range
+      const srcM = new Map(); LA.filter(l => salesPlace(l.path, so).group !== 'Other form pages').forEach(l => { if (!srcM.has(l.source)) srcM.set(l.source, []); srcM.get(l.source).push(l); });
+      const srcRows = [...srcM.entries()].map(([k, list]) => ({ k, ...SL.tally(list) })).sort((a, b) => b.total - a.total);
+      const srcTot = srcRows.reduce((a, r) => a + r.total, 0);
+      const gm = ['B2E', 'B2E (J&I)', 'Other form pages'].map(g => ({ g, ...SL.tally(L.filter(l => salesPlace(l.path, so).group === g)) }));
+      const mm = new Map(); SLr.leads.filter(l => (slAll || l.organic) && l.month).forEach(l => { if (!mm.has(l.month)) mm.set(l.month, { emp: [], all: [] }); const o = mm.get(l.month); o.all.push(l); if (salesPlace(l.path, so).group !== 'Other form pages') o.emp.push(l); });
+      const months = [...mm.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 18).map(([m, o]) => ({ m, e: SL.tally(o.emp), a: SL.tally(o.all) }));
+      const nonOrg = SLr.leads.filter(l => !l.organic).length;
+      delete TABLES['t-un-b2e-sl'];
+      salesHtml = slCtl + `<p class="hint">${esc(SLd.name)} · ${SLd.source === 'sheet' ? 'Google Sheet' : SLd.source === 'sample' ? 'sample leads' : 'uploaded file'} · loaded ${when(SLd.at)} · ${SLr.sheets.map(x => `${esc(x.name)}: ${fmtN(x.used)} leads${x.dup ? ` (${fmtN(x.dup)} duplicates dropped)` : ''}${x.skipped ? ` (skipped: ${esc(x.skipped)})` : ''}`).join(' · ')} · ${esc(fmtD(SLr.min))} – ${esc(fmtD(SLr.max))}${!slAll && nonOrg ? ` · ${fmtN(nonOrg)} non-organic leads (ads, banners…) left out` : ''}</p>
+        <div class="un-kpis">${kpS(slAll ? 'Leads (all channels)' : 'Organic leads', fmtN(t.total), slRange === 'all' ? 'everything in the sheet' : 'dashboard dates')}${kpS('Official email', fmtN(t.official), pct1(t.officialShare) + ' of leads')}${kpS('Campus email', fmtN(t.campus), pct1(t.total ? t.campus / t.total * 100 : null))}${kpS('Personal email', fmtN(t.personal), pct1(t.total ? t.personal / t.total * 100 : null))}</div>
+        <div class="tw"><table class="un-mini"><thead><tr><th>Where the form was filled</th><th class="r">Leads</th><th class="r">Official</th><th class="r">Campus</th><th class="r">Personal</th><th class="r">Official share</th><th class="r">New users</th><th class="r">Internal (excluded)</th></tr></thead><tbody>${gm.map(r => `<tr><td><b>${esc(r.g)}</b></td><td class="r">${fmtN(r.total)}</td><td class="r">${fmtN(r.official)}</td><td class="r">${fmtN(r.campus)}</td><td class="r">${fmtN(r.personal)}</td><td class="r">${pct1(r.officialShare)}</td><td class="r">${fmtN(r.newU)}</td><td class="r">${fmtN(r.internal)}</td></tr>`).join('')}</tbody></table></div>
+        <h3 class="un-sub">B2E + J&I pages by source</h3><p class="hint">Organic next to every other source of sales-form leads on the employer pages (${slRange === 'all' ? 'everything in the sheet' : 'dashboard dates'}).</p><div class="tw"><table class="un-mini"><thead><tr><th>Source</th><th class="r">Leads</th><th class="r">Share</th><th class="r">Official</th><th class="r">Campus</th><th class="r">Personal</th><th class="r">Official share</th></tr></thead><tbody>${srcRows.map(r => `<tr${r.k === 'Organic search' ? ' class="un-hl"' : ''}><td><b>${esc(r.k)}</b></td><td class="r">${fmtN(r.total)}</td><td class="r">${pct1(srcTot ? r.total / srcTot * 100 : null)}</td><td class="r">${fmtN(r.official)}</td><td class="r">${fmtN(r.campus)}</td><td class="r">${fmtN(r.personal)}</td><td class="r">${pct1(r.officialShare)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No leads on employer pages in these dates.</td></tr>'}</tbody></table></div>
+        <h3 class="un-sub">By landing page</h3><p class="hint">Leads, official, campus and personal are ${slAll ? 'all channels' : 'organic'}; "Other sources" shows what non-organic channels brought to the same page.</p>` +
+        table('t-un-b2e-sl', [
+          { k: 'path', l: 'Page the form was filled on', cls: 'u', f: r => !r.path ? '<span class="un-n">not recorded</span>' : r.group !== 'Other form pages' ? `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` : esc(r.path), csv: r => r.path },
+          { k: 'group', l: 'Group' }, { k: 'area', l: 'Product / area' },
+          { k: 'total', l: 'Leads', r: 1, f: r => fmtN(r.total) }, { k: 'official', l: 'Official', r: 1, f: r => fmtN(r.official) }, { k: 'campus', l: 'Campus', r: 1, f: r => fmtN(r.campus) }, { k: 'personal', l: 'Personal', r: 1, f: r => fmtN(r.personal) },
+          { k: 'officialShare', l: 'Official share', r: 1, f: r => pct1(r.officialShare), csv: r => r.officialShare == null ? '' : r.officialShare.toFixed(1) }, { k: 'newU', l: 'New users', r: 1, f: r => fmtN(r.newU) },
+          { k: 'other', l: 'Other sources', r: 1, f: r => r.other ? `${fmtN(r.other)}<br><small class="un-n">${esc(r.otherSrc)}</small>` : '0', csv: r => r.other }, { k: 'otherOff', l: 'Other: official', r: 1, f: r => fmtN(r.otherOff) }, { k: 'orgShare', l: 'Organic share of all leads', r: 1, f: r => pct1(r.orgShare), csv: r => r.orgShare == null ? '' : r.orgShare.toFixed(1) }, { k: 'internal', l: 'Internal', r: 1, f: r => fmtN(r.internal) }
+        ], prow, { file: 'unstop-b2e-sales-form-leads', sort: 'total', pageSize: 30, placeholder: 'Filter pages or products', searchKeys: ['path', 'area', 'group'], filters: [{ key: 'group', label: 'Group', options: [['B2E', 'B2E'], ['B2E (J&I)', 'B2E (J&I)'], ['Other form pages', 'Other form pages']], test: (r, v) => r.group === v }] }) +
+        `<h3 class="un-sub">By month (${slAll ? 'all channels' : 'organic'})</h3><div class="tw"><table class="un-mini"><thead><tr><th>Month</th><th class="r">B2E + J&I leads</th><th class="r">Official</th><th class="r">Campus</th><th class="r">Personal</th><th class="r">Official share</th><th class="r">All form pages</th><th class="r">All: official</th></tr></thead><tbody>${months.map(r => `<tr><td>${esc(r.m)}</td><td class="r">${fmtN(r.e.total)}</td><td class="r">${fmtN(r.e.official)}</td><td class="r">${fmtN(r.e.campus)}</td><td class="r">${fmtN(r.e.personal)}</td><td class="r">${pct1(r.e.officialShare)}</td><td class="r">${fmtN(r.a.total)}</td><td class="r">${fmtN(r.a.official)}</td></tr>`).join('')}</tbody></table></div>
+        <p class="hint">Official = company email domain. Campus = college or university domain (.ac.in, .edu, or a domain mostly used by students). Personal = Gmail, Yahoo, Outlook and other free mail. One class per domain.</p>`;
+    }
+    const navLinks = [['un-b2e-sum', 'Summary'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
     const navHtml = `<nav class="un-b2e-nav">${navLinks.map(([id, l]) => `<a href="#" data-jump="${id}">${esc(l)}</a>`).join('')}</nav>`;
     const sec = (id, title, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
     const html = intro +
@@ -2432,6 +2552,7 @@
       `<section class="panel" id="un-b2e-sum"><div class="panel-b flush"><div class="tw"><table class="un-mini un-b2e"><thead><tr><th>KPI</th>${heads.map(h => `<th class="r">${esc(h)}</th><th class="r un-b2e-d">Change</th>`).join('')}<th>Data</th><th>Owner <a class="un-n" href="#funnelsetup" title="Change owners in Funnel setup">edit</a></th></tr></thead><tbody>${trs}</tbody></table></div></div></section>` +
       kwPanel() +
       sec('un-b2e-alerts', 'Drop alerts', 'Employer pages and non-brand keywords that lost clicks or ranking this week, with the likely reason.', alertHtml || '<p class="un-n">—</p>') +
+      sec('un-b2e-sales', 'Sales-form leads (B2B Form Leads sheet)', 'Every sales-form submission by the page it was filled on, split into official, campus and personal email. Organic only by default. This is the lead list (CRM) for B2E.', salesHtml) +
       sec('un-b2e-trend', 'Weekly trend: B2E vs B2E (J&I)', 'Non-brand and brand Search Console clicks, impressions and position per week.', trendHtml) +
       sec('un-b2e-prod', 'Products', 'Every employer product (the folder after /employers). Click a product to list all its landing pages below.' + (QPe.length ? '' : ' Brand / non-brand and keyword counts need query × page rows.'), prodHtml) +
       sec('un-b2e-topics', 'Search topics: brand vs non-brand', 'Searches that bring people to the employer pages, grouped by topic. Click a keyword count to see the keywords.', topicHtml) +
@@ -2456,6 +2577,11 @@
       const rl = document.getElementById('un-b2e-reload');
       if (rl) rl.addEventListener('click', () => { cols.forEach(c => FOC.delete(keyOf(scOf(c.id)))); B2EX.delete(XK); rerender(); });
       if (live && !B2EX.get(XK)) loadB2EX(D, A, ids);
+      if (document.getElementById('t-un-b2e-sl')) drawTable('t-un-b2e-sl');
+      const slr = document.getElementById('un-sl-range'); if (slr) slr.addEventListener('change', () => { SST.slRange = slr.value; rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
+      const slc = document.getElementById('un-sl-ch'); if (slc) slc.addEventListener('change', () => { SST.slAll = slc.value === 'all'; rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
+      const sll = document.getElementById('un-sl-load'); if (sll) sll.addEventListener('click', async () => { const m = document.getElementById('un-sl-msg'); if (m) m.textContent = 'Loading the leads sheet…'; sll.disabled = true; try { await loadSalesSheet(D); } catch (e) { SALES.set(D.site, { error: e.message }); } rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
+      const slf = document.getElementById('un-sl-file'); if (slf) slf.addEventListener('change', async () => { const f = slf.files[0]; if (!f) return; try { const sheets = /\.csv$/i.test(f.name) ? [{ name: f.name, rows: await readSheet(f) }] : await readAllSheets(f); const res = SL.salesModel(sheets); SALES.set(D.site, res.ok ? { res, name: f.name, at: Date.now(), source: 'file' } : { error: res.error }); } catch (e) { SALES.set(D.site, { error: e.message }); } rerender(); setTimeout(() => jump('un-b2e-sales'), 60); });
       const jump = id => { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
       document.querySelectorAll('[data-jump]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); jump(a.dataset.jump); }));
       ['t-un-b2e-prod', 't-un-b2e-top', 't-un-b2e-qw', 't-un-b2e-pages'].forEach(id => { if (document.getElementById(id)) drawTable(id); });
@@ -2486,7 +2612,7 @@
   // every funnel screen tries the one-sign-in GA4 load after it renders
   ['b2e', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
-    V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); } }; };
+    V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); if (k === 'b2e' || k === 'leads') salesAuto(D); } }; };
   });
   window.UN_VIEW = { GA, MOE, settings, sampleGa, sampleMoe };
 })();
