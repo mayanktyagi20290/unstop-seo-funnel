@@ -126,8 +126,11 @@
   const DEFAULT_SECTIONS = [
     { id: 'hackathons', name: 'Opportunity › Hackathons', type: 'opp', rules: ['/hackathons', '/hackathon'] },
     { id: 'competitions', name: 'Opportunity › Competitions', type: 'opp', rules: ['/competitions', '/competition', '/competitions-challenges', '/compete'] },
-    { id: 'internships', name: 'Opportunity › Internships', type: 'opp', rules: ['/internships', '/internship', '/internship-portal', '/internship-openings'] },
-    { id: 'jobs', name: 'Opportunity › Jobs', type: 'opp', rules: ['/jobs', '/job', '/job-portal', '/hiring-challenges', '/off-campus-hiring-drive-*'] },
+    { id: 'internships', name: 'Opportunity › Internships', type: 'opp', rules: ['/internships', '/internship-portal', '/internship-openings'] },
+    { id: 'jobs', name: 'Opportunity › Jobs', type: 'opp', rules: ['/jobs', '/job-portal', '/hiring-challenges', '/off-campus-hiring-drive-*'] },
+    // the programmatic /internship/… and /job/… pages are tracked on their own, apart from the listings
+    { id: 'proginternship', name: 'Programmatic › Internship pages (/internship/)', type: 'opp', rules: ['/internship'] },
+    { id: 'progjob', name: 'Programmatic › Job pages (/job/)', type: 'opp', rules: ['/job'] },
     { id: 'quizzes', name: 'Opportunity › Quizzes', type: 'opp', rules: ['/quiz', '/quizzes', '/online-quizzing-festival'] },
     { id: 'fests', name: 'Opportunity › College fests & events', type: 'opp', rules: ['/college-fests', '/college-festivals', '/festival', '/events', '/cultural-events', '/creative-cultural-events', '/conferences'] },
     { id: 'workshops', name: 'Opportunity › Workshops & webinars', type: 'opp', rules: ['/workshops-webinars', '/workshops'] },
