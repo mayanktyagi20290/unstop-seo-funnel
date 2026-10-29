@@ -3066,9 +3066,10 @@
         runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'sessions' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 20000 }).then(U.gaRows),
         runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }], limit: 500 }).then(U.gaRows),
         sign.length ? runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and([U.GA.inList('eventName', sign)]), limit: 20000 }).then(U.gaRows) : [],
-        apply.length ? appQ(['landingPage', 'eventName'], [{ name: 'eventCount' }]) : []
+        apply.length ? appQ(['landingPage', 'eventName'], [{ name: 'totalUsers' }]) : []
       ]);
-      const byPage = signPage.concat(appPage), landEv = signLand.concat(appLand);
+      // registrations are counted as people (totalUsers): the form's Next step can fire form_submit_success more than once
+      const byPage = signPage.concat(appPage.map(r => ({ ...r, eventCount: r.totalUsers }))), landEv = signLand.concat(appLand.map(r => ({ ...r, eventCount: r.totalUsers })));
       Object.assign(st, { status: 'done', byPage, evAll, lands, next, landEv, at: Date.now() });
     } catch (e) { st.status = 'error'; st.error = e.message; }
     if (JR.get(key) === st) rerender();

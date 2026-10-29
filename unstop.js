@@ -441,7 +441,7 @@
       assisted: { dateRanges: both, dimensions: [{ name: 'firstUserDefaultChannelGroup' }, { name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.inList('eventName', leadEv.length ? leadEv : ['generate_lead']), limit: 10000 },
       ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 },
       // opportunity registrations: only events that carry an opportunity_id (form_submit_success also fires on other forms)
-      oppEvents: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.and(GA.inList('eventName', ((o.events && o.events.opportunityAction) || ['form_submit_success']).slice(0, 60)), { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } })), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 100000 },
+      oppEvents: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: GA.and(org, GA.and(GA.inList('eventName', ((o.events && o.events.opportunityAction) || ['form_submit_success']).slice(0, 60)), { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } })), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 100000 },
       // organic sessions by search engine and landing page: Google only, to compare with Search Console clicks
       orgSource: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'sessionSource' }], metrics: [{ name: 'sessions' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 },
       // AI assistant referrals month by month (16 months to the end date), by assistant and landing page
@@ -562,7 +562,8 @@
       if (is.productClick && is.productClick(n)) o.prodClick += c;
       if (is.scroll && is.scroll(n)) o.scroll += c;
     });
-    (R.oppEvents || []).forEach(r => { lp(r.landingPage).opp += r.eventCount; });
+    // people who registered (the form's Next step can fire the event more than once per registration)
+    (R.oppEvents || []).forEach(r => { lp(r.landingPage).opp += r.totalUsers; });
     const pages = [...byLanding.values()].map(o => ({ ...o, typeName: typeOf.label(o.type), signups: o.stu + o.emp, cvr: o.sessions ? (o.stu + o.emp) / o.sessions * 100 : null, engRate: o.sessions ? o.engaged / o.sessions * 100 : null, dSessions: chg(o.sessions, o.ySessions), leads: o.demo + o.contact }));
     // by page type
     const tm = new Map();
