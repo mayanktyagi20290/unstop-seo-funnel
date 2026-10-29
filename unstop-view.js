@@ -2875,8 +2875,172 @@
     const m = out.mount; return { ...out, mount: () => { pickerMount(); if (m) m(); } };
   };
 
+  // ════════════════════════════ CLUSTER TRENDS: WEEK BY WEEK, MONTH BY MONTH ════════════════════════════
+  // Every URL cluster over the last 12 weeks or 12 months: Search Console clicks (all and non-brand) and
+  // impressions, GA4 organic sessions and student signups, each period against the one before. Picking a
+  // cluster lists its landing pages with student signups per period. One request per cluster and metric
+  // (date dimension), so cluster totals are exact and never capped by a page × date row limit.
+  const TR = new Map(), TRP = new Map();
+  const isoD = d => d.toISOString().slice(0, 10);
+  const addD = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return isoD(d); };
+  const monday = s => { const d = new Date(s + 'T00:00:00Z'); const w = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - w); return isoD(d); };
+  function trPeriods(end, gran) {
+    if (gran === 'month') { const e = new Date(end + 'T00:00:00Z'); const out = []; for (let i = 11; i >= 0; i--) { const s = new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth() - i, 1)); const last = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 0)); const pe = isoD(last) > end ? end : isoD(last); out.push({ key: isoD(s).slice(0, 7), start: isoD(s), end: pe, partial: pe !== isoD(last), label: s.toLocaleDateString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' }) }); } return out; }
+    const lastMon = monday(end), out = [];
+    for (let i = 11; i >= 0; i--) { const s = addD(lastMon, -7 * i), full = addD(s, 6), pe = full > end ? end : full; out.push({ key: s, start: s, end: pe, partial: pe !== full, label: new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) }); }
+    return out;
+  }
+  const trList = D => sectioner(D).sections.filter(x => x.id !== 'other' && x.rules.length && x.seo !== false && x.type !== 'util');
+  const gaPathRx = rx => rx ? rx.replace(/^\^https\?:\/\/\[\^\/\]\+/, '^') : null;
+  const trKey = D => [D.site, D.end, JSON.stringify(settings(D.site).sections || null), (A => A)(D.source || '')].join('|');
+  async function loadTrends(D, A) {
+    const k = trKey(D), src = window.CW_SOURCE, s = settings(D.site);
+    const list = trList(D), end = D.end, start = trPeriods(end, 'month')[0].start < addD(monday(end), -77) ? trPeriods(end, 'month')[0].start : addD(monday(end), -77);
+    const st = { status: 'loading', start, end, gsc: {}, ga: {}, done: 0, total: 0, errors: [], gaOk: false, at: null };
+    TR.set(k, st); rerender();
+    const prog = () => { const p = document.getElementById('un-tr-prog'); if (p) p.textContent = `Loading… ${st.done} of ${st.total} requests`; };
+    const jobsG = [], jobsA = [];
+    const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), tok = token();
+    const stuEv = (s.events && s.events.studentSignup) || [];
+    list.forEach(sec => {
+      const rx = U.sectionRegex(sec, null), ex = U.sectionExclude(sec, s.sections);
+      const pf = [{ dimension: 'page', operator: 'includingRegex', expression: rx }].concat(ex ? [{ dimension: 'page', operator: 'excludingRegex', expression: ex }] : []);
+      st.gsc[sec.id] = { all: {}, nb: {} };
+      const q = (extra) => src.gsc.query({ startDate: start, endDate: end, type: 'web', dimensions: ['date'], rowLimit: 1000, dimensionFilterGroups: [{ groupType: 'and', filters: pf.concat(extra) }] }).then(d => { const o = {}; (d.rows || []).forEach(r => { o[r.keys[0]] = { c: r.clicks, i: r.impressions }; }); return o; });
+      jobsG.push(() => q([]).then(o => { st.gsc[sec.id].all = o; }));
+      if (A.brandRx) jobsG.push(() => q([{ dimension: 'query', operator: 'excludingRegex', expression: A.brandRx }]).then(o => { st.gsc[sec.id].nb = o; }));
+      if (pid && tok) {
+        st.ga[sec.id] = { ses: {}, stu: {} };
+        const lp = { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(rx) } } };
+        const exp = [U.GA.organicFilter, lp].concat(ex ? [{ notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(ex) } } } }] : []);
+        const rows = body => runReport(pid, body).then(r => U.gaRows(r));
+        jobsA.push(() => rows({ dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: 'sessions' }], dimensionFilter: { andGroup: { expressions: exp } }, limit: 1000 }).then(L => { L.forEach(r => { st.ga[sec.id].ses[String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')] = r.sessions; }); }));
+        if (stuEv.length) jobsA.push(() => rows({ dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: 'eventCount' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', stuEv)]) } }, limit: 1000 }).then(L => { L.forEach(r => { st.ga[sec.id].stu[String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')] = r.eventCount; }); }));
+      }
+    });
+    st.gaOk = !!(pid && tok);
+    st.total = jobsG.length + jobsA.length;
+    const pool = async (jobs, n) => { const qd = jobs.slice(); await Promise.all(Array.from({ length: n }, async () => { while (qd.length) { const j = qd.shift(); try { await j(); } catch (e) { st.errors.push(e.message); } st.done++; prog(); } })); };
+    await Promise.all([pool(jobsG, 4), pool(jobsA, 3)]);
+    st.status = 'done'; st.at = Date.now();
+    if (TR.get(k) === st) rerender();
+  }
+  // sample data: cluster clicks spread over days with a gentle trend, so the screen can be tried
+  function sampleTrends(D, A) {
+    const list = trList(D), so = sectioner(D), end = D.end || isoD(new Date()), start = addD(end, -400);
+    let seed = 11; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const tot = new Map(); (A.P || []).forEach(r => { const id = so(r.p); tot.set(id, (tot.get(id) || 0) + (+r.clicks || 0)); });
+    const st = { status: 'done', sample: true, start, end, gsc: {}, ga: {}, gaOk: true, errors: [], at: Date.now() };
+    list.forEach(sec => {
+      const base = (tot.get(sec.id) || 0) / 90, slope = (R() - .45) * .004, o = { all: {}, nb: {} }, g = { ses: {}, stu: {} };
+      for (let d = start, i = 0; d <= end; d = addD(d, 1), i++) { const wk = [1, 1.05, 1.04, 1.02, .95, .8, .78][(new Date(d + 'T00:00:00Z').getUTCDay() + 6) % 7]; const c = Math.max(0, base * wk * (1 + slope * (i - 400)) * (.85 + R() * .3)); o.all[d] = { c, i: c * (18 + R() * 8) }; o.nb[d] = { c: c * .7, i: c * 17 }; g.ses[d] = c * 1.1; g.stu[d] = c * (.01 + R() * .02); }
+      st.gsc[sec.id] = o; st.ga[sec.id] = g;
+    });
+    return st;
+  }
+  const TR_METRICS = [['clicks', 'Search Console clicks'], ['nbClicks', 'Non-brand clicks'], ['impr', 'Impressions'], ['sessions', 'GA4 organic sessions'], ['students', 'Student signups (GA4)'], ['cvr', 'Student signups per 100 sessions']];
+  function trSum(st, id, p, metric) {
+    const g = st.gsc[id] || { all: {}, nb: {} }, a = st.ga[id] || { ses: {}, stu: {} };
+    let c = 0, i = 0, nb = 0, ses = 0, stu = 0;
+    for (let d = p.start; d <= p.end; d = addD(d, 1)) { const x = g.all[d]; if (x) { c += x.c; i += x.i; } const y = g.nb[d]; if (y) nb += y.c; ses += a.ses[d] || 0; stu += a.stu[d] || 0; }
+    return metric === 'clicks' ? c : metric === 'nbClicks' ? nb : metric === 'impr' ? i : metric === 'sessions' ? (st.gaOk ? ses : null) : metric === 'students' ? (st.gaOk ? stu : null) : metric === 'cvr' ? (st.gaOk && ses ? stu / ses * 100 : null) : null;
+  }
+  V.trends = (A, D) => {
+    demoFill(D);
+    delete TABLES['t-un-trp'];
+    const P = fParams(), gran = P.get('by') === 'month' ? 'month' : 'week', metric = TR_METRICS.some(m => m[0] === P.get('m')) ? P.get('m') : 'clicks', pick = P.get('c') || '';
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const intro = head('Cluster trends: week by week, month by month', 'Every URL cluster over the last 12 weeks or 12 months: Search Console clicks and impressions, GA4 organic sessions and student signups, each period against the one before (green up, red down). Click a cluster to see which landing pages bring the students.');
+    const st = live ? TR.get(trKey(D)) : sampleTrends(D, A);
+    const href = o => '#trends?' + new URLSearchParams(Object.entries({ by: gran, m: metric, c: pick, ...o }).filter(([, v]) => v)).toString();
+    const controls = `<div class="un-row" style="flex-wrap:wrap;gap:8px;margin:4px 0 12px"><div class="un-tabs">${[['week', 'Week by week'], ['month', 'Month by month']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="${href({ by: v })}">${l}</a>`).join('')}</div><div class="un-tabs">${TR_METRICS.map(([v, l]) => `<a class="${metric === v ? 'on' : ''}" href="${href({ m: v })}">${esc(l)}</a>`).join('')}</div></div>`;
+    if (live && (!st || st.status === 'loading')) return { html: intro + controls + `<div class="note"><span id="un-tr-prog">${st ? `Loading… ${st.done} of ${st.total} requests` : 'Starting…'}</span><br><small>Each cluster is asked for separately (Search Console all and non-brand, GA4 sessions and student signups by day for 13 months), so the totals are exact. Takes about a minute.</small></div>`, mount: () => { if (!st) loadTrends(D, A); } };
+    const pers = trPeriods(st.end, gran), list = trList(D);
+    const isPct = metric === 'cvr', fmtV = v => v == null ? '—' : isPct ? v.toFixed(2) : fmtN(Math.round(v));
+    const rows = list.map(sec => { const vals = pers.map(p => trSum(st, sec.id, p, metric)); return { id: sec.id, name: sec.name, rules: sec.rules, vals }; }).filter(r => r.vals.some(v => v));
+    rows.sort((a, b) => (b.vals[b.vals.length - 2] || 0) - (a.vals[a.vals.length - 2] || 0));
+    // the last full period against the one before (the current period is usually partial)
+    const li = pers[pers.length - 1].partial ? pers.length - 2 : pers.length - 1;
+    const tot = pers.map((p, j) => isPct ? (() => { const s = list.reduce((a, x) => a + (trSum(st, x.id, p, 'sessions') || 0), 0), u = list.reduce((a, x) => a + (trSum(st, x.id, p, 'students') || 0), 0); return s ? u / s * 100 : null; })() : rows.reduce((a, r) => a + (r.vals[j] || 0), 0));
+    const cell = (v, prev) => { if (v == null) return '<span class="un-n">—</span>'; const c = prev ? (v - prev) / prev * 100 : null; const cls = c == null || Math.abs(c) < 2 ? '' : c > 0 ? 'up' : 'down'; return `<span class="un-trc ${cls}" title="${c == null ? '' : (c > 0 ? '+' : '') + c.toFixed(1) + '% vs previous'}">${fmtV(v)}${cls ? (cls === 'up' ? ' ▲' : ' ▼') : ''}</span>`; };
+    const lastChg = vals => { const a = vals[li], b = vals[li - 1]; return a == null || !b ? null : (a - b) / b * 100; };
+    const thead = `<tr><th>Cluster</th>${pers.map(p => `<th class="r">${esc(p.label)}${p.partial ? '*' : ''}</th>`).join('')}<th class="r">Last ${gran} vs previous</th></tr>`;
+    const trow = (r, isTot) => `<tr${isTot ? ' class="un-b2e-sec"' : ''}><td>${isTot ? '<b>All clusters</b>' : `<a href="${href({ c: r.id })}"><b>${esc(r.name)}</b></a><br><small class="un-n">${esc(r.rules.slice(0, 3).join(', '))}${r.rules.length > 3 ? '…' : ''}</small>`}</td>${r.vals.map((v, j) => `<td class="r">${cell(v, j ? r.vals[j - 1] : null)}</td>`).join('')}<td class="r">${isPct ? (r.vals[li] != null && r.vals[li - 1] != null ? `<span class="un-d ${r.vals[li] >= r.vals[li - 1] ? 'up' : 'down'}">${(r.vals[li] - r.vals[li - 1] >= 0 ? '+' : '') + (r.vals[li] - r.vals[li - 1]).toFixed(2)}</span>` : '—') : dchip(lastChg(r.vals))}</td></tr>`;
+    const mLabel = TR_METRICS.find(m => m[0] === metric)[1];
+    const gaMissing = !st.gaOk && ['sessions', 'students', 'cvr'].includes(metric);
+    const tsv = () => [['Cluster', ...pers.map(p => p.label + (p.partial ? ' (partial)' : '')), `Last ${gran} vs previous`].join('\t')].concat([{ name: 'All clusters', vals: tot }, ...rows].map(r => [r.name, ...r.vals.map(v => v == null ? '' : isPct ? v.toFixed(2) : String(Math.round(v))), isPct ? '' : (lastChg(r.vals) == null ? '' : lastChg(r.vals).toFixed(1) + '%')].join('\t'))).join('\n');
+    // up / down summary: biggest moves in the last full period
+    const moves = rows.map(r => ({ r, c: lastChg(r.vals), d: (r.vals[li] || 0) - (r.vals[li - 1] || 0) })).filter(x => x.c != null && Math.abs(x.d) >= (isPct ? .05 : 5));
+    const ups = moves.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 3), downs = moves.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, 3);
+    const mv = (x) => `<a href="${href({ c: x.r.id })}">${esc(x.r.name)}</a> ${isPct ? (x.d > 0 ? '+' : '') + x.d.toFixed(2) : `${x.d > 0 ? '+' : ''}${fmtN(Math.round(x.d))} (${(x.c > 0 ? '+' : '') + x.c.toFixed(0)}%)`}`;
+    const summary = `<div class="grid-2 even"><div class="note"><b>Up most</b> (${esc(pers[li].label)} vs ${esc(pers[li - 1].label)}): ${ups.length ? ups.map(mv).join(' · ') : 'none'}</div><div class="note"><b>Down most</b>: ${downs.length ? downs.map(mv).join(' · ') : 'none'}</div></div>`;
+    // ── landing pages of the picked cluster: student signups per period ──
+    let pageHtml = '';
+    const sel = list.find(x => x.id === pick);
+    if (sel) {
+      const pk = trKey(D) + '|' + sel.id + '|' + gran;
+      let ps = live ? TRP.get(pk) : null;
+      if (!live) { const so = sectioner(D); const pages = (A.P || []).filter(r => so(r.p) === sel.id).slice(0, 200); let seed = 5; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; ps = { status: 'done', rows: pages.map(r => ({ path: U.pathOnly(r.p), stu: pers.map(() => (+r.clicks || 0) / 12 * (.01 + R() * .03)), ses: pers.map(() => (+r.clicks || 0) / 12 * 1.1) })) }; }
+      if (!ps) pageHtml = '<p class="progress" id="un-trp-go">Loading landing pages from GA4…</p>';
+      else if (ps.status === 'loading') pageHtml = '<p class="progress">Loading landing pages from GA4…</p>';
+      else if (ps.status === 'error') pageHtml = `<p class="start-error">${esc(ps.error)}</p>`;
+      else {
+        const pr = ps.rows.map(r => ({ ...r, total: r.stu.reduce((a, v) => a + v, 0), sesT: r.ses.reduce((a, v) => a + v, 0) })).map(r => ({ ...r, cvr: r.sesT ? r.total / r.sesT * 100 : null, last: r.stu[li], chg: r.stu[li - 1] ? (r.stu[li] - r.stu[li - 1]) / r.stu[li - 1] * 100 : null })).filter(r => r.total > 0 || r.sesT > 0);
+        pageHtml = `<p class="hint">GA4 organic sessions that landed on each page, and student signups in those sessions. ${pers[pers.length - 1].partial ? '* = period still running.' : ''}</p>` + table('t-un-trp', [
+          { k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>` },
+          ...pers.map((p, j) => ({ k: 's' + j, l: p.label + (p.partial ? '*' : ''), r: 1, f: r => cell(r.stu[j], j ? r.stu[j - 1] : null), csv: r => Math.round(r.stu[j]) })),
+          { k: 'total', l: 'Students, 12 ' + gran + 's', r: 1, f: r => `<b>${fmtN(Math.round(r.total))}</b>`, csv: r => Math.round(r.total) },
+          { k: 'sesT', l: 'Organic sessions', r: 1, f: r => fmtN(Math.round(r.sesT)), csv: r => Math.round(r.sesT) },
+          { k: 'cvr', l: 'Students per 100 sessions', r: 1, f: r => r.cvr == null ? '—' : r.cvr.toFixed(2), csv: r => r.cvr == null ? '' : r.cvr.toFixed(2) },
+          { k: 'chg', l: `Last ${gran} vs previous`, r: 1, f: r => dchip(r.chg), csv: r => r.chg == null ? '' : r.chg.toFixed(1) }
+        ], pr.map(r => Object.assign(r, Object.fromEntries(pers.map((p, j) => ['s' + j, r.stu[j]])))), { file: `unstop-${sel.id}-students-by-landing-page-${gran}`, sort: 'total', pageSize: 25, placeholder: 'Filter pages' });
+      }
+    }
+    const html = intro + controls +
+      (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
+      (gaMissing ? '<div class="note">GA4 is not connected in this tab: sign in again with Search Console + GA4 to see sessions and student signups.</div>' : '') +
+      (st.errors && st.errors.length ? `<div class="note un-warn">${fmtN(st.errors.length)} request${st.errors.length === 1 ? '' : 's'} failed: ${esc(st.errors[0])}</div>` : '') +
+      summary +
+      `<section class="panel"><div class="panel-h"><h2>${esc(mLabel)}, ${gran === 'week' ? 'week by week (Monday to Sunday)' : 'month by month'}</h2><p>▲ / ▼ = up or down more than 2% on the period before. * = still running. Click a cluster for its landing pages. <button class="btn-quiet sm" type="button" id="un-tr-copy">Copy for Google Sheets</button> <span id="un-tr-msg" class="un-n"></span>${live ? ` <button class="btn-quiet sm" type="button" id="un-tr-reload">Reload</button>` : ''}</p></div>
+        <div class="panel-b flush"><div class="tw"><table class="un-mini un-tr"><thead>${thead}</thead><tbody>${trow({ vals: tot }, true)}${rows.map(r => trow(r)).join('')}</tbody></table></div></div></section>` +
+      `<section class="panel" id="un-trp"><div class="panel-h"><h2>${sel ? `${esc(sel.name)}: student signups by landing page, ${gran === 'week' ? 'week by week' : 'month by month'}` : 'Students by landing page'}</h2><p>${sel ? `<a href="${href({ c: '' })}">Close</a>` : 'Click a cluster above to see which of its landing pages bring student signups, period by period.'}</p></div><div class="panel-b">${pageHtml || ''}</div></section>` +
+      `<p class="hint">Sources: Search Console (Google web search, date dimension with the cluster's page filter) and GA4 (Organic Search sessions by landing page; student signups = ${esc(((settings(D.site).events || {}).studentSignup || []).join(', ') || 'not set')} in those sessions; event names in <a href="#funnelsetup">Funnel setup</a>). ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
+    const mount = () => {
+      const cp = document.getElementById('un-tr-copy');
+      if (cp) cp.addEventListener('click', async () => { const m = document.getElementById('un-tr-msg'); try { await navigator.clipboard.writeText(tsv()); m.textContent = 'Copied. Paste into the sheet with Ctrl/Cmd + V.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } });
+      const rl = document.getElementById('un-tr-reload'); if (rl) rl.addEventListener('click', () => { TR.delete(trKey(D)); [...TRP.keys()].forEach(k => TRP.delete(k)); rerender(); });
+      if (document.getElementById('t-un-trp')) drawTable('t-un-trp');
+      if (sel && live && !TRP.get(trKey(D) + '|' + sel.id + '|' + gran)) loadTrendPages(D, sel, gran, pers);
+      if (sel) setTimeout(() => { const el = document.getElementById('un-trp'); if (el && P.get('c')) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+    };
+    return { html, mount };
+  };
+  async function loadTrendPages(D, sec, gran, pers) {
+    const k = trKey(D) + '|' + sec.id + '|' + gran, s = settings(D.site);
+    const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, '');
+    const st = { status: 'loading' }; TRP.set(k, st);
+    if (!pid || !token()) { st.status = 'error'; st.error = 'Sign in with Search Console + GA4 to load landing pages.'; rerender(); return; }
+    try {
+      const rx = gaPathRx(U.sectionRegex(sec, null)), ex = U.sectionExclude(sec, s.sections);
+      const exp = [U.GA.organicFilter, { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: rx } } }].concat(ex ? [{ notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(ex) } } } }] : []);
+      const dim = gran === 'month' ? 'yearMonth' : 'date';
+      const range = [{ startDate: pers[0].start, endDate: pers[pers.length - 1].end }];
+      const stuEv = (s.events && s.events.studentSignup) || [];
+      const [S, E] = await Promise.all([
+        runReport(pid, { dateRanges: range, dimensions: [{ name: 'landingPage' }, { name: dim }], metrics: [{ name: 'sessions' }], dimensionFilter: { andGroup: { expressions: exp } }, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 50000 }).then(U.gaRows),
+        stuEv.length ? runReport(pid, { dateRanges: range, dimensions: [{ name: 'landingPage' }, { name: dim }], metrics: [{ name: 'eventCount' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', stuEv)]) } }, limit: 50000 }).then(U.gaRows) : Promise.resolve([])
+      ]);
+      const idxOf = v => { const d = String(v); if (gran === 'month') { const m = d.replace(/^(\d{4})(\d{2})$/, '$1-$2'); return pers.findIndex(p => p.key === m); } const iso = d.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'); return pers.findIndex(p => iso >= p.start && iso <= p.end); };
+      const m = new Map(); const get = p => { const key = U.pathOnly(p); if (!m.has(key)) m.set(key, { path: key, stu: pers.map(() => 0), ses: pers.map(() => 0) }); return m.get(key); };
+      S.forEach(r => { const j = idxOf(r[dim]); if (j >= 0) get(r.landingPage).ses[j] += r.sessions; });
+      E.forEach(r => { const j = idxOf(r[dim]); if (j >= 0) get(r.landingPage).stu[j] += r.eventCount; });
+      st.rows = [...m.values()]; st.status = 'done';
+    } catch (e) { st.status = 'error'; st.error = e.message; }
+    if (TRP.get(k) === st) rerender();
+  }
+
   // every funnel screen tries the one-sign-in GA4 load after it renders
-  ['b2e', 'board', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
+  ['b2e', 'board', 'trends', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
     V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); if (k === 'b2e' || k === 'leads') salesAuto(D); } }; };
   });

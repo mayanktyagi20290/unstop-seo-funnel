@@ -1009,6 +1009,6 @@
 
   const api = { reviewPeriods, periodMatch, attributionHealth, stopContinueScale, cohortWeeks, engagementModel, DEFAULT_TYPES, CORE, DEFAULT_CLUSTERS, DEFAULT_SECTIONS, DEFAULT_PATH_SECTIONS, makeSectioner, byFolder, parseSections, sectionsText, sectionRegex, sectionExclude, sectionModel, sectionsFromRows, makeClassifier, makeClusterer, typeRegex, parseTypes, typesText, parseClusters, clustersText, pathOnly,
     visibility, rankBuckets, strikingDistance, clusters, weekly, sitemapTypes, ga4Requests, gaRows, ga4Model, aiName, shiftYear, joinChain, topSignupPages, nonBrandedSignupShare,
-    moeHeaderMap, moeQuality, qualityVerdict, channelOf, crmHeaderMap, crmModel, assistedModel, organicTest, toDate, METRICS, chg };
+    moeHeaderMap, moeQuality, qualityVerdict, channelOf, crmHeaderMap, crmModel, assistedModel, organicTest, toDate, METRICS, chg, GA, typeRegex };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.UN = api;
 })(typeof window !== 'undefined' ? window : globalThis);
