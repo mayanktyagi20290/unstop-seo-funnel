@@ -149,8 +149,12 @@
     { id: 'practice', name: 'Product › Practice & coding', type: 'prod', rules: ['/practice', '/code'] },
     { id: 'courses', name: 'Product › Courses & mentorship', type: 'prod', rules: ['/courses', '/mentor', '/find-a-mentor', '/become-a-mentor'] },
     { id: 'tools', name: 'Product › Tools & programs', type: 'prod', rules: ['/resume-builder', '/tools', '/business-simulation-games', '/pro', '/unstop-leaderboard', '/unstop-rewards-program', '/unstop-igniters-club'] },
+    { id: 'aicourse', name: 'Product › AI courses', type: 'prod', rules: ['/ai-course'] },
+    { id: 'profiles', name: 'Profiles › User & public profiles', type: 'prod', rules: ['/u', '/pf'] },
     { id: 'home', name: 'Home › Home page', type: 'home', rules: ['=/'] },
-    { id: 'util', name: 'Utility › Login & account', type: 'util', rules: ['/auth', '/user', '/organiser-panel', '/manage', '/app', '/api', '/submissions-round', '/post-now', '/legal', '/faq', '/contact-us', '/refer-and-earn', '/about', '/notifications', '/home', '/certificate-preview', '/f'] }
+    { id: 'util', name: 'Utility › Login & account', type: 'util', rules: ['/auth', '/user', '/organiser-panel', '/manage', '/app', '/api', '/submissions-round', '/post-now', '/legal', '/faq', '/contact-us', '/refer-and-earn', '/about', '/notifications', '/home', '/certificate-preview', '/f', '/m', '/admin', '/manage-registrations', '/candidate-report', '/college-stats', '/user-settings', '/my-referrals', '/nominations', '/video-call', '/tpo', '/page-not-found'] },
+    // GA4 sessions whose first page was never recorded (no page_view before other events): kept apart, not a real page
+    { id: 'notset', name: 'GA4 › Landing page not set', type: 'other', seo: false, rules: ['=/(not set)'] }
   ];
   // Clusters whose pages carry a clear conversion path (register, apply, post a job, book a demo) by default.
   const DEFAULT_PATH_SECTIONS = ['hackathons', 'competitions', 'internships', 'jobs', 'quizzes', 'fests', 'workshops', 'scholarships', 'awards', 'ambassador', 'oppother', 'empjobboard', 'empb2b', 'practice'];
