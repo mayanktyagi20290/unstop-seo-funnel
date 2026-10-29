@@ -621,7 +621,7 @@
     const FIRST = ['landing', 'events', 'daily', 'device', 'region', 'landingDevice', 'landingRegion', 'eventsYoy', 'pricing', 'ai', 'assisted', 'channels', 'channelEvents'];
     keys.sort((a, b) => (FIRST.includes(a) ? FIRST.indexOf(a) : 99) - (FIRST.includes(b) ? FIRST.indexOf(b) : 99));
     // phase 1: what the dashboards show first; the screen renders as soon as these arrive
-    const first = keys.filter(k => FIRST.includes(k) || k === 'aiMonthly' || k === 'orgSource'), rest = keys.filter(k => !first.includes(k));
+    const first = keys.filter(k => FIRST.includes(k) || k === 'aiMonthly' || k === 'orgSource' || k === 'oppEvents'), rest = keys.filter(k => !first.includes(k));
     const run = async list => { const queue = list.slice(); const worker = async () => { while (queue.length) { const k = queue.shift(); try { raw[k] = await runReport(o.property, reqs[k]); } catch (e) { if (!opt.has(k)) failed.push(k + ': ' + e.message); } finally { done++; if (prog) prog.textContent = `Loading GA4 reports… ${done} of ${keys.length}`; } } }; await Promise.all([worker(), worker(), worker(), worker()]); };
     await run(first);
     if (!raw.landing && failed.length) throw new Error(failed[0].replace(/^\w+: /, ''));
@@ -3054,13 +3054,21 @@
     const and = extra => ({ andGroup: { expressions: base.concat(extra || []) } });
     const dr = [{ startDate: D.start, endDate: D.end }];
     try {
-      const [byPage, evAll, lands, next] = await Promise.all([
-        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and([U.GA.inList('eventName', [...new Set(sign.concat(apply))])]), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 20000 }).then(U.gaRows),
+      // applications: form_submit_success also fires on other forms, so only events that carry an
+      // opportunity_id (the opportunity registration form, GTM-NNBT7L) are counted; falls back with a warning
+      const oppOnly = [U.GA.inList('eventName', apply), { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } }];
+      const appQ = (dims, extra) => runReport(pid, { dateRanges: dr, dimensions: dims.map(name => ({ name })), metrics: extra || [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and(oppOnly), limit: 20000 }).then(U.gaRows)
+        .catch(e => { st.appWarn = 'Applications could not be limited to the opportunity registration form (' + e.message + '), so every ' + apply.join(', ') + ' event is counted.'; return runReport(pid, { dateRanges: dr, dimensions: dims.map(name => ({ name })), metrics: extra || [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and([U.GA.inList('eventName', apply)]), limit: 20000 }).then(U.gaRows); });
+      const [signPage, appPage, evAll, lands, next, signLand, appLand] = await Promise.all([
+        sign.length ? runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and([U.GA.inList('eventName', sign)]), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 20000 }).then(U.gaRows) : [],
+        apply.length ? appQ(['pagePath', 'eventName']) : [],
         runReport(pid, { dateRanges: dr, dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 300 }).then(U.gaRows),
         runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'sessions' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 20000 }).then(U.gaRows),
-        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }], limit: 500 }).then(U.gaRows)
+        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }], limit: 500 }).then(U.gaRows),
+        sign.length ? runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and([U.GA.inList('eventName', sign)]), limit: 20000 }).then(U.gaRows) : [],
+        apply.length ? appQ(['landingPage', 'eventName'], [{ name: 'eventCount' }]) : []
       ]);
-      const landEv = await runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and([U.GA.inList('eventName', [...new Set(sign.concat(apply))])]), limit: 20000 }).then(U.gaRows);
+      const byPage = signPage.concat(appPage), landEv = signLand.concat(appLand);
       Object.assign(st, { status: 'done', byPage, evAll, lands, next, landEv, at: Date.now() });
     } catch (e) { st.status = 'error'; st.error = e.message; }
     if (JR.get(key) === st) rerender();
@@ -3113,6 +3121,7 @@
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console + GA4 for real journeys.</div>' : '') +
       `<p class="un-meta">${esc(fmtD(D.start))} – ${esc(fmtD(D.end))} · organic visits whose first page was in <code>${esc(f)}</code></p>` +
       `<div class="kpis">${kp('Organic sessions', fmtN(Math.round(ses)), 'that started here')}${kp('Student signups', fmtN(Math.round(nSign)), ses ? (nSign / ses * 100).toFixed(2) + ' per 100 sessions' : '')}${kp('Applications / registrations', fmtN(Math.round(nApp)), ses ? (nApp / ses * 100).toFixed(2) + ' per 100 sessions' : '')}${kp('Opportunities applied to', fmtN(ap.length), 'different pages')}</div>` +
+      (st.appWarn ? `<div class="note un-warn">${esc(st.appWarn)}</div>` : '') +
       (missing.length ? `<div class="note un-warn">GA4 saw none of these event names in these visits: <b>${esc(missing.join(', '))}</b>. Check “Events GA4 recorded” below and correct the names in <a href="#funnelsetup">Funnel setup</a>.</div>` : '') +
       `<section class="panel"><div class="panel-h"><h2>1. Where the signup happened</h2><p>The page each student signup event fired on, for visits that started in ${esc(f)}. ${nSign ? `${pct1(kindTot('Same folder as the landing page') / nSign * 100)} on a page in the same folder, ${pct1(kindTot('Sign-up / login page') / nSign * 100)} on a sign-up / login page, ${pct1(kindTot('Another opportunity page') / nSign * 100)} on another opportunity page.` : ''}</p></div>` +
       table('t-un-jr-sign', [pageCol('path', 'Page where they signed up'), { k: 'kind', l: 'Kind' }, { k: 'n', l: 'Signups', r: 1, f: r => fmtN(Math.round(r.n)) }, { k: 'share', l: 'Share', r: 1, f: r => pct1(r.share) }, { k: 'ev', l: 'Event' }], sg, { file: 'unstop-journey-signup-pages', sort: 'n', pageSize: 15, placeholder: 'Filter pages' }) + '</section>' +
