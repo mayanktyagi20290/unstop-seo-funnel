@@ -3137,6 +3137,176 @@
     return { html, mount: () => { fMount(); ['t-un-jr-sign', 't-un-jr-app', 't-un-jr-land', 't-un-jr-next', 't-un-jr-ev'].forEach(id => { if (document.getElementById(id)) drawTable(id); }); } };
   };
 
+  // ════════════════════════════ WEEKLY / MONTHLY SEO REPORT (for the boss) ════════════════════════════
+  // One page: last full week (Mon–Sun) or month against the one before (month also against last year).
+  // Headline numbers, SEO share of all signups and registrations, clusters, top and falling landing pages,
+  // a fix list and the top opportunities. Search Console (Google web) + GA4 (Organic Search).
+  const RP = new Map();
+  function rpPeriods(end, gran) {
+    if (gran === 'month') {
+      const e = new Date(end + 'T00:00:00Z'); let y = e.getUTCFullYear(), m = e.getUTCMonth();
+      const lastDay = new Date(Date.UTC(y, m + 1, 0)); if (isoD(lastDay) > end) { m -= 1; }
+      const mk = (yy, mm) => { const s = new Date(Date.UTC(yy, mm, 1)), t = new Date(Date.UTC(yy, mm + 1, 0)); return { start: isoD(s), end: isoD(t), label: s.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) }; };
+      return { cur: mk(y, m), prev: mk(y, m - 1), yoy: mk(y - 1, m) };
+    }
+    const curS = addD(monday(addD(end, 1)), -7), lab = (s, t) => `${fmtD(s)} – ${fmtD(t)}`;
+    const cur = { start: curS, end: addD(curS, 6) }, prev = { start: addD(curS, -7), end: addD(curS, -1) };
+    cur.label = lab(cur.start, cur.end); prev.label = lab(prev.start, prev.end);
+    return { cur, prev };
+  }
+  async function loadReport(D, A, gran, key) {
+    const st = { status: 'loading', done: 0 }; RP.set(key, st); rerender();
+    const src = window.CW_SOURCE, s = settings(D.site), P = rpPeriods(D.end, gran), ranges = ['cur', 'prev'].concat(P.yoy ? ['yoy'] : []);
+    const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), sign = (s.events && s.events.studentSignup) || [], apply = (s.events && s.events.opportunityAction) || [];
+    const nb = A.brandRx ? [{ dimension: 'query', operator: 'excludingRegex', expression: A.brandRx }] : [];
+    const g = (r, dims, filters, limit) => src.gsc.query({ startDate: P[r].start, endDate: P[r].end, type: 'web', dimensions: dims, rowLimit: limit || 1, dimensionFilterGroups: filters.length ? [{ groupType: 'and', filters }] : undefined }).then(d => d.rows || []);
+    const br = A.brandRx ? [{ dimension: 'query', operator: 'includingRegex', expression: A.brandRx }] : null;
+    const org = U.GA.organicFilter, hasOpp = { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } };
+    const dr = ranges.map(r => ({ startDate: P[r].start, endDate: P[r].end, name: r }));
+    const ga = body => runReport(pid, { dateRanges: dr, ...body }).then(U.gaRows);
+    const tick = () => { st.done++; const p = document.getElementById('un-rp-prog'); if (p) p.textContent = `Loading… ${st.done} requests done`; };
+    const T = (p, k) => p.then(v => { tick(); return v; }).catch(e => { tick(); (st.errors = st.errors || []).push(k + ': ' + e.message); return null; });
+    try {
+      const jobs = {};
+      ranges.forEach(r => {
+        jobs['tot_' + r] = T(g(r, [], []), 'Search Console total');
+        jobs['nbTot_' + r] = T(g(r, [], nb), 'Search Console non-brand');
+        if (br) jobs['bTot_' + r] = T(g(r, [], br), 'Search Console brand');
+      });
+      ['cur', 'prev'].forEach(r => {
+        jobs['pages_' + r] = T(g(r, ['page'], [], 25000), 'Search Console pages');
+        jobs['nbPages_' + r] = T(g(r, ['page'], nb, 25000), 'Search Console non-brand pages');
+      });
+      if (pid && token()) {
+        const and = (...x) => ({ andGroup: { expressions: x.filter(Boolean) } });
+        jobs.gaLand = T(ga({ dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'sessions' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 50000 }), 'GA4 landing pages');
+        if (sign.length) {
+          jobs.gaSignLand = T(ga({ dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and(org, U.GA.inList('eventName', sign)), limit: 50000 }), 'GA4 signups');
+          jobs.gaSignAll = T(ga({ metrics: [{ name: 'eventCount' }], dimensionFilter: U.GA.inList('eventName', sign) }), 'GA4 all signups');
+          jobs.gaSignOrg = T(ga({ metrics: [{ name: 'eventCount' }], dimensionFilter: and(org, U.GA.inList('eventName', sign)) }), 'GA4 organic signups');
+        }
+        if (apply.length) {
+          jobs.gaRegLand = T(ga({ dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(org, U.GA.inList('eventName', apply), hasOpp), limit: 50000 }), 'GA4 registrations');
+          jobs.gaRegAll = T(ga({ metrics: [{ name: 'totalUsers' }], dimensionFilter: and(U.GA.inList('eventName', apply), hasOpp) }), 'GA4 all registrations');
+          jobs.gaRegOrg = T(ga({ metrics: [{ name: 'totalUsers' }], dimensionFilter: and(org, U.GA.inList('eventName', apply), hasOpp) }), 'GA4 organic registrations');
+          jobs.gaOpp = T(ga({ dimensions: [{ name: 'customEvent:opportunity_id' }, { name: 'pageTitle' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(org, U.GA.inList('eventName', apply), hasOpp), orderBys: [{ metric: { metricName: 'totalUsers' }, desc: true }], limit: 200 }), 'GA4 opportunities');
+        }
+        jobs.gaSesTot = T(ga({ metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org }), 'GA4 organic sessions');
+      } else st.noGa = true;
+      const keys = Object.keys(jobs), vals = await Promise.all(keys.map(k => jobs[k]));
+      st.raw = Object.fromEntries(keys.map((k, i) => [k, vals[i]]));
+      st.P = P; st.status = 'done'; st.at = Date.now();
+    } catch (e) { st.status = 'error'; st.error = e.message; }
+    if (RP.get(key) === st) rerender();
+  }
+  function sampleReport(A, D, gran) {
+    const P = rpPeriods(D.end || isoD(new Date()), gran), f = gran === 'month' ? 4.3 : 1;
+    let seed = 9; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const pages = (A.P || []).slice(0, 400), sc = x => x * f / 13;
+    const mkPages = k => pages.map(r => ({ keys: [r.p], clicks: sc(+r.clicks || 0) * (k === 'prev' ? .9 + R() * .25 : 1), impressions: sc(+r.impr || 0) }));
+    const raw = {}; ['cur', 'prev', 'yoy'].forEach(r => { const m = r === 'cur' ? 1 : r === 'prev' ? .94 : .8; const c = pages.reduce((a, x) => a + sc(+x.clicks || 0), 0) * m; raw['tot_' + r] = [{ clicks: c, impressions: c * 22, position: 9 }]; raw['nbTot_' + r] = [{ clicks: c * .55, impressions: c * 20, position: 11 }]; raw['bTot_' + r] = [{ clicks: c * .2, impressions: c * .6, position: 2 }]; });
+    raw.pages_cur = mkPages('cur'); raw.pages_prev = mkPages('prev'); raw.nbPages_cur = raw.pages_cur.map(x => ({ ...x, clicks: x.clicks * .6 })); raw.nbPages_prev = raw.pages_prev.map(x => ({ ...x, clicks: x.clicks * .6 }));
+    const land = [], sl = [], rl = [];
+    pages.forEach(r => { const p = U.pathOnly(r.p); ['cur', 'prev'].forEach(k => { const ses = sc(+r.clicks || 0) * 1.1 * (k === 'prev' ? .92 : 1); land.push({ landingPage: p, range: k, sessions: ses }); sl.push({ landingPage: p, range: k, eventCount: ses * (R() < .2 ? 0 : .01 + R() * .03) }); rl.push({ landingPage: p, range: k, totalUsers: ses * (R() < .3 ? 0 : .02 + R() * .08) }); }); });
+    raw.gaLand = land; raw.gaSignLand = sl; raw.gaRegLand = rl;
+    const tot = (L, k, m) => L.filter(x => x.range === k).reduce((a, x) => a + x[m], 0);
+    raw.gaSignOrg = ['cur', 'prev'].map(k => ({ range: k, eventCount: tot(sl, k, 'eventCount') })); raw.gaSignAll = raw.gaSignOrg.map(x => ({ ...x, eventCount: x.eventCount * 3.8 }));
+    raw.gaRegOrg = ['cur', 'prev'].map(k => ({ range: k, totalUsers: tot(rl, k, 'totalUsers') })); raw.gaRegAll = raw.gaRegOrg.map(x => ({ ...x, totalUsers: x.totalUsers * 12 }));
+    raw.gaSesTot = ['cur', 'prev'].map(k => ({ range: k, sessions: tot(land, k, 'sessions'), newUsers: tot(land, k, 'sessions') * .6 }));
+    raw.gaOpp = Array.from({ length: 15 }, (_, i) => ['cur', 'prev'].map(k => ({ 'customEvent:opportunity_id': String(1760000 + i * 37), pageTitle: ['Data Science Hackathon', 'Product Management Internship', 'Case Challenge', 'Marketing Internship', 'Coding Contest'][i % 5] + ' ' + (i + 1) + ' | Unstop', range: k, totalUsers: Math.round((900 - i * 50) * (k === 'prev' ? .8 + R() * .4 : 1)) }))).flat();
+    return { status: 'done', sample: true, raw, P, at: Date.now() };
+  }
+  V.report = (A, D) => {
+    demoFill(D);
+    ['t-un-rp-sign', 't-un-rp-reg', 't-un-rp-drop', 't-un-rp-fix', 't-un-rp-opp'].forEach(k => delete TABLES[k]);
+    const gran = fParams().get('by') === 'month' ? 'month' : 'week';
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const intro = head(gran === 'week' ? 'Weekly SEO report' : 'Monthly SEO report', 'For the boss: SEO visibility, traffic, student signups and opportunity registrations from Google, this period against the last, with the share of all signups and registrations that came from SEO, the clusters, the landing pages that win, fall or need fixing, and the top opportunities.');
+    const tabs = `<div class="un-tabs" style="margin:4px 0 12px">${[['week', 'Week on week'], ['month', 'Month on month']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="#report?by=${v}">${l}</a>`).join('')}</div>`;
+    const key = [D.site, D.end, gran, JSON.stringify(settings(D.site).events || {})].join('|');
+    const st = live ? RP.get(key) : sampleReport(A, D, gran);
+    if (live && (!st || st.status === 'loading')) return { html: intro + tabs + `<p class="progress" id="un-rp-prog">Loading… ${st ? st.done : 0} requests done</p><p class="hint">About 20 Search Console and GA4 requests. Takes under a minute.</p>`, mount: () => { if (!st) loadReport(D, A, gran, key); } };
+    if (st.status === 'error') return { html: intro + tabs + `<div class="note un-warn">${esc(st.error)}</div>`, mount: () => { } };
+    const R = st.raw, P = st.P, so = sectioner(D), hasY = !!P.yoy;
+    const g1 = (k, m) => { const r = (R[k] || [])[0]; return r ? +r[m] || 0 : null; };
+    const byR = (k, m, rg) => { const L = R[k]; if (!L) return null; const M = L.filter(x => (x.range || 'cur') === rg); return M.length ? M.reduce((a, x) => a + (+x[m] || 0), 0) : null; };
+    const ratio = (a, b) => a == null || !b ? null : a / b * 100;
+    const rows = [];
+    const add = (l, c, p, y, kind, src, note) => rows.push({ l, c, p, y, kind: kind || 'n', src, note });
+    const hid = r => { const t = g1('tot_' + r, 'clicks'), n = g1('nbTot_' + r, 'clicks'), b = g1('bTot_' + r, 'clicks'); return t == null || n == null || b == null ? null : Math.max(0, t - n - b); };
+    add('Non-brand clicks', g1('nbTot_cur', 'clicks'), g1('nbTot_prev', 'clicks'), g1('nbTot_yoy', 'clicks'), 'n', 'Search Console', 'clicks from searches without “unstop”');
+    add('Non-brand impressions', g1('nbTot_cur', 'impressions'), g1('nbTot_prev', 'impressions'), g1('nbTot_yoy', 'impressions'), 'n', 'Search Console');
+    add('Non-brand average position', g1('nbTot_cur', 'position'), g1('nbTot_prev', 'position'), g1('nbTot_yoy', 'position'), 'pos', 'Search Console', 'lower is better');
+    add('All clicks (brand + non-brand + hidden)', g1('tot_cur', 'clicks'), g1('tot_prev', 'clicks'), g1('tot_yoy', 'clicks'), 'n', 'Search Console');
+    add('Organic sessions', byR('gaSesTot', 'sessions', 'cur'), byR('gaSesTot', 'sessions', 'prev'), hasY ? byR('gaSesTot', 'sessions', 'yoy') : null, 'n', 'GA4', 'Organic Search, all search engines');
+    const sO = ['cur', 'prev', 'yoy'].map(r => byR('gaSignOrg', 'eventCount', r)), sA = ['cur', 'prev', 'yoy'].map(r => byR('gaSignAll', 'eventCount', r));
+    const rO = ['cur', 'prev', 'yoy'].map(r => byR('gaRegOrg', 'totalUsers', r)), rA = ['cur', 'prev', 'yoy'].map(r => byR('gaRegAll', 'totalUsers', r));
+    const ses = ['cur', 'prev', 'yoy'].map(r => byR('gaSesTot', 'sessions', r));
+    add('Organic student signups', sO[0], sO[1], hasY ? sO[2] : null, 'n', 'GA4', 'signup_email_verified in Google organic visits');
+    add('Organic opportunity registrations (people)', rO[0], rO[1], hasY ? rO[2] : null, 'n', 'GA4', 'people with form_submit_success that carries an opportunity_id');
+    add('Signups per 100 organic sessions', ratio(sO[0], ses[0]), ratio(sO[1], ses[1]), hasY ? ratio(sO[2], ses[2]) : null, 'dec', 'GA4');
+    add('Registrations per 100 organic sessions', ratio(rO[0], ses[0]), ratio(rO[1], ses[1]), hasY ? ratio(rO[2], ses[2]) : null, 'dec', 'GA4');
+    add('SEO share of all website signups', ratio(sO[0], sA[0]), ratio(sO[1], sA[1]), hasY ? ratio(sO[2], sA[2]) : null, 'pct', 'GA4', 'organic ÷ all channels (website only, app not included)');
+    add('SEO share of all website registrations', ratio(rO[0], rA[0]), ratio(rO[1], rA[1]), hasY ? ratio(rO[2], rA[2]) : null, 'pct', 'GA4', 'organic ÷ all channels (website only)');
+    add('Hidden searches share of clicks', ratio(hid('cur'), g1('tot_cur', 'clicks')), ratio(hid('prev'), g1('tot_prev', 'clicks')), hasY ? ratio(hid('yoy'), g1('tot_yoy', 'clicks')) : null, 'pct', 'Search Console', 'searches Google does not list');
+    const fv = (v, k) => v == null || !isFinite(v) ? '—' : k === 'pct' ? v.toFixed(1) + '%' : k === 'pos' ? v.toFixed(1) : k === 'dec' ? v.toFixed(2) : fmtN(Math.round(v));
+    const ch = (c, p, k) => c == null || p == null || !isFinite(c) || !isFinite(p) ? null : k === 'pct' || k === 'pos' || k === 'dec' ? c - p : p ? (c - p) / p * 100 : null;
+    const chHtml = (c, p, k) => { const d = ch(c, p, k); if (d == null) return '<span class="un-n">—</span>'; if (k === 'pos') return dchip(d, true, 'pos'); if (k === 'pct' || k === 'dec') return `<span class="un-d ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}">${d > 0 ? '+' : ''}${d.toFixed(k === 'pct' ? 1 : 2)}${k === 'pct' ? ' pts' : ''}</span>`; return dchip(d); };
+    const curL = P.cur.label, prevL = P.prev.label, yL = hasY ? P.yoy.label : '';
+    const headTbl = `<div class="tw"><table class="un-mini un-rp"><thead><tr><th>Number</th><th class="r">${esc(curL)}</th><th class="r">${esc(prevL)}</th><th class="r">Change</th>${hasY ? `<th class="r">${esc(yL)}</th><th class="r">vs last year</th>` : ''}<th>Source</th></tr></thead><tbody>${rows.map(r => `<tr><td><b>${esc(r.l)}</b>${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td><td class="r"><b>${fv(r.c, r.kind)}</b></td><td class="r">${fv(r.p, r.kind)}</td><td class="r">${chHtml(r.c, r.p, r.kind)}</td>${hasY ? `<td class="r">${fv(r.y, r.kind)}</td><td class="r">${chHtml(r.c, r.y, r.kind)}</td>` : ''}<td class="un-n">${esc(r.src)}</td></tr>`).join('')}</tbody></table></div>`;
+    // ── per landing page and per cluster ──
+    const pageMap = new Map(); const P0 = p => U.pathOnly(p).toLowerCase();
+    const pg = k => { if (!pageMap.has(k)) pageMap.set(k, { path: k, c: 0, p: 0, nbC: 0, nbP: 0, ses: 0, sesP: 0, sign: 0, signP: 0, reg: 0, regP: 0 }); return pageMap.get(k); };
+    (R.pages_cur || []).forEach(r => { pg(P0(r.keys[0])).c += r.clicks; }); (R.pages_prev || []).forEach(r => { pg(P0(r.keys[0])).p += r.clicks; });
+    (R.nbPages_cur || []).forEach(r => { pg(P0(r.keys[0])).nbC += r.clicks; }); (R.nbPages_prev || []).forEach(r => { pg(P0(r.keys[0])).nbP += r.clicks; });
+    const gaPut = (L, m, a, b) => (L || []).forEach(r => { const o = pg(P0(r.landingPage)); const isPrev = r.range === 'prev' || r.range === 'date_range_1'; const isCur = r.range === 'cur' || r.range === 'date_range_0' || !r.range; if (isCur) o[a] += +r[m] || 0; else if (isPrev) o[b] += +r[m] || 0; });
+    gaPut(R.gaLand, 'sessions', 'ses', 'sesP'); gaPut(R.gaSignLand, 'eventCount', 'sign', 'signP'); gaPut(R.gaRegLand, 'totalUsers', 'reg', 'regP');
+    const pagesL = [...pageMap.values()].map(o => ({ ...o, cluster: so.label(so(o.path)), dC: o.p ? (o.c - o.p) / o.p * 100 : null, lost: o.p - o.c }));
+    const cm = new Map(); pagesL.forEach(o => { const id = so(o.path); const x = cm.get(id) || { id, name: so.label(id), nbC: 0, nbP: 0, ses: 0, sesP: 0, sign: 0, signP: 0, reg: 0, regP: 0 }; ['nbC', 'nbP', 'ses', 'sesP', 'sign', 'signP', 'reg', 'regP'].forEach(k => { x[k] += o[k]; }); cm.set(id, x); });
+    const clusters = [...cm.values()].filter(x => x.nbC + x.ses + x.sign + x.reg > 0 && x.id !== 'util').sort((a, b) => b.reg + b.sign * 5 - (a.reg + a.sign * 5));
+    const cc = (c, p) => `${fmtN(Math.round(c))} ${p ? dchip((c - p) / p * 100) : ''}`;
+    const clTbl = `<div class="tw"><table class="un-mini un-rp"><thead><tr><th>Cluster</th><th class="r">Non-brand clicks</th><th class="r">Organic sessions</th><th class="r">Signups</th><th class="r">Registrations</th><th class="r">Signups per 100</th></tr></thead><tbody>${clusters.map(x => `<tr><td><a href="#trends?by=${gran}&m=students&c=${encodeURIComponent(x.id)}"><b>${esc(x.name)}</b></a></td><td class="r">${cc(x.nbC, x.nbP)}</td><td class="r">${cc(x.ses, x.sesP)}</td><td class="r">${cc(x.sign, x.signP)}</td><td class="r">${cc(x.reg, x.regP)}</td><td class="r">${x.ses ? (x.sign / x.ses * 100).toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table></div><p class="hint">Cluster numbers add up landing pages, so Search Console totals here can be a little below the headline (pages beyond the first 25,000 rows and hidden searches are not split by page). Click a cluster for its week by week trend.</p>`;
+    const pcol = { k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a><br><small class="un-n">${esc(r.cluster)}</small>`, csv: r => r.path };
+    const n = (k, l, pk) => ({ k, l, r: 1, f: r => cc(r[k], pk ? r[pk] : 0), csv: r => Math.round(r[k]) });
+    const top = (k, m = 10) => pagesL.filter(r => r[k] > 0).sort((a, b) => b[k] - a[k]).slice(0, m);
+    const minSes = gran === 'month' ? 400 : 100;
+    const fix = pagesL.filter(r => r.ses >= minSes && r.sign + r.reg < Math.max(1, r.ses * .002)).sort((a, b) => b.ses - a.ses).slice(0, 15);
+    const drops = pagesL.filter(r => r.p >= (gran === 'month' ? 100 : 25) && r.dC != null && r.dC <= -20).sort((a, b) => b.lost - a.lost).slice(0, 10);
+    const oppM = new Map(); (R.gaOpp || []).forEach(r => { const id = r['customEvent:opportunity_id']; const o = oppM.get(id) || { id, title: '', c: 0, p: 0 }; if (!o.title || (r.pageTitle || '').length > o.title.length) o.title = String(r.pageTitle || '').replace(/\s*\|\s*Unstop.*$/i, ''); const isPrev = r.range === 'prev' || r.range === 'date_range_1'; if (isPrev) o.p += r.totalUsers; else if (r.range !== 'yoy' && r.range !== 'date_range_2') o.c += r.totalUsers; oppM.set(id, o); });
+    const opps = [...oppM.values()].filter(o => o.c > 0).sort((a, b) => b.c - a.c).slice(0, 10);
+    const sec = (id, t, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(t)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
+    const tsv = () => {
+      const L = [[gran === 'week' ? 'Weekly SEO report' : 'Monthly SEO report'], [], ['Number', curL, prevL, 'Change', ...(hasY ? [yL, 'vs last year'] : []), 'Source', 'Note']];
+      rows.forEach(r => { const d = ch(r.c, r.p, r.kind), dy = ch(r.c, r.y, r.kind); const out = (v, k) => v == null || !isFinite(v) ? '' : k === 'pct' ? v.toFixed(1) + '%' : k === 'pos' || k === 'dec' ? v.toFixed(2) : String(Math.round(v)); const cd = (x, k) => x == null ? '' : k === 'n' ? x.toFixed(1) + '%' : x.toFixed(2); L.push([r.l, out(r.c, r.kind), out(r.p, r.kind), cd(d, r.kind), ...(hasY ? [out(r.y, r.kind), cd(dy, r.kind)] : []), r.src, r.note || '']); });
+      L.push([], ['Cluster', 'Non-brand clicks', 'prev', 'Organic sessions', 'prev', 'Signups', 'prev', 'Registrations', 'prev']); clusters.forEach(x => L.push([x.name, Math.round(x.nbC), Math.round(x.nbP), Math.round(x.ses), Math.round(x.sesP), Math.round(x.sign), Math.round(x.signP), Math.round(x.reg), Math.round(x.regP)]));
+      L.push([], ['Top landing pages by organic signups', 'Signups', 'prev']); top('sign').forEach(r => L.push([r.path, Math.round(r.sign), Math.round(r.signP)]));
+      L.push([], ['Top landing pages by organic registrations', 'Registrations', 'prev']); top('reg').forEach(r => L.push([r.path, Math.round(r.reg), Math.round(r.regP)]));
+      L.push([], ['Falling pages', 'Clicks', 'prev', 'Change']); drops.forEach(r => L.push([r.path, Math.round(r.c), Math.round(r.p), r.dC.toFixed(1) + '%']));
+      L.push([], ['Fix list: traffic but few signups or registrations', 'Organic sessions', 'Signups', 'Registrations']); fix.forEach(r => L.push([r.path, Math.round(r.ses), Math.round(r.sign), Math.round(r.reg)]));
+      L.push([], ['Top opportunities by organic registrations', 'Opportunity ID', 'Registrations', 'prev']); opps.forEach(o => L.push([o.title, o.id, Math.round(o.c), Math.round(o.p)]));
+      return L.map(r => r.join('\t')).join('\n');
+    };
+    const html = intro + tabs +
+      `<p class="un-meta">${esc(curL)} vs ${esc(prevL)}${hasY ? ` and ${esc(yL)}` : ''} · Search Console: Google web search · GA4: Organic Search, website only</p>` +
+      (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console + GA4 for real numbers.</div>' : '') +
+      (st.noGa ? '<div class="note un-warn">GA4 is not connected in this tab, so traffic, signups and registrations are empty. Sign in again with Search Console + GA4.</div>' : '') +
+      (st.errors && st.errors.length ? `<div class="note un-warn">${fmtN(st.errors.length)} request${st.errors.length === 1 ? '' : 's'} failed: ${esc(st.errors[0])}</div>` : '') +
+      `<div class="un-row" style="gap:8px;margin:0 0 10px"><button class="btn-primary sm" type="button" id="un-rp-copy">Copy whole report for Google Sheets</button><span id="un-rp-msg" class="un-n"></span></div>` +
+      sec('un-rp-head', '1. Headline numbers', 'SEO share = organic ÷ all channels on the website. Registrations are people, not form events (the form can fire more than once per registration).', headTbl) +
+      sec('un-rp-cl', '2. Clusters', '', clTbl) +
+      `<div class="grid-2 even">` + sec('un-rp-s', '3a. Top landing pages: organic signups', '', table('t-un-rp-sign', [pcol, n('sign', 'Signups', 'signP'), n('ses', 'Sessions')], top('sign'), { search: false, file: 'seo-report-top-signup-pages', pageSize: 10 })) +
+      sec('un-rp-r', '3b. Top landing pages: organic registrations', '', table('t-un-rp-reg', [pcol, n('reg', 'Registrations', 'regP'), n('ses', 'Sessions')], top('reg'), { search: false, file: 'seo-report-top-registration-pages', pageSize: 10 })) + `</div>` +
+      `<div class="grid-2 even">` + sec('un-rp-d', '3c. Falling pages (clicks down 20%+)', '', table('t-un-rp-drop', [pcol, { k: 'c', l: 'Clicks', r: 1, f: r => `${fmtN(Math.round(r.p))} → ${fmtN(Math.round(r.c))}`, csv: r => Math.round(r.c) }, { k: 'dC', l: 'Change', r: 1, f: r => dchip(r.dC), csv: r => r.dC.toFixed(1) }], drops, { search: false, file: 'seo-report-falling-pages', pageSize: 10 })) +
+      sec('un-rp-f', '3d. Fix list: traffic, but few signups or registrations', `Pages with ${minSes}+ organic sessions and almost no signups or registrations.`, table('t-un-rp-fix', [pcol, n('ses', 'Sessions'), n('sign', 'Signups'), n('reg', 'Registrations')], fix, { search: false, file: 'seo-report-fix-list', pageSize: 10 })) + `</div>` +
+      sec('un-rp-o', '4. Top opportunities by organic registrations', 'People who registered for each opportunity in Google organic visits.', table('t-un-rp-opp', [{ k: 'title', l: 'Opportunity', f: r => `<b>${esc(r.title || 'Opportunity ' + r.id)}</b><br><small class="un-n">ID ${esc(r.id)}</small>`, csv: r => r.title }, { k: 'c', l: 'Registrations', r: 1, f: r => cc(r.c, r.p), csv: r => Math.round(r.c) }, { k: 'p', l: 'Previous', r: 1, f: r => fmtN(Math.round(r.p)), csv: r => Math.round(r.p) }], opps, { search: false, file: 'seo-report-top-opportunities', pageSize: 10 })) +
+      `<p class="hint">More detail: <a href="#trends?by=${gran}">Cluster trends</a> · <a href="#journeys?f=/internship">Journeys</a> · <a href="#b2e">B2E dashboard</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
+    const mount = () => {
+      ['t-un-rp-sign', 't-un-rp-reg', 't-un-rp-drop', 't-un-rp-fix', 't-un-rp-opp'].forEach(id => { if (document.getElementById(id)) drawTable(id); });
+      const cp = document.getElementById('un-rp-copy'); if (cp) cp.addEventListener('click', async () => { const m = document.getElementById('un-rp-msg'); try { await navigator.clipboard.writeText(tsv()); m.textContent = 'Copied. Paste into the sheet with Ctrl/Cmd + V.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } });
+    };
+    return { html, mount };
+  };
+
   // every funnel screen tries the one-sign-in GA4 load after it renders
   ['b2e', 'board', 'trends', 'journeys', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
