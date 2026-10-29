@@ -3039,8 +3039,96 @@
     if (TRP.get(k) === st) rerender();
   }
 
+  // ════════════════════════════ JOURNEYS: WHERE THEY SIGN UP, WHAT THEY APPLY TO ════════════════════════════
+  // For organic visits that started in one folder or on one page (say /internship/…): the page each student
+  // signup happened on, the opportunities they registered / applied for, the pages they went to next and
+  // every event GA4 saw in those visits (so the event names can be checked). GA4 Data API, Organic Search.
+  const JR = new Map();
+  const jrRx = f => { const r = U.typeRegex({ id: 'x', rules: [f] }, null); return r ? r.replace(/^\^https\?:\/\/\[\^\/\]\+/, '^') : null; };
+  async function loadJourney(D, f, key) {
+    const s = settings(D.site), st = { status: 'loading' }; JR.set(key, st); rerender();
+    const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, '');
+    if (!pid || !token()) { st.status = 'error'; st.error = 'Sign in with Search Console + GA4 first (the button at the start).'; rerender(); return; }
+    const ev = s.events || {}, sign = ev.studentSignup || [], apply = ev.opportunityAction || [];
+    const base = [U.GA.organicFilter, { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: jrRx(f) } } }];
+    const and = extra => ({ andGroup: { expressions: base.concat(extra || []) } });
+    const dr = [{ startDate: D.start, endDate: D.end }];
+    try {
+      const [byPage, evAll, lands, next] = await Promise.all([
+        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and([U.GA.inList('eventName', [...new Set(sign.concat(apply))])]), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 20000 }).then(U.gaRows),
+        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 300 }).then(U.gaRows),
+        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'sessions' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 20000 }).then(U.gaRows),
+        runReport(pid, { dateRanges: dr, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'totalUsers' }], dimensionFilter: and(), orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }], limit: 500 }).then(U.gaRows)
+      ]);
+      const landEv = await runReport(pid, { dateRanges: dr, dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and([U.GA.inList('eventName', [...new Set(sign.concat(apply))])]), limit: 20000 }).then(U.gaRows);
+      Object.assign(st, { status: 'done', byPage, evAll, lands, next, landEv, at: Date.now() });
+    } catch (e) { st.status = 'error'; st.error = e.message; }
+    if (JR.get(key) === st) rerender();
+  }
+  function sampleJourney(A, D, f) {
+    const rx = new RegExp(jrRx(f)), pages = (A.P || []).map(r => U.pathOnly(r.p)).filter(p => rx.test(p)).slice(0, 60);
+    let seed = 3; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const opp = (A.P || []).map(r => U.pathOnly(r.p)).filter(p => /^\/(internships|jobs|competitions|hackathons)\//.test(p)).slice(0, 40);
+    const lands = pages.map(p => ({ landingPage: p, sessions: Math.round(50 + R() * 900), totalUsers: 0 }));
+    const byPage = [], landEv = [];
+    pages.slice(0, 25).forEach(p => { byPage.push({ pagePath: p, eventName: 'sign_up', eventCount: Math.round(R() * 30), totalUsers: 0 }); landEv.push({ landingPage: p, eventName: 'sign_up', eventCount: Math.round(R() * 40) }, { landingPage: p, eventName: 'apply', eventCount: Math.round(R() * 25) }); });
+    byPage.push({ pagePath: '/auth/signup', eventName: 'sign_up', eventCount: 420, totalUsers: 0 }, { pagePath: '/upload', eventName: 'sign_up', eventCount: 60, totalUsers: 0 });
+    opp.forEach(p => byPage.push({ pagePath: p, eventName: 'apply', eventCount: Math.round(R() * 60), totalUsers: Math.round(R() * 50) }));
+    const evAll = [['page_view', 9000], ['session_start', 4000], ['scroll', 2600], ['user_engagement', 3000], ['sign_up', 640], ['apply', 520], ['opportunity_click', 900], ['login', 300]].map(([n, c]) => ({ eventName: n, eventCount: c, totalUsers: Math.round(c * .6) }));
+    const next = pages.slice(0, 10).concat(opp.slice(0, 15), ['/auth/signup', '/']).map(p => ({ pagePath: p, screenPageViews: Math.round(30 + R() * 800), totalUsers: 0 }));
+    return { status: 'done', sample: true, byPage, evAll, lands, next, landEv };
+  }
+  V.journeys = (A, D) => {
+    demoFill(D);
+    ['t-un-jr-sign', 't-un-jr-app', 't-un-jr-land', 't-un-jr-next', 't-un-jr-ev'].forEach(k => delete TABLES[k]);
+    const P = fParams(), f = normFolder(P.get('f') || '');
+    const s = settings(D.site), ev = s.events || {}, sign = new Set(ev.studentSignup || []), apply = new Set(ev.opportunityAction || []);
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api';
+    const intro = head('Journeys: where students sign up, what they apply to', 'Organic visits that started in one folder or on one page (for example /internship/…): which page the signup happened on, which opportunities they registered or applied for, where they went next, and every event GA4 recorded in those visits. GA4, Organic Search only, for the dashboard dates.');
+    const picks = ['/internship', '/job', '/internships', '/jobs', '/hackathons', '/competitions', '/blog', '/employers'];
+    const form = `<form class="un-scope" id="un-jr-form"><span class="un-scope-t">Visits that started in</span><label class="field un-grow"><span>Folder or page</span><input type="text" id="un-jr-f" value="${esc(f)}" placeholder="/internship, /job, /blog/some-article…" spellcheck="false"></label><button class="btn-primary sm" type="submit">Show</button><span class="un-n">${picks.map(p => `<a href="#journeys?f=${encodeURIComponent(p)}">${esc(p)}</a>`).join(' · ')}</span></form>`;
+    const fMount = () => { const fm = document.getElementById('un-jr-form'); if (fm) fm.addEventListener('submit', e => { e.preventDefault(); const v = normFolder(document.getElementById('un-jr-f').value); if (v) location.hash = '#journeys?f=' + encodeURIComponent(v); }); };
+    if (!f) return { html: intro + form + '<div class="note">Pick a folder above. A folder covers every page under it; end with * for a prefix.</div>', mount: fMount };
+    const key = [D.site, D.start, D.end, f, JSON.stringify([...sign, '|', ...apply])].join('|');
+    const st = live ? JR.get(key) : sampleJourney(A, D, f);
+    if (live && (!st || st.status === 'loading')) return { html: intro + form + '<p class="progress">Loading journeys from GA4… (5 reports)</p>', mount: () => { fMount(); if (!st) loadJourney(D, f, key); } };
+    if (st.status === 'error') return { html: intro + form + `<div class="note un-warn">${esc(st.error)}</div>`, mount: fMount };
+    const P0 = p => U.pathOnly(p), sum = (L, k) => L.reduce((a, r) => a + (+r[k] || 0), 0);
+    const signRows = st.byPage.filter(r => sign.has(r.eventName)), appRows = st.byPage.filter(r => apply.has(r.eventName));
+    const groupBy = (L, k) => { const m = new Map(); L.forEach(r => { const p = P0(r[k]); const o = m.get(p) || { path: p, n: 0, users: 0, ev: new Set() }; o.n += +r.eventCount || 0; o.users += +r.totalUsers || 0; o.ev.add(r.eventName); m.set(p, o); }); return [...m.values()].map(o => ({ ...o, ev: [...o.ev].join(', ') })).sort((a, b) => b.n - a.n); };
+    const sg = groupBy(signRows, 'pagePath'), ap = groupBy(appRows, 'pagePath');
+    const ses = sum(st.lands, 'sessions'), nSign = sum(signRows, 'eventCount'), nApp = sum(appRows, 'eventCount');
+    const inF = new RegExp(jrRx(f));
+    const kindOf = p => inF.test(p) ? 'Same folder as the landing page' : /^\/(auth|login|signup|register|user)\b|\/upload|social-login|tpc-student/.test(p) ? 'Sign-up / login page' : /^\/(internships|internship|jobs|job|competitions|hackathons|quiz|o|p)\//.test(p) ? 'Another opportunity page' : 'Other page';
+    sg.forEach(r => { r.kind = kindOf(r.path); r.share = nSign ? r.n / nSign * 100 : 0; });
+    ap.forEach(r => { r.kind = inF.test(r.path) ? 'Same folder' : 'Elsewhere'; r.share = nApp ? r.n / nApp * 100 : 0; });
+    const kindTot = k => sg.filter(r => r.kind === k).reduce((a, r) => a + r.n, 0);
+    const le = new Map(); st.landEv.forEach(r => { const p = P0(r.landingPage); const o = le.get(p) || { s: 0, a: 0 }; if (sign.has(r.eventName)) o.s += r.eventCount; if (apply.has(r.eventName)) o.a += r.eventCount; le.set(p, o); });
+    const lands = (() => { const m = new Map(); st.lands.forEach(r => { const p = P0(r.landingPage); const o = m.get(p) || { path: p, sessions: 0 }; o.sessions += r.sessions; m.set(p, o); }); return [...m.values()].map(o => { const x = le.get(o.path) || { s: 0, a: 0 }; return { ...o, signups: x.s, apps: x.a, sRate: o.sessions ? x.s / o.sessions * 100 : null, aRate: o.sessions ? x.a / o.sessions * 100 : null }; }); })();
+    const evRows = st.evAll.map(r => ({ name: r.eventName, n: r.eventCount, users: r.totalUsers, as: sign.has(r.eventName) ? 'Counted as student signup' : apply.has(r.eventName) ? 'Counted as application' : '' }));
+    const missing = [...sign, ...apply].filter(n => !st.evAll.some(r => r.eventName === n));
+    const kp = (l, v, sub) => `<div class="kpi"><span class="kpi-l">${esc(l)}</span><b class="kpi-v">${v}</b>${sub ? `<span class="kpi-d">${sub}</span>` : ''}</div>`;
+    const pageCol = (k, l) => ({ k, l, cls: 'u', f: r => `<a href="${esc(focusHref({ u: r[k] }))}">${esc(r[k])}</a>` });
+    const html = intro + form +
+      (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console + GA4 for real journeys.</div>' : '') +
+      `<p class="un-meta">${esc(fmtD(D.start))} – ${esc(fmtD(D.end))} · organic visits whose first page was in <code>${esc(f)}</code></p>` +
+      `<div class="kpis">${kp('Organic sessions', fmtN(Math.round(ses)), 'that started here')}${kp('Student signups', fmtN(Math.round(nSign)), ses ? (nSign / ses * 100).toFixed(2) + ' per 100 sessions' : '')}${kp('Applications / registrations', fmtN(Math.round(nApp)), ses ? (nApp / ses * 100).toFixed(2) + ' per 100 sessions' : '')}${kp('Opportunities applied to', fmtN(ap.length), 'different pages')}</div>` +
+      (missing.length ? `<div class="note un-warn">GA4 saw none of these event names in these visits: <b>${esc(missing.join(', '))}</b>. Check “Events GA4 recorded” below and correct the names in <a href="#funnelsetup">Funnel setup</a>.</div>` : '') +
+      `<section class="panel"><div class="panel-h"><h2>1. Where the signup happened</h2><p>The page each student signup event fired on, for visits that started in ${esc(f)}. ${nSign ? `${pct1(kindTot('Same folder as the landing page') / nSign * 100)} on a page in the same folder, ${pct1(kindTot('Sign-up / login page') / nSign * 100)} on a sign-up / login page, ${pct1(kindTot('Another opportunity page') / nSign * 100)} on another opportunity page.` : ''}</p></div>` +
+      table('t-un-jr-sign', [pageCol('path', 'Page where they signed up'), { k: 'kind', l: 'Kind' }, { k: 'n', l: 'Signups', r: 1, f: r => fmtN(Math.round(r.n)) }, { k: 'share', l: 'Share', r: 1, f: r => pct1(r.share) }, { k: 'ev', l: 'Event' }], sg, { file: 'unstop-journey-signup-pages', sort: 'n', pageSize: 15, placeholder: 'Filter pages' }) + '</section>' +
+      `<section class="panel"><div class="panel-h"><h2>2. Which opportunities they applied to</h2><p>Registration / application events (${esc([...apply].join(', ') || 'not set')}) by the opportunity page they fired on.</p></div>` +
+      table('t-un-jr-app', [pageCol('path', 'Opportunity page'), { k: 'kind', l: 'Where' }, { k: 'n', l: 'Applications', r: 1, f: r => fmtN(Math.round(r.n)) }, { k: 'users', l: 'Users', r: 1, f: r => fmtN(Math.round(r.users)) }, { k: 'share', l: 'Share', r: 1, f: r => pct1(r.share) }], ap, { file: 'unstop-journey-applications', sort: 'n', pageSize: 15, placeholder: 'Filter opportunities' }) + '</section>' +
+      `<section class="panel"><div class="panel-h"><h2>3. Landing pages in ${esc(f)}</h2><p>Each landing page with the signups and applications that followed in the same visit.</p></div>` +
+      table('t-un-jr-land', [pageCol('path', 'Landing page'), { k: 'sessions', l: 'Organic sessions', r: 1, f: r => fmtN(Math.round(r.sessions)) }, { k: 'signups', l: 'Signups', r: 1, f: r => fmtN(Math.round(r.signups)) }, { k: 'sRate', l: 'Signups per 100', r: 1, f: r => r.sRate == null ? '—' : r.sRate.toFixed(2) }, { k: 'apps', l: 'Applications', r: 1, f: r => fmtN(Math.round(r.apps)) }, { k: 'aRate', l: 'Applications per 100', r: 1, f: r => r.aRate == null ? '—' : r.aRate.toFixed(2) }], lands, { file: 'unstop-journey-landing-pages', sort: 'sessions', pageSize: 15, placeholder: 'Filter pages' }) + '</section>' +
+      `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>4. Pages they viewed in these visits</h2><p>Page views in visits that started in ${esc(f)}, landing pages included.</p></div>` +
+      table('t-un-jr-next', [pageCol('pagePath', 'Page'), { k: 'screenPageViews', l: 'Views', r: 1, f: r => fmtN(Math.round(r.screenPageViews)) }], st.next.map(r => ({ ...r, pagePath: P0(r.pagePath) })), { file: 'unstop-journey-pages-viewed', sort: 'screenPageViews', pageSize: 15, placeholder: 'Filter pages' }) + '</section>' +
+      `<section class="panel"><div class="panel-h"><h2>5. Events GA4 recorded in these visits</h2><p>Use this to check the event names: signups and applications are counted from the names marked here (change them in <a href="#funnelsetup">Funnel setup</a>).</p></div>` +
+      table('t-un-jr-ev', [{ k: 'name', l: 'Event', f: r => `<code>${esc(r.name)}</code>` }, { k: 'n', l: 'Count', r: 1, f: r => fmtN(Math.round(r.n)) }, { k: 'users', l: 'Users', r: 1, f: r => fmtN(Math.round(r.users)) }, { k: 'as', l: 'Counted as' }], evRows, { file: 'unstop-journey-events', sort: 'n', pageSize: 15, placeholder: 'Filter events' }) + '</section></div>';
+    return { html, mount: () => { fMount(); ['t-un-jr-sign', 't-un-jr-app', 't-un-jr-land', 't-un-jr-next', 't-un-jr-ev'].forEach(id => { if (document.getElementById(id)) drawTable(id); }); } };
+  };
+
   // every funnel screen tries the one-sign-in GA4 load after it renders
-  ['b2e', 'board', 'trends', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
+  ['b2e', 'board', 'trends', 'journeys', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
     V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); if (k === 'b2e' || k === 'leads') salesAuto(D); } }; };
   });
