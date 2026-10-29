@@ -607,7 +607,8 @@
     const first = await gaFetch(url, body);
     let rows = first.rows || [];
     const total = +first.rowCount || rows.length, lim = body.limit || 10000;
-    for (let off = lim; off < total && off < lim * 2; off += lim) { const d = await gaFetch(url, { ...body, offset: off }); rows = rows.concat(d.rows || []); }
+    // one page unless a report asks for more (big reports used to fetch two pages and filled the browser's memory)
+    for (let off = lim; off < total && off < lim * (body.pages || 1); off += lim) { const d = await gaFetch(url, { ...body, offset: off }); rows = rows.concat(d.rows || []); }
     return { ...first, rows };
   }
   async function loadGa4(D, o) {

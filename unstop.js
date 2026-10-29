@@ -419,37 +419,37 @@
     const leadEv = [...new Set(['demoRequest', 'contactSubmit', 'employerSignup'].flatMap(k => (o.events && o.events[k]) || []))].slice(0, 60);
     const blogRx = '/(blog|blog-series|category|bites|resources|prep-zone)(/|$)';
     const R = {
-      landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 },
+      landing: { dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'screenPageViews', 'userEngagementDuration', 'keyEvents'].map(name => ({ name })), dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 50000 },
       device: { dateRanges: both, dimensions: [{ name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }, { name: 'engagedSessions' }], dimensionFilter: org, limit: 50 },
       country: { dateRanges: both, dimensions: [{ name: 'country' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 300 },
       region: { dateRanges: both, dimensions: [{ name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), limit: 120 },
       // page type × device and page type × state, so device and geography are never only sitewide
-      landingDevice: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 250000 },
-      landingRegion: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 250000 },
+      landingDevice: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'deviceCategory' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 60000 },
+      landingRegion: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 60000 },
       daily: { dateRanges: both, dimensions: [{ name: 'date' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 1000 },
-      events: { dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 250000 },
+      events: { dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 60000 },
       eventsYoy: { dateRanges: [yoy], dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, limit: 2000 },
       returning: { dateRanges: both, dimensions: [{ name: 'newVsReturning' }], metrics: [{ name: 'activeUsers' }, { name: 'sessions' }], dimensionFilter: org, limit: 10 },
       pricing: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'sessions' }, { name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: GA.and(org, GA.regex('pagePath', pricing)), limit: 200 },
       channels: { dateRanges: [cur], dimensions: [{ name: 'sessionDefaultChannelGroup' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })), limit: 50 },
       channelEvents: { dateRanges: [cur], dimensions: [{ name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], limit: 5000 },
       // engagement: page views and scroll events by page, users per event, totals, blog → product page views
-      pageViews: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: org, limit: 100000 },
-      scrollPages: { dateRanges: [cur], dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', scrollEv)), limit: 100000 },
-      scrollDepth: { optional: true, dateRanges: [cur], dimensions: [{ name: 'pagePath' }, { name: 'customEvent:percent_scrolled' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', scrollEv)), limit: 100000 },
+      pageViews: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: org, limit: 40000 },
+      scrollPages: { dateRanges: [cur], dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', scrollEv)), limit: 30000 },
+      scrollDepth: { optional: true, dateRanges: [cur], dimensions: [{ name: 'pagePath' }, { name: 'customEvent:percent_scrolled' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', scrollEv)), limit: 30000 },
       eventUsers: { dateRanges: both, dimensions: [{ name: 'eventName' }], metrics: [{ name: 'totalUsers' }, { name: 'eventCount' }], dimensionFilter: org, limit: 2000 },
       totals: { dateRanges: both, metrics: ['totalUsers', 'activeUsers', 'sessions', 'engagedSessions', 'screenPageViews'].map(name => ({ name })), dimensionFilter: org, limit: 10 },
-      blogNext: { dateRanges: both, dimensions: [{ name: 'pagePath' }, { name: 'pageReferrer' }], metrics: [{ name: 'screenPageViews' }], dimensionFilter: GA.and(org, GA.regex('pageReferrer', blogRx)), limit: 100000 },
+      blogNext: { dateRanges: both, dimensions: [{ name: 'pagePath' }, { name: 'pageReferrer' }], metrics: [{ name: 'screenPageViews' }], dimensionFilter: GA.and(org, GA.regex('pageReferrer', blogRx)), limit: 20000 },
       cohorts: cohortReq(o.end, 0), cohortsYoy: cohortReq(o.end, 1),
       // assisted conversions: employer conversions by the channel that first brought the user and the channel of the converting session
       assisted: { dateRanges: both, dimensions: [{ name: 'firstUserDefaultChannelGroup' }, { name: 'sessionDefaultChannelGroup' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.inList('eventName', leadEv.length ? leadEv : ['generate_lead']), limit: 10000 },
       ai: { dateRanges: both, dimensions: [{ name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'engagedSessions', 'keyEvents', 'newUsers'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), limit: 10000 },
       // opportunity registrations: only events that carry an opportunity_id (form_submit_success also fires on other forms)
-      oppEvents: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: GA.and(org, GA.and(GA.inList('eventName', ((o.events && o.events.opportunityAction) || ['form_submit_success']).slice(0, 60)), { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } })), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 100000 },
+      oppEvents: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: GA.and(org, GA.and(GA.inList('eventName', ((o.events && o.events.opportunityAction) || ['form_submit_success']).slice(0, 60)), { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } })), orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 30000 },
       // organic sessions by search engine and landing page: Google only, to compare with Search Console clicks
-      orgSource: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'sessionSource' }], metrics: [{ name: 'sessions' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 },
+      orgSource: { optional: true, dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'sessionSource' }], metrics: [{ name: 'sessions' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 30000 },
       // AI assistant referrals month by month (16 months to the end date), by assistant and landing page
-      aiMonthly: { optional: true, dateRanges: [{ startDate: monthsBack(o.end, 15), endDate: o.end }], dimensions: [{ name: 'yearMonth' }, { name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 100000 }
+      aiMonthly: { optional: true, dateRanges: [{ startDate: monthsBack(o.end, 15), endDate: o.end }], dimensions: [{ name: 'yearMonth' }, { name: 'sessionSource' }, { name: 'landingPage' }], metrics: ['sessions', 'newUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })), dimensionFilter: GA.regex('sessionSource', aiRx), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 30000 }
     };
     return R;
   }
@@ -527,8 +527,14 @@
   function monthsBack(d, n) { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(1); x.setUTCMonth(x.getUTCMonth() - n); return x.toISOString().slice(0, 10); }
   function shiftYear(d) { const x = new Date(d + 'T00:00:00Z'); x.setUTCFullYear(x.getUTCFullYear() - 1); return x.toISOString().slice(0, 10); }
   // Turn a runReport response into plain objects: { dims..., metrics..., range: 'cur'|'yoy' }.
+  // parsed once per report: screens call this on every render, and the big reports have tens of thousands of rows
+  const GA_ROWS = new WeakMap();
   function gaRows(res) {
     if (!res || !res.rows) return [];
+    if (GA_ROWS.has(res)) return GA_ROWS.get(res);
+    const out = gaRowsRaw(res); GA_ROWS.set(res, out); return out;
+  }
+  function gaRowsRaw(res) {
     const dh = (res.dimensionHeaders || []).map(h => h.name), mh = (res.metricHeaders || []).map(h => h.name);
     return res.rows.map(r => {
       const o = {};
@@ -546,7 +552,11 @@
     const R = {}; Object.keys(raw || {}).forEach(k => { R[k] = gaRows(raw[k]); });
     const L = R.landing || [], cur = L.filter(r => r.range === 'cur'), yoy = L.filter(r => r.range === 'yoy');
     const tot = rows => ({ sessions: sum(rows, 'sessions'), newUsers: sum(rows, 'newUsers'), engaged: sum(rows, 'engagedSessions'), views: sum(rows, 'screenPageViews'), dur: sum(rows, 'userEngagementDuration'), keyEvents: sum(rows, 'keyEvents') });
-    const T = tot(cur), TY = yoy.length ? tot(yoy) : null;
+    let T = tot(cur), TY = yoy.length ? tot(yoy) : null;
+    // the landing report keeps the top pages only, so site totals come from the totals report
+    const TT = (R.totals || []).reduce((m, r) => { m[r.range] = r; return m; }, {});
+    if (TT.cur) T = { ...T, sessions: TT.cur.sessions, engaged: TT.cur.engagedSessions, views: TT.cur.screenPageViews };
+    if (TT.yoy && TY) TY.sessions = TT.yoy.sessions;
     const is = {}; Object.keys(ev || {}).forEach(k => { is[k] = inSet(ev[k]); });
     // events by landing page
     const E = R.events || [];
