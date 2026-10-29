@@ -33,12 +33,15 @@ window.CW_CONFIG = {
     salesSheet: '1OGpQV0MR0y5MV1Ronb59VBrIW1hhhn6rPlHMxYg6Yho',
     // GA4 event names. After connecting GA4 the app lists every event seen in organic sessions so these can be corrected.
     events: {
-      studentSignup: ['sign_up', 'signup_complete', 'signup_email_verified'],
+      // GTM-NNBT7L: signup_email_verified fires after the OTP on /auth/signup (tag 319, trigger 320)
+      studentSignup: ['signup_email_verified', 'sign_up', 'signup_complete'],
       employerSignup: ['employer_sign_up', 'recruiter_signup'],
       demoRequest: ['book_demo', 'demo_request', 'generate_lead'],
       // not GA4's automatic form_submit: it fires on every form (search, login, registration)
       contactSubmit: ['contact_form_submit', 'contact_submit'],
-      opportunityAction: ['register', 'apply', 'opportunity_register', 'apply_now'],
+      // GTM-NNBT7L: opportunity registration form (/{type}/{id}/register) fires form_submit_success with
+      // form_name = opportunity_registration, opportunity_id and opportunity_type
+      opportunityAction: ['form_submit_success'],
       productClick: ['select_content', 'opportunity_click', 'cta_click'],
       oppClick: ['opportunity_click', 'view_opportunity', 'select_item', 'opportunity_view'],
       scroll: ['scroll']
