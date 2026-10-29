@@ -34,7 +34,8 @@ window.CW_CONFIG = {
     // GA4 event names. After connecting GA4 the app lists every event seen in organic sessions so these can be corrected.
     events: {
       // GTM-NNBT7L: signup_email_verified fires after the OTP on /auth/signup (tag 319, trigger 320)
-      studentSignup: ['signup_email_verified', 'sign_up', 'signup_complete'],
+      // only this one: sign_up also fires on logins and inflates signups several times over
+      studentSignup: ['signup_email_verified'],
       employerSignup: ['employer_sign_up', 'recruiter_signup'],
       demoRequest: ['book_demo', 'demo_request', 'generate_lead'],
       // not GA4's automatic form_submit: it fires on every form (search, login, registration)
