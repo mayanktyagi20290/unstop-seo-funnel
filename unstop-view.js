@@ -3244,7 +3244,7 @@
     const rO = ['cur', 'prev', 'yoy'].map(r => byR('gaRegOrg', 'totalUsers', r)), rA = ['cur', 'prev', 'yoy'].map(r => byR('gaRegAll', 'totalUsers', r));
     const ses = ['cur', 'prev', 'yoy'].map(r => byR('gaSesTot', 'sessions', r));
     add('Organic student signups', sO[0], sO[1], hasY ? sO[2] : null, 'n', 'GA4', 'signup_email_verified in Google organic visits');
-    add('Organic opportunity registrations (people)', rO[0], rO[1], hasY ? rO[2] : null, 'n', 'GA4', 'people with form_submit_success that carries an opportunity_id');
+    add('Organic opportunity registrations (students)', rO[0], rO[1], hasY ? rO[2] : null, 'n', 'GA4', 'students with form_submit_success that carries an opportunity_id');
     add('Signups per 100 organic sessions', ratio(sO[0], ses[0]), ratio(sO[1], ses[1]), hasY ? ratio(sO[2], ses[2]) : null, 'dec', 'GA4');
     add('Registrations per 100 organic sessions', ratio(rO[0], ses[0]), ratio(rO[1], ses[1]), hasY ? ratio(rO[2], ses[2]) : null, 'dec', 'GA4');
     add('SEO share of all website signups', ratio(sO[0], sA[0]), ratio(sO[1], sA[1]), hasY ? ratio(sO[2], sA[2]) : null, 'pct', 'GA4', 'organic ÷ all channels (website only, app not included)');
@@ -3293,7 +3293,7 @@
       (st.noGa ? '<div class="note un-warn">GA4 is not connected in this tab, so traffic, signups and registrations are empty. Sign in again with Search Console + GA4.</div>' : '') +
       (st.errors && st.errors.length ? `<div class="note un-warn">${fmtN(st.errors.length)} request${st.errors.length === 1 ? '' : 's'} failed: ${esc(st.errors[0])}</div>` : '') +
       `<div class="un-row" style="gap:8px;margin:0 0 10px"><button class="btn-primary sm" type="button" id="un-rp-copy">Copy whole report for Google Sheets</button><span id="un-rp-msg" class="un-n"></span></div>` +
-      sec('un-rp-head', '1. Headline numbers', 'SEO share = organic ÷ all channels on the website. Registrations are people, not form events (the form can fire more than once per registration).', headTbl) +
+      sec('un-rp-head', '1. Headline numbers', 'SEO share = organic ÷ all channels on the website. Registrations are students, not form events (the form can fire more than once per registration).', headTbl) +
       sec('un-rp-cl', '2. Clusters', '', clTbl) +
       `<div class="grid-2 even">` + sec('un-rp-s', '3a. Top landing pages: organic signups', '', table('t-un-rp-sign', [pcol, n('sign', 'Signups', 'signP'), n('ses', 'Sessions')], top('sign'), { search: false, file: 'seo-report-top-signup-pages', pageSize: 10 })) +
       sec('un-rp-r', '3b. Top landing pages: organic registrations', '', table('t-un-rp-reg', [pcol, n('reg', 'Registrations', 'regP'), n('ses', 'Sessions')], top('reg'), { search: false, file: 'seo-report-top-registration-pages', pageSize: 10 })) + `</div>` +
