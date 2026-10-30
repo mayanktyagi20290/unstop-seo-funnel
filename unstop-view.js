@@ -3326,7 +3326,7 @@
     if (qRows && qRows.length) {
       const qWhy = r => { const ic = pctCh(r.im, r.imP); if (r.pos != null && r.posP != null && Math.abs(r.pos - r.posP) >= 0.5 && Math.sign(r.posP - r.pos) === Math.sign(r.d)) return `position ${r.posP.toFixed(1)} → ${r.pos.toFixed(1)}`; if (ic != null && Math.abs(ic) >= 15 && Math.sign(ic) === Math.sign(r.d)) return `impressions ${dchipTxt(ic)}, search demand`; return r.im && r.imP ? `CTR ${(r.p / r.imP * 100).toFixed(1)}% → ${(r.c / r.im * 100).toFixed(1)}%` : ''; };
       mvBlock('Searches (Google clicks)', qRows.filter(r => r.brand === 'Non-brand').map(r => ({ name: '“' + r.q + '”', d: r.d, why: qWhy(r) })), 'clicks');
-      const bq = qRows.filter(r => r.brand === 'Branded').reduce((a, r) => a + r.d, 0); if (Math.abs(bq) >= 5) W.push({ h: 'Branded searches', items: [`Searches with “unstop” in them ${sgn(bq)} clicks: this follows brand demand (marketing, campus drives, news), not SEO work.`] });
+      const bq = qRows.filter(r => r.brand === 'Branded').reduce((a, r) => a + r.d, 0); if (Math.abs(bq) >= 5) W.push({ h: 'Branded searches', items: [`Searches with “unstop” in them ${sgn(bq)} clicks. These track brand demand; the non-brand searches above show the SEO-driven movement.`] });
     }
     const pend = [(!ps || ps.status === 'loading') && 'landing pages', (!qs || qs.status === 'loading') && 'searches', (!os || os.status === 'loading') && 'opportunities'].filter(Boolean);
     const whyHtml = `<section class="panel un-why" id="un-cl-why"><div class="panel-h"><h2>Why it moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Every change split into what caused it: Google traffic (impressions, ranking, click-through), how many visitors converted, and which opportunities, pages and searches gained or lost.${pend.length ? ` Still loading: ${pend.join(', ')}.` : ''}</p></div><div class="panel-b"><div class="un-why-g">${W.map(w => `<div class="un-why-c"><h3>${esc(w.h)}</h3>${w.main ? `<p class="un-why-main">Main reason: <b>${esc(w.main)}</b></p>` : ''}<ul>${w.items.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('') || '<p class="un-n">No change big enough to explain.</p>'}</div></div></section>`;
@@ -3354,41 +3354,6 @@
   // ════════════════════════════ REVIEW QUESTIONS: EACH ONE OPENS THE SECTION WITH THE ANSWER ════════════════════════════
   // Management questions answerable from GA4 + Search Console, grouped along the chain. Each link opens the
   // screen and scrolls to the section (&at=<element id>); "Answered" ticks are kept in this browser only.
-  const REVIEW_Q = [
-    ['First review: the three questions', [
-      ['Which pages drove the most signups last month — not the most traffic?', 'Section 3a lists landing pages by organic signups; compare with their sessions.', [['Top signup pages (month)', '#report?by=month&at=un-rp-s']]],
-      ['What share of organic signups comes from non-branded queries?', 'Headline numbers: “Non-brand share of organic signups (estimate)”. It is an estimate: GA4 does not see the search, so each page’s signups are split by its non-brand share of Google clicks.', [['Non-brand share (month)', '#report?by=month&at=un-rp-head'], ['Branded vs non-branded clusters', '#urlclusters']]],
-      ['How much pipeline can we trace to organic?', 'Not answerable from GA4 + Search Console: it needs GA4, the product database and the CRM joined on one ID. Show organic demo and contact leads in the meantime.', [['Organic demo + contact leads', '#b2e']], 'gap']
-    ]],
-    ['Business result', [
-      ['How many student signups and opportunity registrations did organic bring, against the period before?', 'Headline numbers, rows “Organic student signups” and “Organic opportunity registrations (students)”.', [['Weekly', '#report?by=week&at=un-rp-head'], ['Monthly', '#report?by=month&at=un-rp-head']]],
-      ['What share of all website signups and registrations is SEO, and is it rising?', 'Rows “SEO share of all website signups / registrations”.', [['Monthly report', '#report?by=month&at=un-rp-head']]],
-      ['Which opportunities got the most registrations from organic, and which fell?', 'Section 4 of the report; per cluster in the cluster deep dive.', [['Top opportunities', '#report?by=month&at=un-rp-o'], ['Hackathons', '#clusters?by=month&c=hackathons&at=un-cl-opp'], ['Competitions', '#clusters?by=month&c=competitions&at=un-cl-opp'], ['Jobs', '#clusters?by=month&c=jobs&at=un-cl-opp']]],
-      ['How many demo requests and contact forms came from employer pages?', 'B2E dashboard: organic demo and contact leads by page.', [['B2E dashboard', '#b2e']]]
-    ]],
-    ['By page type and cluster', [
-      ['Which page types and clusters bring the registrations and signups, and which are rising or falling?', 'Cards and table, sorted by registrations, high to low.', [['Week on week', '#clusters?by=week&at=un-cl-all'], ['Month on month', '#clusters?by=month&at=un-cl-all']]],
-      ['Why did registrations go up or down — Google traffic or conversion, and which opportunities, pages and searches?', '“Why registrations went down/up”: clusters that pulled the total down or pushed it up, each with its reason.', [['Week on week', '#clusters?by=week&at=un-cl-why'], ['Month on month', '#clusters?by=month&at=un-cl-why']]],
-      ['Which pages get traffic but almost no signups or registrations?', 'Fix list (3d): pages with steady organic traffic and almost no conversions.', [['Fix list', '#report?by=month&at=un-rp-f']]],
-      ['How are the programmatic pages (/internship/, /job/) doing?', 'Registrations, signups and traffic per week, with the reasons.', [['/internship/ pages', '#clusters?by=week&c=proginternship'], ['/job/ pages', '#clusters?by=week&c=progjob']]],
-      ['Students landing on /internship/: where do they sign up and what do they register for?', 'Journeys: signup pages and opportunities for visits that started in the folder.', [['Journeys from /internship', '#journeys?f=/internship'], ['From /job', '#journeys?f=/job']]]
-    ]],
-    ['Real SEO growth: branded vs non-branded', [
-      ['How many non-branded clicks and impressions do we get, and how does that trend differ from branded?', 'Non-brand rows of the report; branded and non-branded side by side per cluster.', [['Report', '#report?by=month&at=un-rp-head'], ['Branded vs non-branded', '#urlclusters']]],
-      ['How much did non-branded clicks grow against the same period last year?', 'The report shows a “vs last year” column when 13 months of Search Console history are loaded.', [['Monthly report', '#report?by=month&at=un-rp-head']]],
-      ['Which searches moved up or down, and why — ranking, demand or click-through?', 'Cluster deep dive: “Searches that moved” and the Searches card in “Why it moved”.', [['Hackathons', '#clusters?by=month&c=hackathons&at=un-cl-q'], ['Competitions', '#clusters?by=month&c=competitions&at=un-cl-q'], ['Internship pages', '#clusters?by=month&c=proginternship&at=un-cl-q'], ['Jobs', '#clusters?by=month&c=jobs&at=un-cl-q']]],
-      ['How many keywords sit in the top 3, top 10 and 11–20, and which 11–20 ones are quick wins?', 'Rank buckets by page type, and the Almost page one list.', [['Visibility by page type', '#visibility'], ['Almost page one', '#quickwins']]],
-      ['Which pages lost the most Google clicks, and why?', 'Falling pages (3c) and Losing ground with the likely cause.', [['Falling pages', '#report?by=month&at=un-rp-d'], ['Losing ground', '#decay']]]
-    ]],
-    ['Engagement', [
-      ['How engaged are organic visitors (engaged sessions, pages per session) by page type?', 'GA4 organic and Engagement screens.', [['GA4 organic', '#ga4'], ['Engagement', '#engagement']]],
-      ['Per 100 organic sessions, how many signups and registrations — and which cluster is weakest?', 'Column “Regs per 100 sessions” in the clusters table.', [['Clusters table', '#clusters?by=month&at=un-cl-all']]]
-    ]],
-    ['AI search', [
-      ['How much traffic do ChatGPT, Perplexity and Gemini send us?', 'GA4: sessions referred by AI assistants, against last year.', [['GA4 organic', '#ga4'], ['AI scorecard', '#scorecards?w=ai']]],
-      ['On which searches are Google AI Overviews cutting our click-through?', 'Estimated from CTR against position; it is an inference, not a Google figure.', [['AI search visibility', '#ai']]]
-    ]]
-  ];
   // the six questions a boss asks in every review, each answered in three lines from the cluster data,
   // then a button to the screen that shows the full picture
   V.questions = (A, D) => {
@@ -3409,7 +3374,7 @@
       const C = list.map(x => { const r = { id: x.id, name: x.name }; [['reg', 'regs'], ['stu', 'students'], ['ses', 'sessions'], ['nb', 'nbClicks'], ['c', 'clicks'], ['im', 'impr']].forEach(([k, m]) => { r[k] = v(x.id, m, cur); r[k + 'P'] = v(x.id, m, prv); }); r.d = r.reg - r.regP; r.rate = r.ses ? r.reg / r.ses * 100 : null; return r; }).filter(r => r.ses + r.c > 0);
       const T = k => C.reduce((a, r) => a + r[k], 0);
       const stu = T('stu'), stuP = T('stuP'), reg = T('reg'), regP = T('regP'), ses = T('ses'), sesP = T('sesP');
-      const trend3 = m => { const xs = [li - 2, li - 1, li].map(j => all(m, pers[j])); return xs[2] >= xs[1] && xs[1] >= xs[0] ? 'rising for 3 ' + per + 's' : xs[2] <= xs[1] && xs[1] <= xs[0] ? 'falling for 3 ' + per + 's' : 'up and down over 3 ' + per + 's'; };
+      const trend3 = m => [li - 2, li - 1, li].map(j => `${esc(pers[j].label)} ${n0(all(m, pers[j]))}`).join(' → ');
       // brand: clicks split, and signups split by each cluster's non-brand share of its clicks (estimate)
       const nb = T('nb'), cl = T('c'), nbP = T('nbP'), clP = T('cP');
       const nbStu = C.reduce((a, r) => a + (r.c ? r.stu * Math.min(1, r.nb / r.c) : 0), 0), nbStuP = C.reduce((a, r) => a + (r.cP ? r.stuP * Math.min(1, r.nbP / r.cP) : 0), 0);
@@ -3420,9 +3385,9 @@
       let why = [];
       if (worst) {
         const f = funnelSplit(worst.reg, worst.regP, worst.ses, worst.sesP, 'Registrations'), c = clickSplit(worst.c, worst.cP, worst.im, worst.imP);
-        why.push(`${b(nm(worst))} fell most: registrations ${b(n0(worst.regP) + ' → ' + n0(worst.reg))} (${chg(pctCh(worst.reg, worst.regP))}).`);
-        why.push(f ? `Main reason: ${b(esc(f.lead))}${f.main === 'traffic' && c ? ` — ${esc(c.lead)}` : ''}. Sessions ${chg(pctCh(worst.ses, worst.sesP))}, registrations per 100 sessions ${worst.sesP ? (worst.regP / worst.sesP * 100).toFixed(1) : '—'} → ${worst.rate == null ? '—' : worst.rate.toFixed(1)}.` : 'Too small to split into a reason.');
-        if (dn[1]) why.push(`Also down: ${dn.slice(1).map(r => `${nm(r)} ${n0(r.d)}`).join(', ')}. Open the cluster for the opportunities, pages and searches behind it.`);
+        why.push(`Biggest change: ${b(nm(worst))}, registrations ${b(n0(worst.regP) + ' → ' + n0(worst.reg))} (${chg(pctCh(worst.reg, worst.regP))}).`);
+        why.push(f ? `Driver: ${b(esc(f.main === 'traffic' && c ? c.lead : f.lead))}. Sessions ${chg(pctCh(worst.ses, worst.sesP))}; registrations per 100 sessions ${worst.sesP ? (worst.regP / worst.sesP * 100).toFixed(1) : '—'} → ${worst.rate == null ? '—' : worst.rate.toFixed(1)}.` : 'The change is small; no single driver stands out.');
+        why.push(up.length ? `Gains in the same period: ${up.map(r => `${nm(r)} +${n0(r.d)}`).join(', ')}. The cluster page shows the opportunities, pages and searches behind each change.` : 'The cluster page shows the opportunities, pages and searches behind the change.');
       }
       const avg = ses ? reg / ses * 100 : 0;
       const weak = C.filter(r => r.ses >= Math.max(200, ses * .01) && r.rate != null).sort((a, b) => a.rate - b.rate).slice(0, 3);
@@ -3432,37 +3397,35 @@
       ans = [
         [`${b(n0(stu))} student signups and ${b(n0(reg))} opportunity registrations from SEO in ${esc(curL)}.`,
          `Against ${esc(prvL)}: signups ${chg(pctCh(stu, stuP))} (${n0(stuP)}), registrations ${chg(pctCh(reg, regP))} (${n0(regP)}); organic sessions ${chg(pctCh(ses, sesP))}.`,
-         `Registrations are ${trend3('regs')}; ${ses ? (reg / ses * 100).toFixed(1) : '—'} registrations per 100 organic sessions.`],
+         `Registrations, last 3 ${per}s: ${trend3('regs')}. ${ses ? (reg / ses * 100).toFixed(1) : '—'} registrations per 100 organic sessions.`],
         [`About ${b(sh.toFixed(0) + '%')} of organic signups come from non-brand searches (estimate; ${esc(prvL)}: ${shP.toFixed(0)}%).`,
          `Non-brand clicks ${b(n0(nb))} ${chg(pctCh(nb, nbP))}; branded clicks ${n0(cl - nb)} ${chg(pctCh(cl - nb, clP - nbP))}.`,
-         Math.abs(nb - nbP) >= Math.abs((cl - nb) - (clP - nbP)) ? 'Non-brand moved more than branded: the change is mostly SEO, not brand demand.' : 'Branded moved more than non-brand: most of the change follows brand demand (marketing, campus drives), not SEO.'],
+         `Non-brand searches are ${b((cl ? nb / cl * 100 : 0).toFixed(0) + '%')} of all Google clicks to the site (${esc(prvL)}: ${(clP ? nbP / clP * 100 : 0).toFixed(0)}%): the people who found Unstop without searching for the name.`],
         [`Earning most: ${top.map(r => `${nm(r)} ${b(n0(r.reg))}`).join(', ')} registrations.`,
-         up.length ? `Rising most: ${up.map(r => `${nm(r)} +${n0(r.d)}`).join(', ')}.` : 'No cluster rose.',
-         dn.length ? `Falling most: ${dn.map(r => `${nm(r)} ${n0(r.d)}`).join(', ')}.` : 'No cluster fell.'],
-        why.length ? why : ['No cluster lost registrations against the period before.'],
-        weak.length ? [`Lowest registrations per 100 sessions: ${weak.map(r => `${nm(r)} ${b(r.rate.toFixed(1))}`).join(', ')} (site average ${avg.toFixed(1)}).`,
-          `They had ${b(n0(weak.reduce((a, r) => a + r.ses, 0)))} organic sessions; at the average rate they would bring about ${b(n0(lost))} more registrations a ${per}.`,
-          'The fix list names the pages with steady traffic and almost no signups or registrations.'] : ['Not enough traffic to compare clusters.'],
-        prog.some(Boolean) ? prog.filter(Boolean).map(r => `${b(nm(r))}: ${b(n0(r.reg))} registrations ${chg(pctCh(r.reg, r.regP))}, ${n0(r.stu)} signups, ${n0(r.ses)} sessions; ${r.rate == null ? '—' : r.rate.toFixed(1)} per 100 sessions vs ${avg.toFixed(1)} site average; ${fmtN(pagesIn(r.id))} pages got Google clicks.`).concat([prog.filter(Boolean).map(r => `${r.name.replace(/^Programmatic › /, '')}: ${r.rate != null && r.rate >= avg ? 'converts at or above average, worth scaling once new pages get indexed' : 'converts below average, fix the existing pages before building more'}`).join('; ') + '.']) : ['No programmatic clusters in the data.']
+         up.length ? `Growing most: ${up.map(r => `${nm(r)} +${n0(r.d)}`).join(', ')}.` : 'Registrations held steady across clusters.',
+         dn.length ? `Lower than ${esc(prvL)}: ${dn.map(r => `${nm(r)} ${n0(r.d)}`).join(', ')}.` : `No cluster is below ${esc(prvL)}.`],
+        why.length ? why : [`Every cluster is at or above ${esc(prvL)}.`],
+        weak.length ? [`Biggest room to grow: ${weak.map(r => `${nm(r)} ${b(r.rate.toFixed(1))}`).join(', ')} registrations per 100 sessions (site average ${avg.toFixed(1)}).`,
+          `They already get ${b(n0(weak.reduce((a, r) => a + r.ses, 0)))} organic sessions: bringing them to the average adds about ${b(n0(lost))} registrations a ${per} with no new traffic.`,
+          'The page list names the exact pages to improve first.'] : ['Not enough traffic to compare clusters.'],
+        prog.some(Boolean) ? prog.filter(Boolean).map(r => `${b(nm(r))}: ${b(n0(r.reg))} registrations ${chg(pctCh(r.reg, r.regP))}, ${n0(r.stu)} signups, ${n0(r.ses)} sessions; ${r.rate == null ? '—' : r.rate.toFixed(1)} per 100 sessions vs ${avg.toFixed(1)} site average; ${fmtN(pagesIn(r.id))} pages got Google clicks.`).concat([prog.filter(Boolean).map(r => `${r.name.replace(/^Programmatic › /, '')}: ${r.rate != null && r.rate >= avg ? 'converts above the site average, ready to scale with more pages' : 'a conversion upgrade on the existing pages lifts registrations quickest'}`).join('; ') + '.']) : ['No programmatic clusters in the data.']
       ];
     }
     const Q = [
       ['How many students did SEO bring, and how many registered for an opportunity?', [['Headline numbers', `#report?by=${gran}&at=un-rp-head`]]],
       ['How much of that is real SEO and how much is brand?', [['Non-brand rows', `#report?by=${gran}&at=un-rp-head`], ['Branded vs non-branded', '#urlclusters']]],
-      ['Which clusters are earning, and which are falling?', [['Clusters, sorted by registrations', `#clusters?by=${gran}&at=un-cl-all`]]],
-      ['What fell, and why?', [['Why it went down', `#clusters?by=${gran}&at=un-cl-why`], ['Falling pages', `#report?by=${gran}&at=un-rp-d`]]],
-      ['Which pages get visitors who do not register?', [['Fix list', `#report?by=${gran}&at=un-rp-f`]]],
-      ['How are the programmatic pages doing — build more or stop?', [['/internship/ pages', `#clusters?by=${gran}&c=proginternship&at=un-cl-pg`], ['/job/ pages', `#clusters?by=${gran}&c=progjob&at=un-cl-pg`]]]
+      ['Which clusters bring the most registrations, and which are growing?', [['Clusters, sorted by registrations', `#clusters?by=${gran}&at=un-cl-all`]]],
+      ['What changed, and why?', [['What drove the change', `#clusters?by=${gran}&at=un-cl-why`], ['Page-level changes', `#report?by=${gran}&at=un-rp-d`]]],
+      ['Where can registrations grow from the traffic we already have?', [['Pages to improve', `#report?by=${gran}&at=un-rp-f`]]],
+      ['How are the programmatic pages doing?', [['/internship/ pages', `#clusters?by=${gran}&c=proginternship&at=un-cl-pg`], ['/job/ pages', `#clusters?by=${gran}&c=progjob&at=un-cl-pg`]]]
     ];
     const waiting = live && !ready ? `<p class="progress">${st ? `Loading cluster data… ${st.done || 0} of ${st.total || '?'} requests` : 'Starting…'} (about a minute).</p>` : '';
     const items = Q.map(([q, links], i) => { const id = 'b' + (i + 1); return `<li><label class="un-q-done"><input type="checkbox" data-q="${id}" ${done[id] ? 'checked' : ''}> Answered</label><b>${esc(q)}</b>${ans ? `<ul class="un-q-a">${ans[i].map(t => `<li>${t}</li>`).join('')}</ul>` : waiting}<div class="un-q-go">${links.map(([l, h]) => `<a class="btn-quiet sm" href="${esc(h)}">${esc(l)} →</a>`).join('')}</div></li>`; }).join('');
     const tabs = `<div class="un-tabs" style="margin:4px 0 12px">${[['month', 'Month on month'], ['week', 'Week on week']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="#questions?by=${v}">${l}</a>`).join('')}</div>`;
-    let n = 0;
-    const more = `<details class="panel un-q-more"><summary class="panel-h"><h2>More detailed questions (${REVIEW_Q.reduce((a, g) => a + g[1].length, 0)})</h2><p>Open when a number needs digging into.</p></summary><div class="panel-b">${REVIEW_Q.map(([g, qs]) => `<h3 class="un-sub">${esc(g)}</h3><ol class="un-q" start="${n + 1}">${qs.map(([q, hint, links, gap]) => { n++; const id = 'q' + n; return `<li class="${gap ? 'gap' : ''}"><label class="un-q-done"><input type="checkbox" data-q="${id}" ${done[id] ? 'checked' : ''}> Answered</label><b>${esc(q)}</b><p class="un-n">${esc(hint)}</p><div class="un-q-go">${links.map(([l, h]) => `<a class="btn-quiet sm" href="${esc(h)}">${esc(l)} →</a>`).join('')}${gap ? '<span class="un-st none">Needs CRM data</span>' : ''}</div></li>`; }).join('')}</ol>`).join('')}</div></details>`;
     const html = head('Review questions', 'The six questions for every review, each answered in three lines from Search Console and GA4, with a button to the screen that shows the full picture.') + tabs +
       (st && st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
-      (ready ? `<p class="un-meta">Last full ${per}: <b>${esc(curL)}</b> vs <b>${esc(prvL)}</b>. Signup and registration splits by brand are estimates; pipeline and revenue need the CRM.</p>` : '') +
-      `<section class="panel"><div class="panel-b"><ol class="un-q">${items}</ol></div></section>` + more;
+      (ready ? `<p class="un-meta">Last full ${per}: <b>${esc(curL)}</b> vs <b>${esc(prvL)}</b>. The non-brand share of signups is an estimate.</p>` : '') +
+      `<section class="panel"><div class="panel-b"><ol class="un-q">${items}</ol></div></section>`;
     return { html, mount: () => {
       document.querySelectorAll('input[data-q]').forEach(cb => cb.addEventListener('change', () => { done[cb.dataset.q] = cb.checked; try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) { } }));
       if (live && !st) loadTrends(D, A);
