@@ -3389,17 +3389,72 @@
       ['On which searches are Google AI Overviews cutting our click-through?', 'Estimated from CTR against position; it is an inference, not a Google figure.', [['AI search visibility', '#ai']]]
     ]]
   ];
+  // the eight questions a boss asks in every review; the rest stay below as detail
+  const BOSS_Q = [
+    ['How many students did SEO bring this month, and how many of them registered for an opportunity?', 'Two numbers, not traffic: organic student signups and organic opportunity registrations, against last month and last year.', [['Monthly headline', '#report?by=month&at=un-rp-head'], ['Weekly headline', '#report?by=week&at=un-rp-head']]],
+    ['How much of that is real SEO and how much is brand?', 'Non-brand clicks and the estimated non-brand share of organic signups. Growth from people searching “unstop” is marketing’s credit, not SEO’s.', [['Non-brand rows', '#report?by=month&at=un-rp-head'], ['Branded vs non-branded', '#urlclusters']]],
+    ['Which three clusters are earning, and which three are falling?', 'Cards and table sorted by registrations, high to low; the “Why” box lists the clusters that pulled the total down or pushed it up.', [['Month on month', '#clusters?by=month&at=un-cl-why'], ['Week on week', '#clusters?by=week&at=un-cl-why']]],
+    ['What fell, and why — in one line?', 'Google showed us less (ranking or demand), visitors came but did not convert, or a big opportunity ended. Open the falling cluster’s deep dive for its “Why it moved”.', [['Why box', '#clusters?by=month&at=un-cl-why'], ['Falling pages', '#report?by=month&at=un-rp-d']]],
+    ['Which pages get visitors who do not register?', 'The cheapest win: more registrations without new traffic. The fix list shows pages with steady organic traffic and almost no signups or registrations.', [['Fix list', '#report?by=month&at=un-rp-f']]],
+    ['How are the programmatic pages doing — build more or stop?', 'How many /internship/ and /job/ pages get organic visits, and how many students each brings. The deep dive’s landing-page table counts the pages.', [['/internship/ pages', '#clusters?by=month&c=proginternship&at=un-cl-pg'], ['/job/ pages', '#clusters?by=month&c=progjob&at=un-cl-pg']]],
+    ['What did you do last month, and which number moved?', 'Every piece of work with its date and cluster, and that cluster’s registrations and non-brand clicks per day before and after. Work that moved nothing is a candidate to stop.', [['Work log below', '#questions?at=un-q-log']]],
+    ['What is next month’s plan, and how many extra registrations will it bring?', 'The monthly target, where this month is heading at today’s pace, and three planned pieces of work with the registrations each should add.', [['Target and plan below', '#questions?at=un-q-plan']]]
+  ];
   V.questions = (A, D) => {
-    const KEY = 'un-review-done:' + D.site; let done = {};
-    try { done = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { done = {}; }
-    let n = 0; const total = REVIEW_Q.reduce((a, g) => a + g[1].length, 0);
-    const body = REVIEW_Q.map(([g, qs]) => `<section class="panel"><div class="panel-h"><h2>${esc(g)}</h2></div><div class="panel-b"><ol class="un-q" start="${n + 1}">${qs.map(([q, hint, links, gap]) => { n++; const id = 'q' + n; return `<li class="${gap ? 'gap' : ''}"><label class="un-q-done"><input type="checkbox" data-q="${id}" ${done[id] ? 'checked' : ''}> Answered</label><b>${esc(q)}</b><p class="un-n">${esc(hint)}</p><div class="un-q-go">${links.map(([l, h]) => `<a class="btn-quiet sm" href="${esc(h)}">${esc(l)} →</a>`).join('')}${gap ? '<span class="un-st none">Needs CRM data</span>' : ''}</div></li>`; }).join('')}</ol></div></section>`).join('');
-    const doneN = Object.values(done).filter(Boolean).length;
-    const html = head('Review questions', 'The questions management asks, answerable from GA4 and Search Console. Each button opens the screen at the section with the answer. Pick Week or Month on the screen itself; the dates follow the date picker at the top.') +
-      `<p class="un-meta" id="un-q-count">${doneN} of ${total} ticked as answered (kept in this browser) · <button class="btn-quiet sm" type="button" id="un-q-reset">Clear ticks</button></p>` + body;
+    demoFill(D);
+    const KEY = 'un-review-done:' + D.site, LOG = 'un-worklog:' + D.site, TGT = 'un-target:' + D.site;
+    const rd = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
+    const wr = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } };
+    const done = rd(KEY, {}), log = rd(LOG, []), tgt = rd(TGT, { reg: '', stu: '', plan: [{ w: '', n: '' }, { w: '', n: '' }, { w: '', n: '' }] });
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const st = live ? TR.get(trKey(D)) : sampleTrends(D, A);
+    const ready = st && st.status === 'done', list = trList(D);
+    const sumAll = (p, m) => list.reduce((a, x) => a + (trSum(st, x.id, p, m) || 0), 0);
+    const qItem = ([q, hint, links], i) => { const id = 'b' + (i + 1); return `<li><label class="un-q-done"><input type="checkbox" data-q="${id}" ${done[id] ? 'checked' : ''}> Answered</label><b>${esc(q)}</b><p class="un-n">${esc(hint)}</p><div class="un-q-go">${links.map(([l, h]) => `<a class="btn-quiet sm" href="${esc(h)}">${esc(l)} →</a>`).join('')}</div></li>`; };
+    const boss = `<section class="panel"><div class="panel-h"><h2>The eight questions</h2><p>One review, about 20 minutes. Answer each with a number and one line on why.</p></div><div class="panel-b"><ol class="un-q">${BOSS_Q.map(qItem).join('')}</ol></div></section>`;
+    const loadNote = ready ? '' : `<p class="note">${live ? 'Cluster data is not loaded in this tab yet. <a href="#clusters">Open Clusters: week &amp; month</a> once (about a minute), then come back.' : ''}</p>`;
+    // ── 7. work log: before vs after per day, for the cluster the work touched ──
+    const clOpts = sel => list.map(x => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+    const eff = w => {
+      if (!ready || !w.date) return null;
+      const end = st.end, b = { start: addD(w.date, -28), end: addD(w.date, -1) }, aEnd = addD(w.date, 27) > end ? end : addD(w.date, 27), a = { start: w.date, end: aEnd };
+      const days = Math.round((new Date(aEnd) - new Date(w.date)) / 864e5) + 1; if (days < 3) return { early: true };
+      const v = (p, m) => (trSum(st, w.c, p, m) || 0);
+      const r = { regB: v(b, 'regs') / 28, regA: v(a, 'regs') / days, nbB: v(b, 'nbClicks') / 28, nbA: v(a, 'nbClicks') / days, days };
+      r.regC = pctCh(r.regA, r.regB); r.nbC = pctCh(r.nbA, r.nbB); return r;
+    };
+    const logRows = log.map((w, i) => { const e = eff(w), cl = list.find(x => x.id === w.c); return `<tr><td>${esc(w.date || '')}</td><td>${esc(w.what || '')}</td><td>${cl ? `<a href="#clusters?by=week&c=${encodeURIComponent(cl.id)}">${esc(cl.name)}</a>` : '—'}</td>${e && !e.early ? `<td class="r">${e.regB.toFixed(1)} → ${e.regA.toFixed(1)} ${dchip(e.regC)}</td><td class="r">${fmtN(Math.round(e.nbB))} → ${fmtN(Math.round(e.nbA))} ${dchip(e.nbC)}</td><td class="r un-n">${e.days} days</td>` : `<td colspan="3" class="un-n">${e && e.early ? 'Too early: fewer than 3 days of data after the date.' : ready ? 'Pick a date and cluster.' : 'Load cluster data to see the effect.'}</td>`}<td><button class="btn-quiet sm" type="button" data-del="${i}">Remove</button></td></tr>`; }).join('');
+    const logHtml = `<section class="panel" id="un-q-log"><div class="panel-h"><h2>7. Work log: what we did and which number moved</h2><p>Per day, the 28 days before the date against the days after (up to 28). It shows movement after the work, not proof the work caused it: check the cluster’s “Why it moved” too. Kept in this browser.</p></div><div class="panel-b">
+      <form class="un-row" id="un-q-logf" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><input type="date" id="un-q-ld" required><input type="text" id="un-q-lw" placeholder="What we did (e.g. refreshed 40 hackathon pages)" required style="flex:1;min-width:260px"><select id="un-q-lc">${clOpts('')}</select><button class="btn-primary sm" type="submit">Add</button></form>
+      ${log.length ? `<div class="tw"><table class="un-mini"><thead><tr><th>Date</th><th>Work</th><th>Cluster</th><th class="r">Registrations per day</th><th class="r">Non-brand clicks per day</th><th class="r">After</th><th></th></tr></thead><tbody>${logRows}</tbody></table></div>` : '<p class="un-n">No work logged yet. Add each refresh, new page batch, technical fix or link push with its date.</p>'}</div></section>`;
+    // ── 8. target, pace and plan ──
+    let paceHtml = '<p class="un-n">Load cluster data to see this month’s pace.</p>';
+    if (ready) {
+      const end = st.end, mStart = end.slice(0, 8) + '01', dim = new Date(Date.UTC(+end.slice(0, 4), +end.slice(5, 7), 0)).getUTCDate(), el = +end.slice(8, 10);
+      const pm = new Date(Date.UTC(+end.slice(0, 4), +end.slice(5, 7) - 2, 1)), pmS = isoD(pm), pmE = isoD(new Date(Date.UTC(pm.getUTCFullYear(), pm.getUTCMonth() + 1, 0)));
+      const row = (l, m, t) => { const mtd = sumAll({ start: mStart, end }, m), proj = mtd / el * dim, last = sumAll({ start: pmS, end: pmE }, m), T = +t || 0; return `<tr><td><b>${l}</b></td><td class="r">${fmtN(Math.round(mtd))}</td><td class="r"><b>${fmtN(Math.round(proj))}</b></td><td class="r">${fmtN(Math.round(last))} ${dchip(pctCh(proj, last))}</td><td class="r">${T ? fmtN(T) : '—'}</td><td class="r">${T ? `<span class="un-d ${proj >= T ? 'up' : 'down'}">${proj >= T ? 'On track' : 'Behind by ' + fmtN(Math.round(T - proj))}</span>` : '<span class="un-n">set a target</span>'}</td></tr>`; };
+      paceHtml = `<div class="tw"><table class="un-mini"><thead><tr><th>Number</th><th class="r">So far (${el} of ${dim} days)</th><th class="r">At this pace by month end</th><th class="r">Last month</th><th class="r">Target</th><th class="r">Status</th></tr></thead><tbody>${row('Opportunity registrations', 'regs', tgt.reg)}${row('Student signups', 'students', tgt.stu)}</tbody></table></div><p class="hint">Pace = so far ÷ days elapsed × days in the month. Recent days in Search Console and GA4 can still fill in, so the pace runs slightly low early in the month.</p>`;
+    }
+    const planSum = tgt.plan.reduce((a, p) => a + (+p.n || 0), 0);
+    const planHtml = `<section class="panel" id="un-q-plan"><div class="panel-h"><h2>8. Target, pace and next month’s plan</h2><p>Monthly targets for the two numbers that matter, where this month is heading, and three planned pieces of work with the registrations each should add. Kept in this browser.</p></div><div class="panel-b">
+      <form class="un-row" id="un-q-tf" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><label class="field"><span>Monthly target: registrations</span><input type="number" min="0" id="un-q-tr" value="${esc(tgt.reg)}"></label><label class="field"><span>Monthly target: student signups</span><input type="number" min="0" id="un-q-ts" value="${esc(tgt.stu)}"></label></form>
+      ${paceHtml}
+      <h3 class="un-sub" style="margin-top:14px">Next month: three pieces of work</h3>
+      <div class="un-q-plan">${tgt.plan.map((p, i) => `<div class="un-row" style="gap:8px;margin-bottom:6px"><span class="un-n">${i + 1}.</span><input type="text" data-pw="${i}" value="${esc(p.w)}" placeholder="Work (e.g. fix the 20 fix-list pages in Hackathons)" style="flex:1"><input type="number" min="0" data-pn="${i}" value="${esc(p.n)}" placeholder="Extra registrations" style="width:170px"></div>`).join('')}</div>
+      <p class="un-meta">Plan adds about <b>${fmtN(planSum)}</b> registrations a month${tgt.reg && ready ? '' : ''}.</p></div></section>`;
+    // ── the earlier detailed list, folded away ──
+    let n = 0;
+    const more = `<details class="panel un-q-more"><summary class="panel-h"><h2>More detailed questions (${REVIEW_Q.reduce((a, g) => a + g[1].length, 0)})</h2><p>Open when a number needs digging into.</p></summary><div class="panel-b">${REVIEW_Q.map(([g, qs]) => `<h3 class="un-sub">${esc(g)}</h3><ol class="un-q" start="${n + 1}">${qs.map(([q, hint, links, gap]) => { n++; const id = 'q' + n; return `<li class="${gap ? 'gap' : ''}"><label class="un-q-done"><input type="checkbox" data-q="${id}" ${done[id] ? 'checked' : ''}> Answered</label><b>${esc(q)}</b><p class="un-n">${esc(hint)}</p><div class="un-q-go">${links.map(([l, h]) => `<a class="btn-quiet sm" href="${esc(h)}">${esc(l)} →</a>`).join('')}${gap ? '<span class="un-st none">Needs CRM data</span>' : ''}</div></li>`; }).join('')}</ol>`).join('')}<p class="un-n">Pipeline and revenue from organic need GA4, the product database and the CRM joined on one ID: not answerable from GA4 + Search Console.</p></div></details>`;
+    const html = head('Review questions', 'The eight questions to answer in every review, each with buttons that open the screen at the answer, then the work log and the target. Answer each with a number and one line on why.') +
+      (st && st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') + loadNote + boss + logHtml + planHtml + more;
     return { html, mount: () => {
-      document.querySelectorAll('.un-q input[data-q]').forEach(cb => cb.addEventListener('change', () => { done[cb.dataset.q] = cb.checked; try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) { } const c = document.getElementById('un-q-count'); if (c) c.firstChild.textContent = `${Object.values(done).filter(Boolean).length} of ${total} ticked as answered (kept in this browser) · `; }));
-      const r = document.getElementById('un-q-reset'); if (r) r.addEventListener('click', () => { done = {}; try { localStorage.removeItem(KEY); } catch (e) { } rerender(); });
+      document.querySelectorAll('input[data-q]').forEach(cb => cb.addEventListener('change', () => { done[cb.dataset.q] = cb.checked; wr(KEY, done); }));
+      const lf = document.getElementById('un-q-logf'); if (lf) lf.addEventListener('submit', e => { e.preventDefault(); log.unshift({ date: document.getElementById('un-q-ld').value, what: document.getElementById('un-q-lw').value.trim(), c: document.getElementById('un-q-lc').value }); wr(LOG, log); rerender(); });
+      document.querySelectorAll('button[data-del]').forEach(b => b.addEventListener('click', () => { log.splice(+b.dataset.del, 1); wr(LOG, log); rerender(); }));
+      const save = () => { tgt.reg = document.getElementById('un-q-tr').value; tgt.stu = document.getElementById('un-q-ts').value; document.querySelectorAll('input[data-pw]').forEach(x => { tgt.plan[+x.dataset.pw].w = x.value; }); document.querySelectorAll('input[data-pn]').forEach(x => { tgt.plan[+x.dataset.pn].n = x.value; }); wr(TGT, tgt); };
+      ['un-q-tr', 'un-q-ts'].forEach(id => { const x = document.getElementById(id); if (x) x.addEventListener('change', () => { save(); rerender(); }); });
+      document.querySelectorAll('input[data-pw],input[data-pn]').forEach(x => x.addEventListener('change', () => { save(); if (x.dataset.pn != null) rerender(); }));
+      if (live && !st) loadTrends(D, A);
     } };
   };
 
