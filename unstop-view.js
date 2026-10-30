@@ -3155,7 +3155,7 @@
     ['t-un-cl-all', 't-un-cl-opp', 't-un-cl-per', 't-un-cl-pg', 't-un-cl-q'].forEach(k => delete TABLES[k]);
     const P = fParams(), gran = P.get('by') === 'month' ? 'month' : 'week', metric = CL_M.some(m => m[0] === P.get('m')) ? P.get('m') : 'regs', pick = P.get('c') || '';
     const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
-    const href = o => '#clusters?' + new URLSearchParams(Object.entries({ by: gran, m: metric, c: pick, ...o }).filter(([, v]) => v)).toString();
+    const href = o => '#clusters?' + new URLSearchParams(Object.entries({ by: gran, m: metric, c: pick, at: '', ...o }).filter(([, v]) => v)).toString();
     const list = trList(D), sel = list.find(x => x.id === pick);
     const per = gran === 'week' ? 'week' : 'month';
     const intro = sel
@@ -3224,7 +3224,7 @@
       const totD = rows.reduce((a, r) => a + ((r[mk] || 0) - (r[mk + 'P'] || 0)), 0), totP = rows.reduce((a, r) => a + (r[mk + 'P'] || 0), 0);
       const cm = movers(rows.map(r => ({ r, name: r.name, d: (r[mk] || 0) - (r[mk + 'P'] || 0) })), 3);
       const drvLine = x => `<li><a href="${href({ c: x.r.id })}"><b>${esc(x.name)}</b></a> ${sgn(x.d)} (${dchipTxt(x.r[mk + 'C'])})${x.r.why.text ? ` <span class="un-n">— ${esc(x.r.why.text)}</span>` : ''}</li>`;
-      const drivers = `<section class="panel un-why"><div class="panel-h"><h2>Why ${esc(mLabel.toLowerCase())} ${totD >= 0 ? 'went up' : 'went down'}: ${sgn(totD)} (${dchipTxt(pctCh(totP + totD, totP))}), ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Which clusters moved the total and, inside each, what moved it: Google traffic or how many visitors converted${mk === 'reg' ? ', and which opportunities' : ''}.</p></div><div class="panel-b"><div class="grid-2 even"><div><h3 class="un-why-h down">Pulled it down</h3><ul>${cm.dn.length ? cm.dn.map(drvLine).join('') : '<li class="un-n">Nothing fell.</li>'}</ul></div><div><h3 class="un-why-h up">Pushed it up</h3><ul>${cm.up.length ? cm.up.map(drvLine).join('') : '<li class="un-n">Nothing rose.</li>'}</ul></div></div></div></section>`;
+      const drivers = `<section class="panel un-why" id="un-cl-why"><div class="panel-h"><h2>Why ${esc(mLabel.toLowerCase())} ${totD >= 0 ? 'went up' : 'went down'}: ${sgn(totD)} (${dchipTxt(pctCh(totP + totD, totP))}), ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Which clusters moved the total and, inside each, what moved it: Google traffic or how many visitors converted${mk === 'reg' ? ', and which opportunities' : ''}.</p></div><div class="panel-b"><div class="grid-2 even"><div><h3 class="un-why-h down">Pulled it down</h3><ul>${cm.dn.length ? cm.dn.map(drvLine).join('') : '<li class="un-n">Nothing fell.</li>'}</ul></div><div><h3 class="un-why-h up">Pushed it up</h3><ul>${cm.up.length ? cm.up.map(drvLine).join('') : '<li class="un-n">Nothing rose.</li>'}</ul></div></div></div></section>`;
       const card = r => {
         const t = trendOf(r[mk + 'C']), [bc, bl] = TREND_B[t];
         const line = (l, k) => `<span>${l} <b>${fv(r[k])}</b> ${dchip(r[k + 'C'])}</span>`;
@@ -3235,10 +3235,10 @@
           <div class="un-clc-m">${[['reg', 'Registrations'], ['opp', 'Opportunities'], ['stu', 'Signups'], ['ses', 'Sessions'], ['nb', 'Non-brand clicks']].filter(([k]) => k !== mk).map(([k, l]) => line(l, k)).join('')}</div>
         </a>`;
       };
-      const cards = `<section class="panel"><div class="panel-h"><h2>Clusters by ${esc(mLabel.toLowerCase())}, last ${per} vs the one before</h2><p>Growing: up 5% or more. Falling: down 5% or more. The line is the last 12 ${per}s. Click a card for the cluster’s deep dive.</p></div><div class="panel-b cards-wrap"><div class="cards">${rows.map(card).join('')}</div></div></section>`;
+      const cards = `<section class="panel" id="un-cl-cards"><div class="panel-h"><h2>Clusters by ${esc(mLabel.toLowerCase())}, last ${per} vs the one before</h2><p>Growing: up 5% or more. Falling: down 5% or more. The line is the last 12 ${per}s. Click a card for the cluster’s deep dive.</p></div><div class="panel-b cards-wrap"><div class="cards">${rows.map(card).join('')}</div></div></section>`;
       const chgCol = (k, l, lower) => ({ k: k + 'C', l, r: 1, f: r => dchip(r[k + 'C'], lower), csv: r => r[k + 'C'] == null ? '' : r[k + 'C'].toFixed(1) });
       const numCol = (k, l) => ({ k, l, r: 1, f: r => fv(r[k]), csv: r => r[k] == null ? '' : Math.round(r[k]) });
-      const tbl = `<section class="panel"><div class="panel-h"><h2>All clusters: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Sorted by registrations, high to low; click any column to sort by it. Opportunities = different opportunities that got at least one registration from Google organic visits.</p></div>${table('t-un-cl-all', [
+      const tbl = `<section class="panel" id="un-cl-all"><div class="panel-h"><h2>All clusters: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Sorted by registrations, high to low; click any column to sort by it. Opportunities = different opportunities that got at least one registration from Google organic visits.</p></div>${table('t-un-cl-all', [
         { k: 'name', l: 'Cluster', f: r => `<a href="${href({ c: r.id })}"><b>${esc(r.name)}</b></a>`, csv: r => r.name },
         numCol('reg', 'Registrations'), chgCol('reg', 'Change'), numCol('opp', 'Opportunities'), chgCol('opp', 'Change'),
         numCol('stu', 'Signups'), chgCol('stu', 'Change'),
@@ -3266,7 +3266,7 @@
     const perRows = pers.map((p, j) => ({ j, label: p.label + (p.partial ? ' (running)' : ''), start: p.start, c: S.c[j], nb: S.nb[j], im: S.im[j], ctr: S.im[j] ? S.c[j] / S.im[j] * 100 : null, ses: S.ses[j], stu: S.stu[j], reg: S.reg[j], stuRate: rate(S.stu[j] || 0, S.ses[j]), regRate: rate(S.reg[j] || 0, S.ses[j]), ...(j && !p.partial ? { nbC: pctCh(S.nb[j], S.nb[j - 1]), sesC: pctCh(S.ses[j], S.ses[j - 1]), stuC: pctCh(S.stu[j], S.stu[j - 1]), regC: pctCh(S.reg[j], S.reg[j - 1]) } : { nbC: null, sesC: null, stuC: null, regC: null }) })).reverse();
     const num = (k, l) => ({ k, l, r: 1, f: r => fv(r[k]), csv: r => r[k] == null ? '' : Math.round(r[k]) });
     const chg = (k, l) => ({ k, l, r: 1, f: r => r[k] == null ? '<span class="un-n">—</span>' : dchip(r[k]), csv: r => r[k] == null ? '' : r[k].toFixed(1) });
-    const perTbl = `<section class="panel"><div class="panel-h"><h2>${gran === 'week' ? 'Week by week (Monday to Sunday)' : 'Month by month'}</h2><p>Newest first. Each change is against the ${per} before.</p></div>${table('t-un-cl-per', [
+    const perTbl = `<section class="panel" id="un-cl-per"><div class="panel-h"><h2>${gran === 'week' ? 'Week by week (Monday to Sunday)' : 'Month by month'}</h2><p>Newest first. Each change is against the ${per} before.</p></div>${table('t-un-cl-per', [
       { k: 'start', l: gran === 'week' ? 'Week of' : 'Month', f: r => `<b>${esc(r.label)}</b>`, csv: r => r.label },
       num('reg', 'Registrations'), chg('regC', 'Change'), num('stu', 'Signups'), chg('stuC', 'Change'),
       { k: 'regRate', l: 'Regs per 100 sessions', r: 1, f: r => r.regRate == null ? '—' : r.regRate.toFixed(1), csv: r => r.regRate == null ? '' : r.regRate.toFixed(2) },
@@ -3329,7 +3329,7 @@
       const bq = qRows.filter(r => r.brand === 'Branded').reduce((a, r) => a + r.d, 0); if (Math.abs(bq) >= 5) W.push({ h: 'Branded searches', items: [`Searches with “unstop” in them ${sgn(bq)} clicks: this follows brand demand (marketing, campus drives, news), not SEO work.`] });
     }
     const pend = [(!ps || ps.status === 'loading') && 'landing pages', (!qs || qs.status === 'loading') && 'searches', (!os || os.status === 'loading') && 'opportunities'].filter(Boolean);
-    const whyHtml = `<section class="panel un-why"><div class="panel-h"><h2>Why it moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Every change split into what caused it: Google traffic (impressions, ranking, click-through), how many visitors converted, and which opportunities, pages and searches gained or lost.${pend.length ? ` Still loading: ${pend.join(', ')}.` : ''}</p></div><div class="panel-b"><div class="un-why-g">${W.map(w => `<div class="un-why-c"><h3>${esc(w.h)}</h3>${w.main ? `<p class="un-why-main">Main reason: <b>${esc(w.main)}</b></p>` : ''}<ul>${w.items.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('') || '<p class="un-n">No change big enough to explain.</p>'}</div></div></section>`;
+    const whyHtml = `<section class="panel un-why" id="un-cl-why"><div class="panel-h"><h2>Why it moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Every change split into what caused it: Google traffic (impressions, ranking, click-through), how many visitors converted, and which opportunities, pages and searches gained or lost.${pend.length ? ` Still loading: ${pend.join(', ')}.` : ''}</p></div><div class="panel-b"><div class="un-why-g">${W.map(w => `<div class="un-why-c"><h3>${esc(w.h)}</h3>${w.main ? `<p class="un-why-main">Main reason: <b>${esc(w.main)}</b></p>` : ''}<ul>${w.items.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('') || '<p class="un-n">No change big enough to explain.</p>'}</div></div></section>`;
     const blocks = () => [
       { title: 'Why it moved', head: ['Area', 'Main reason', 'Detail'], rows: W.map(w => [{ t: w.h, b: 1 }, { t: w.main || '' }, { t: w.items.join(' ') }]) },
       { title: `${sel.name}: ${cur.label} vs ${prv.label}`, head: ['Metric', cur.label, prv.label, 'Change'], rows: [['Non-brand clicks', 'nb'], ['Organic sessions', 'ses'], ['Student signups', 'stu'], ['Opportunity registrations', 'reg']].map(([l, k]) => [{ t: l, b: 1 }, fv(S[k][li]), fv(S[k][li - 1]), { chg: pctCh(S[k][li], S[k][li - 1]) }]) },
@@ -3338,9 +3338,9 @@
       { title: `Top landing pages by registrations (${cur.label})`, head: ['Landing page', 'Sessions', 'Signups', 'Registrations', 'Change'], rows: pgRows.slice().sort((a, b) => (b.reg || 0) - (a.reg || 0)).slice(0, 15).map(r => [{ t: r.path, href: 'https://unstop.com' + r.path }, fv(r.ses), fv(r.stu), fv(r.reg), { chg: r.regC }]) }
     ];
     const html = intro + tabs + notes + periodLine + tiles + whyHtml + copyBtn +
-      `<section class="panel"><div class="panel-h"><h2>Opportunities students registered for: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Students who came from Google to this cluster and registered, by opportunity, high to low. ${OB ? `${fmtN(oc.filter(o => o.cur > 0).length)} opportunities got registrations in ${esc(cur.label)}.` : ''}</p></div>${oppHtml}</section>` + perTbl +
-      `<section class="panel"><div class="panel-h"><h2>Landing pages: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>GA4 organic sessions that started on each page, and the signups and registrations in those visits.</p></div>${pageHtml}</section>` +
-      `<section class="panel"><div class="panel-h"><h2>Searches that moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Google searches that brought clicks to this cluster, sorted by the change in clicks.</p></div>${qHtml}</section>` +
+      `<section class="panel" id="un-cl-opp"><div class="panel-h"><h2>Opportunities students registered for: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Students who came from Google to this cluster and registered, by opportunity, high to low. ${OB ? `${fmtN(oc.filter(o => o.cur > 0).length)} opportunities got registrations in ${esc(cur.label)}.` : ''}</p></div>${oppHtml}</section>` + perTbl +
+      `<section class="panel" id="un-cl-pg"><div class="panel-h"><h2>Landing pages: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>GA4 organic sessions that started on each page, and the signups and registrations in those visits.</p></div>${pageHtml}</section>` +
+      `<section class="panel" id="un-cl-q"><div class="panel-h"><h2>Searches that moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Google searches that brought clicks to this cluster, sorted by the change in clicks.</p></div>${qHtml}</section>` +
       `<p class="hint"><a href="#trends?by=${gran}&c=${encodeURIComponent(sel.id)}">Same cluster in Cluster trends</a> · <a href="#journeys?f=${encodeURIComponent(sel.rules[0] || '')}">Journeys from ${esc(sel.rules[0] || '')}</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
     return { html, mount: () => {
       ['t-un-cl-opp', 't-un-cl-per', 't-un-cl-pg', 't-un-cl-q'].forEach(id => { if (document.getElementById(id)) drawTable(id); });
@@ -3348,6 +3348,58 @@
       if (live && !TRP.get(pk)) loadTrendPages(D, sel, gran, pers);
       if (live && !CQ.get(qk)) loadClusterQueries(D, A, sel, cur, prv, qk);
       const b = document.getElementById('un-cl-copy'); if (b) b.addEventListener('click', () => { const B = blocks(); copyRich(sheetCopyHtml(`Unstop SEO · ${sel.name}`, subT + ' · Search Console + GA4 (Organic Search)', B), plainOf(sel.name, B), 'un-cl-msg'); });
+    } };
+  };
+
+  // ════════════════════════════ REVIEW QUESTIONS: EACH ONE OPENS THE SECTION WITH THE ANSWER ════════════════════════════
+  // Management questions answerable from GA4 + Search Console, grouped along the chain. Each link opens the
+  // screen and scrolls to the section (&at=<element id>); "Answered" ticks are kept in this browser only.
+  const REVIEW_Q = [
+    ['First review: the three questions', [
+      ['Which pages drove the most signups last month — not the most traffic?', 'Section 3a lists landing pages by organic signups; compare with their sessions.', [['Top signup pages (month)', '#report?by=month&at=un-rp-s']]],
+      ['What share of organic signups comes from non-branded queries?', 'Headline numbers: “Non-brand share of organic signups (estimate)”. It is an estimate: GA4 does not see the search, so each page’s signups are split by its non-brand share of Google clicks.', [['Non-brand share (month)', '#report?by=month&at=un-rp-head'], ['Branded vs non-branded clusters', '#urlclusters']]],
+      ['How much pipeline can we trace to organic?', 'Not answerable from GA4 + Search Console: it needs GA4, the product database and the CRM joined on one ID. Show organic demo and contact leads in the meantime.', [['Organic demo + contact leads', '#b2e']], 'gap']
+    ]],
+    ['Business result', [
+      ['How many student signups and opportunity registrations did organic bring, against the period before?', 'Headline numbers, rows “Organic student signups” and “Organic opportunity registrations (students)”.', [['Weekly', '#report?by=week&at=un-rp-head'], ['Monthly', '#report?by=month&at=un-rp-head']]],
+      ['What share of all website signups and registrations is SEO, and is it rising?', 'Rows “SEO share of all website signups / registrations”.', [['Monthly report', '#report?by=month&at=un-rp-head']]],
+      ['Which opportunities got the most registrations from organic, and which fell?', 'Section 4 of the report; per cluster in the cluster deep dive.', [['Top opportunities', '#report?by=month&at=un-rp-o'], ['Hackathons', '#clusters?by=month&c=hackathons&at=un-cl-opp'], ['Competitions', '#clusters?by=month&c=competitions&at=un-cl-opp'], ['Jobs', '#clusters?by=month&c=jobs&at=un-cl-opp']]],
+      ['How many demo requests and contact forms came from employer pages?', 'B2E dashboard: organic demo and contact leads by page.', [['B2E dashboard', '#b2e']]]
+    ]],
+    ['By page type and cluster', [
+      ['Which page types and clusters bring the registrations and signups, and which are rising or falling?', 'Cards and table, sorted by registrations, high to low.', [['Week on week', '#clusters?by=week&at=un-cl-all'], ['Month on month', '#clusters?by=month&at=un-cl-all']]],
+      ['Why did registrations go up or down — Google traffic or conversion, and which opportunities, pages and searches?', '“Why registrations went down/up”: clusters that pulled the total down or pushed it up, each with its reason.', [['Week on week', '#clusters?by=week&at=un-cl-why'], ['Month on month', '#clusters?by=month&at=un-cl-why']]],
+      ['Which pages get traffic but almost no signups or registrations?', 'Fix list (3d): pages with steady organic traffic and almost no conversions.', [['Fix list', '#report?by=month&at=un-rp-f']]],
+      ['How are the programmatic pages (/internship/, /job/) doing?', 'Registrations, signups and traffic per week, with the reasons.', [['/internship/ pages', '#clusters?by=week&c=proginternship'], ['/job/ pages', '#clusters?by=week&c=progjob']]],
+      ['Students landing on /internship/: where do they sign up and what do they register for?', 'Journeys: signup pages and opportunities for visits that started in the folder.', [['Journeys from /internship', '#journeys?f=/internship'], ['From /job', '#journeys?f=/job']]]
+    ]],
+    ['Real SEO growth: branded vs non-branded', [
+      ['How many non-branded clicks and impressions do we get, and how does that trend differ from branded?', 'Non-brand rows of the report; branded and non-branded side by side per cluster.', [['Report', '#report?by=month&at=un-rp-head'], ['Branded vs non-branded', '#urlclusters']]],
+      ['How much did non-branded clicks grow against the same period last year?', 'The report shows a “vs last year” column when 13 months of Search Console history are loaded.', [['Monthly report', '#report?by=month&at=un-rp-head']]],
+      ['Which searches moved up or down, and why — ranking, demand or click-through?', 'Cluster deep dive: “Searches that moved” and the Searches card in “Why it moved”.', [['Hackathons', '#clusters?by=month&c=hackathons&at=un-cl-q'], ['Competitions', '#clusters?by=month&c=competitions&at=un-cl-q'], ['Internship pages', '#clusters?by=month&c=proginternship&at=un-cl-q'], ['Jobs', '#clusters?by=month&c=jobs&at=un-cl-q']]],
+      ['How many keywords sit in the top 3, top 10 and 11–20, and which 11–20 ones are quick wins?', 'Rank buckets by page type, and the Almost page one list.', [['Visibility by page type', '#visibility'], ['Almost page one', '#quickwins']]],
+      ['Which pages lost the most Google clicks, and why?', 'Falling pages (3c) and Losing ground with the likely cause.', [['Falling pages', '#report?by=month&at=un-rp-d'], ['Losing ground', '#decay']]]
+    ]],
+    ['Engagement', [
+      ['How engaged are organic visitors (engaged sessions, pages per session) by page type?', 'GA4 organic and Engagement screens.', [['GA4 organic', '#ga4'], ['Engagement', '#engagement']]],
+      ['Per 100 organic sessions, how many signups and registrations — and which cluster is weakest?', 'Column “Regs per 100 sessions” in the clusters table.', [['Clusters table', '#clusters?by=month&at=un-cl-all']]]
+    ]],
+    ['AI search', [
+      ['How much traffic do ChatGPT, Perplexity and Gemini send us?', 'GA4: sessions referred by AI assistants, against last year.', [['GA4 organic', '#ga4'], ['AI scorecard', '#scorecards?w=ai']]],
+      ['On which searches are Google AI Overviews cutting our click-through?', 'Estimated from CTR against position; it is an inference, not a Google figure.', [['AI search visibility', '#ai']]]
+    ]]
+  ];
+  V.questions = (A, D) => {
+    const KEY = 'un-review-done:' + D.site; let done = {};
+    try { done = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { done = {}; }
+    let n = 0; const total = REVIEW_Q.reduce((a, g) => a + g[1].length, 0);
+    const body = REVIEW_Q.map(([g, qs]) => `<section class="panel"><div class="panel-h"><h2>${esc(g)}</h2></div><div class="panel-b"><ol class="un-q" start="${n + 1}">${qs.map(([q, hint, links, gap]) => { n++; const id = 'q' + n; return `<li class="${gap ? 'gap' : ''}"><label class="un-q-done"><input type="checkbox" data-q="${id}" ${done[id] ? 'checked' : ''}> Answered</label><b>${esc(q)}</b><p class="un-n">${esc(hint)}</p><div class="un-q-go">${links.map(([l, h]) => `<a class="btn-quiet sm" href="${esc(h)}">${esc(l)} →</a>`).join('')}${gap ? '<span class="un-st none">Needs CRM data</span>' : ''}</div></li>`; }).join('')}</ol></div></section>`).join('');
+    const doneN = Object.values(done).filter(Boolean).length;
+    const html = head('Review questions', 'The questions management asks, answerable from GA4 and Search Console. Each button opens the screen at the section with the answer. Pick Week or Month on the screen itself; the dates follow the date picker at the top.') +
+      `<p class="un-meta" id="un-q-count">${doneN} of ${total} ticked as answered (kept in this browser) · <button class="btn-quiet sm" type="button" id="un-q-reset">Clear ticks</button></p>` + body;
+    return { html, mount: () => {
+      document.querySelectorAll('.un-q input[data-q]').forEach(cb => cb.addEventListener('change', () => { done[cb.dataset.q] = cb.checked; try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) { } const c = document.getElementById('un-q-count'); if (c) c.firstChild.textContent = `${Object.values(done).filter(Boolean).length} of ${total} ticked as answered (kept in this browser) · `; }));
+      const r = document.getElementById('un-q-reset'); if (r) r.addEventListener('click', () => { done = {}; try { localStorage.removeItem(KEY); } catch (e) { } rerender(); });
     } };
   };
 
@@ -3562,11 +3614,6 @@
     add('SEO share of all website signups', ratio(sO[0], sA[0]), ratio(sO[1], sA[1]), hasY ? ratio(sO[2], sA[2]) : null, 'pct', 'GA4', 'organic ÷ all channels (website only, app not included)');
     add('SEO share of all website registrations', ratio(rO[0], rA[0]), ratio(rO[1], rA[1]), hasY ? ratio(rO[2], rA[2]) : null, 'pct', 'GA4', 'organic ÷ all channels (website only)');
     add('Hidden searches share of clicks', ratio(hid('cur'), g1('tot_cur', 'clicks')), ratio(hid('prev'), g1('tot_prev', 'clicks')), hasY ? ratio(hid('yoy'), g1('tot_yoy', 'clicks')) : null, 'pct', 'Search Console', 'searches Google does not list');
-    const fv = (v, k) => v == null || !isFinite(v) ? '—' : k === 'pct' ? v.toFixed(1) + '%' : k === 'pos' ? v.toFixed(1) : k === 'dec' ? v.toFixed(2) : fmtN(Math.round(v));
-    const ch = (c, p, k) => c == null || p == null || !isFinite(c) || !isFinite(p) ? null : k === 'pct' || k === 'pos' || k === 'dec' ? c - p : p ? (c - p) / p * 100 : null;
-    const chHtml = (c, p, k) => { const d = ch(c, p, k); if (d == null) return '<span class="un-n">—</span>'; if (k === 'pos') return dchip(d, true, 'pos'); if (k === 'pct' || k === 'dec') return `<span class="un-d ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}">${d > 0 ? '+' : ''}${d.toFixed(k === 'pct' ? 1 : 2)}${k === 'pct' ? ' pts' : ''}</span>`; return dchip(d); };
-    const curL = P.cur.label, prevL = P.prev.label, yL = hasY ? P.yoy.label : '';
-    const headTbl = `<div class="tw"><table class="un-mini un-rp"><thead><tr><th>Number</th><th class="r">${esc(curL)}</th><th class="r">${esc(prevL)}</th><th class="r">Change</th>${hasY ? `<th class="r">${esc(yL)}</th><th class="r">vs last year</th>` : ''}<th>Source</th></tr></thead><tbody>${rows.map(r => `<tr><td><b>${esc(r.l)}</b>${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td><td class="r"><b>${fv(r.c, r.kind)}</b></td><td class="r">${fv(r.p, r.kind)}</td><td class="r">${chHtml(r.c, r.p, r.kind)}</td>${hasY ? `<td class="r">${fv(r.y, r.kind)}</td><td class="r">${chHtml(r.c, r.y, r.kind)}</td>` : ''}<td class="un-n">${esc(r.src)}</td></tr>`).join('')}</tbody></table></div>`;
     // ── per landing page and per cluster ──
     const pageMap = new Map(); const P0 = p => U.pathOnly(p).toLowerCase();
     const pg = k => { if (!pageMap.has(k)) pageMap.set(k, { path: k, c: 0, p: 0, nbC: 0, nbP: 0, ses: 0, sesP: 0, sign: 0, signP: 0, reg: 0, regP: 0 }); return pageMap.get(k); };
@@ -3575,6 +3622,15 @@
     const gaPut = (L, m, a, b) => (L || []).forEach(r => { const o = pg(P0(r.landingPage)); const isPrev = r.range === 'prev' || r.range === 'date_range_1'; const isCur = r.range === 'cur' || r.range === 'date_range_0' || !r.range; if (isCur) o[a] += +r[m] || 0; else if (isPrev) o[b] += +r[m] || 0; });
     gaPut(R.gaLand, 'sessions', 'ses', 'sesP'); gaPut(R.gaSignLand, 'eventCount', 'sign', 'signP'); gaPut(R.gaRegLand, 'totalUsers', 'reg', 'regP');
     const pagesL = [...pageMap.values()].map(o => ({ ...o, cluster: so.label(so(o.path)), dC: o.p ? (o.c - o.p) / o.p * 100 : null, lost: o.p - o.c }));
+    // signups from non-brand searches (estimate): each landing page's signups × that page's non-brand share of Google clicks
+    const nbEst = (sk, ck, nk) => { let n = 0, all = 0; pagesL.forEach(o => { if (o[sk] > 0 && o[ck] > 0) { n += o[sk] * Math.min(1, o[nk] / o[ck]); all += o[sk]; } }); return all ? { n, share: n / all * 100 } : null; };
+    const eC = nbEst('sign', 'c', 'nbC'), eP = nbEst('signP', 'p', 'nbP');
+    if (eC) { add('Organic signups from non-brand searches (estimate)', eC.n, eP && eP.n, null, 'n', 'GSC + GA4', 'each landing page’s signups × its non-brand share of Google clicks; GA4 does not see the search itself'); add('Non-brand share of organic signups (estimate)', eC.share, eP && eP.share, null, 'pct', 'GSC + GA4', 'of signups on pages that get Google clicks'); }
+    const fv = (v, k) => v == null || !isFinite(v) ? '—' : k === 'pct' ? v.toFixed(1) + '%' : k === 'pos' ? v.toFixed(1) : k === 'dec' ? v.toFixed(2) : fmtN(Math.round(v));
+    const ch = (c, p, k) => c == null || p == null || !isFinite(c) || !isFinite(p) ? null : k === 'pct' || k === 'pos' || k === 'dec' ? c - p : p ? (c - p) / p * 100 : null;
+    const chHtml = (c, p, k) => { const d = ch(c, p, k); if (d == null) return '<span class="un-n">—</span>'; if (k === 'pos') return dchip(d, true, 'pos'); if (k === 'pct' || k === 'dec') return `<span class="un-d ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}">${d > 0 ? '+' : ''}${d.toFixed(k === 'pct' ? 1 : 2)}${k === 'pct' ? ' pts' : ''}</span>`; return dchip(d); };
+    const curL = P.cur.label, prevL = P.prev.label, yL = hasY ? P.yoy.label : '';
+    const headTbl = `<div class="tw"><table class="un-mini un-rp"><thead><tr><th>Number</th><th class="r">${esc(curL)}</th><th class="r">${esc(prevL)}</th><th class="r">Change</th>${hasY ? `<th class="r">${esc(yL)}</th><th class="r">vs last year</th>` : ''}<th>Source</th></tr></thead><tbody>${rows.map(r => `<tr><td><b>${esc(r.l)}</b>${r.note ? `<br><small class="un-n">${esc(r.note)}</small>` : ''}</td><td class="r"><b>${fv(r.c, r.kind)}</b></td><td class="r">${fv(r.p, r.kind)}</td><td class="r">${chHtml(r.c, r.p, r.kind)}</td>${hasY ? `<td class="r">${fv(r.y, r.kind)}</td><td class="r">${chHtml(r.c, r.y, r.kind)}</td>` : ''}<td class="un-n">${esc(r.src)}</td></tr>`).join('')}</tbody></table></div>`;
     const cm = new Map(); pagesL.forEach(o => { const id = so(o.path); const x = cm.get(id) || { id, name: so.label(id), nbC: 0, nbP: 0, ses: 0, sesP: 0, sign: 0, signP: 0, reg: 0, regP: 0 }; ['nbC', 'nbP', 'ses', 'sesP', 'sign', 'signP', 'reg', 'regP'].forEach(k => { x[k] += o[k]; }); cm.set(id, x); });
     const notSet = cm.get('notset'); const clusters = [...cm.values()].filter(x => x.nbC + x.ses + x.sign + x.reg > 0 && x.id !== 'util' && x.id !== 'notset').sort((a, b) => b.reg + b.sign * 5 - (a.reg + a.sign * 5));
     const cc = (c, p) => `${fmtN(Math.round(c))} ${p ? dchip((c - p) / p * 100) : ''}`;

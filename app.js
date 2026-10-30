@@ -752,7 +752,12 @@
     document.title = (sec ? sec + ' — ' : wf && h1 ? h1.textContent + ' — ' : onLink ? onLink.textContent + ' — ' : '') + CFG.appName;
     $('nav').classList.remove('open'); $('menu-btn').setAttribute('aria-expanded', 'false');
     window.scrollTo(0, 0); view.focus({ preventScroll: true });
+    // &at=<section id>: open the screen at that section (once per link; waits for data that is still loading)
+    const at = new URLSearchParams(raw.split('?')[1] || '').get('at');
+    if (at && SCROLLED !== raw) { const el = document.getElementById(at); if (el) { SCROLLED = raw; setTimeout(() => { el.scrollIntoView({ block: 'start' }); el.classList.add('un-flash'); setTimeout(() => el.classList.remove('un-flash'), 2200); }, 60); } }
+    else if (at && SCROLLED === raw) { const el = document.getElementById(at); if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 0); }
   }
+  let SCROLLED = '';
   window.addEventListener('hashchange', route);
   $('btn-back').addEventListener('click', () => {
     if (NAV.length < 2) return;
