@@ -3063,6 +3063,7 @@
   const trendOf = c => c == null ? 'steady' : c >= 5 ? 'up' : c <= -5 ? 'down' : 'steady';
   const TREND_B = { up: ['b-strong', 'Growing'], down: ['b-work', 'Falling'], steady: ['b-steady', 'Steady'] };
   // formatted copy that pastes into Google Sheets as a presentation table
+  const isNumTxt = v => /^[\s\d,.%+\-−—KM()]*$/.test(String(v == null ? '' : v));
   function sheetCopyHtml(title, sub, blocks) {
     const F = 'font-family:Arial;font-size:10pt;', e = x => esc(x == null ? '' : String(x));
     let w = 2; blocks.forEach(b => { w = Math.max(w, b.head.length); });
@@ -3076,9 +3077,9 @@
           if (c && typeof c === 'object') {
             if (c.chg !== undefined) { const v = c.chg; const t = v == null ? '—' : (Math.abs(v) < .5 ? '● ' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1) + '%'; const col = v == null || Math.abs(v) < .5 ? '#5f6368' : (c.lowerBetter ? v < 0 : v > 0) ? '#137333' : '#c5221f'; return `<td style="${F}${bg}text-align:right;color:${col};font-weight:bold">${t}</td>`; }
             if (c.href) return `<td style="${F}${bg}"><a href="${e(c.href)}">${e(c.t)}</a></td>`;
-            return `<td style="${F}${bg}${c.b ? 'font-weight:bold;' : ''}${i ? 'text-align:right;' : ''}">${e(c.t)}</td>`;
+            return `<td style="${F}${bg}${c.b ? 'font-weight:bold;' : ''}${i && isNumTxt(c.t) ? 'text-align:right;' : ''}">${e(c.t)}</td>`;
           }
-          return `<td style="${F}${bg}${i ? 'text-align:right;' : ''}">${e(c)}</td>`;
+          return `<td style="${F}${bg}${i && isNumTxt(c) ? 'text-align:right;' : ''}">${e(c)}</td>`;
         }).join('') + '</tr>';
       });
     });
@@ -3123,6 +3124,32 @@
     rows.forEach(r => { const cid = so(r.land); const c = m.get(cid) || new Map(); const o = c.get(r.id) || { id: r.id, cur: 0, prev: 0, path: '' }; o[r.range] += r.n; if (r.page && /-\d{5,}/.test(r.page) && (!o.path || r.page.length < o.path.length || !/-\d{5,}/.test(o.path))) o.path = r.page.replace(/\/(register|apply)(\/.*)?$/, ''); c.set(r.id, o); m.set(cid, c); });
     return m;
   }
+  // ── why it moved: plain-language drivers for every change ──
+  const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + fmtN(Math.abs(Math.round(v)));
+  // registrations (or signups) = sessions × rate: how much of the change came from traffic and how much from conversion
+  function funnelSplit(c, p, sc, sp, noun) {
+    if (c == null || p == null || !sp || !sc) return null;
+    const rp = p / sp, rc = c / sc, traffic = (sc - sp) * rp, conv = (rc - rp) * sc, d = c - p;
+    if (Math.abs(d) < 1) return null;
+    const main = Math.abs(traffic) >= Math.abs(conv) ? 'traffic' : 'conv';
+    const t = `${noun} ${sgn(d)}: organic sessions ${sgn(sc - sp)} (${dchipTxt(pctCh(sc, sp))}) explain ${sgn(traffic)}; ${noun.toLowerCase()} per 100 sessions ${(rp * 100).toFixed(1)} → ${(rc * 100).toFixed(1)} explains ${sgn(conv)}.`;
+    return { t, main, traffic, conv, lead: main === 'traffic' ? (traffic < 0 ? 'less Google traffic' : 'more Google traffic') : (conv < 0 ? 'fewer visitors converting' : 'more visitors converting') };
+  }
+  const dchipTxt = v => v == null ? 'n/a' : (v > 0 ? '+' : '') + v.toFixed(Math.abs(v) < 10 ? 1 : 0) + '%';
+  // Google clicks: demand (impressions), ranking (position) or click-through
+  function clickSplit(c, p, im, imP) {
+    if (c == null || p == null || !im || !imP) return null;
+    const ctr = c / im * 100, ctrP = p / imP * 100, ic = pctCh(im, imP);
+    const demand = (im - imP) * (p / imP), ctrEff = (ctr - ctrP) / 100 * im;
+    const lead = Math.abs(demand) >= Math.abs(ctrEff) ? (demand < 0 ? 'fewer impressions on Google' : 'more impressions on Google') : (ctrEff < 0 ? 'lower click-through (CTR)' : 'higher click-through (CTR)');
+    return { t: `Clicks ${sgn(c - p)}: impressions ${dchipTxt(ic)} explain ${sgn(demand)}; CTR ${ctrP.toFixed(2)}% → ${ctr.toFixed(2)}% explains ${sgn(ctrEff)}.`, lead };
+  }
+  // the biggest risers and fallers in a list of { name, d }
+  function movers(L, n = 3) {
+    const up = L.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, n), dn = L.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, n);
+    return { up, dn };
+  }
+  const moverTxt = (L, unit) => L.map(x => `${x.name} ${sgn(x.d)}${unit ? ' ' + unit : ''}${x.why ? ' (' + x.why + ')' : ''}`).join('; ');
   V.clusters = (A, D) => {
     demoFill(D);
     ['t-un-cl-all', 't-un-cl-opp', 't-un-cl-per', 't-un-cl-pg', 't-un-cl-q'].forEach(k => delete TABLES[k]);
@@ -3162,26 +3189,49 @@
     // ───────────── overview: every cluster ─────────────
     if (!sel) {
       const rows = list.map(sec => {
-        const S = { nb: series(sec.id, 'nbClicks'), ses: series(sec.id, 'sessions'), stu: series(sec.id, 'students'), reg: series(sec.id, 'regs') };
+        const S = { nb: series(sec.id, 'nbClicks'), ses: series(sec.id, 'sessions'), stu: series(sec.id, 'students'), reg: series(sec.id, 'regs'), c: series(sec.id, 'clicks'), im: series(sec.id, 'impr') };
         const r = { id: sec.id, name: sec.name, rules: sec.rules, S };
         [['nb', 'nb'], ['ses', 'ses'], ['stu', 'stu'], ['reg', 'reg']].forEach(([k]) => { r[k] = S[k][li]; r[k + 'P'] = S[k][li - 1]; r[k + 'C'] = pctCh(S[k][li], S[k][li - 1]); });
         r.regRate = rate(r.reg || 0, r.ses); r.stuRate = rate(r.stu || 0, r.ses);
         r.opp = oppCount(sec.id, 'cur'); r.oppP = oppCount(sec.id, 'prev'); r.oppC = pctCh(r.opp, r.oppP);
+        r.c = S.c[li]; r.cP = S.c[li - 1]; r.im = S.im[li]; r.imP = S.im[li - 1];
+        const om = OB && OB.get(sec.id) ? [...OB.get(sec.id).values()].map(o => ({ name: (o.path && oppPageName(o.path)) || 'Opportunity ' + o.id, d: o.cur - o.prev })) : [];
+        r.oppMov = movers(om, 2);
         return r;
       }).filter(r => r.S.nb.some(v => v) || r.S.ses.some(v => v));
       const mk = { regs: 'reg', students: 'stu', sessions: 'ses', nbClicks: 'nb' }[metric], mLabel = CL_M.find(m => m[0] === metric)[1];
       rows.sort((a, b) => (b[mk] || 0) - (a[mk] || 0));
+      // why each cluster moved, for the metric the cards are ranked by
+      const why = r => {
+        const parts = [], cl = clickSplit(r.c, r.cP, r.im, r.imP);
+        let lead = '';
+        if (mk === 'reg' || mk === 'stu') {
+          const f = funnelSplit(r[mk], r[mk + 'P'], r.ses, r.sesP, mk === 'reg' ? 'Registrations' : 'Signups');
+          if (f) { parts.push(f.t); lead = f.lead; if (f.main === 'traffic' && cl) { parts.push('Traffic: ' + cl.t); lead += ' (' + cl.lead + ')'; } }
+          if (mk === 'reg' && (r.oppMov.up.length || r.oppMov.dn.length)) { const d = r[mk] - (r[mk + 'P'] || 0), main = d < 0 ? r.oppMov.dn : r.oppMov.up, other = d < 0 ? r.oppMov.up : r.oppMov.dn; if (main.length) parts.push(`Opportunities ${d < 0 ? 'down' : 'up'} most: ${moverTxt(main)}.`); if (other.length) parts.push(`Partly offset by: ${moverTxt(other)}.`); }
+        } else if (mk === 'ses') {
+          if (cl) { parts.push('Sessions follow Google clicks. ' + cl.t); lead = cl.lead; }
+          parts.push(`Non-brand clicks ${dchipTxt(r.nbC)}, branded clicks ${dchipTxt(pctCh((r.c || 0) - (r.nb || 0), (r.cP || 0) - (r.nbP || 0)))}.`);
+        } else if (cl) { parts.push(cl.t); lead = cl.lead; parts.push(`Branded clicks ${dchipTxt(pctCh((r.c || 0) - (r.nb || 0), (r.cP || 0) - (r.nbP || 0)))}.`); }
+        return { lead, text: parts.join(' ') };
+      };
+      rows.forEach(r => { r.why = why(r); r.whyT = r.why.text; });
       const tiles = `<div class="kpis un-clk">${kpi('Opportunity registrations', ga ? allSeries('regs') : pers.map(() => null))}${oppTile(oppAll('cur'), oppAll('prev'))}${kpi('Student signups', ga ? allSeries('students') : pers.map(() => null))}${kpi('Organic sessions', ga ? allSeries('sessions') : pers.map(() => null))}${kpi('Non-brand clicks (Google)', allSeries('nbClicks'))}</div>`;
       const ups = rows.filter(r => r[mk + 'C'] != null && (r[mk] - r[mk + 'P']) > 0).sort((a, b) => (b[mk] - b[mk + 'P']) - (a[mk] - a[mk + 'P'])).slice(0, 3);
       const downs = rows.filter(r => r[mk + 'C'] != null && (r[mk] - r[mk + 'P']) < 0).sort((a, b) => (a[mk] - a[mk + 'P']) - (b[mk] - b[mk + 'P'])).slice(0, 3);
       const mv = r => `<a href="${href({ c: r.id })}">${esc(r.name)}</a> ${(r[mk] - r[mk + 'P']) > 0 ? '+' : ''}${fmtN(Math.round(r[mk] - r[mk + 'P']))} (${dchip(r[mk + 'C'])})`;
       const summary = `<div class="grid-2 even"><div class="note"><b>${esc(mLabel)} up most</b>: ${ups.length ? ups.map(mv).join(' · ') : 'none'}</div><div class="note"><b>${esc(mLabel)} down most</b>: ${downs.length ? downs.map(mv).join(' · ') : 'none'}</div></div>`;
+      const totD = rows.reduce((a, r) => a + ((r[mk] || 0) - (r[mk + 'P'] || 0)), 0), totP = rows.reduce((a, r) => a + (r[mk + 'P'] || 0), 0);
+      const cm = movers(rows.map(r => ({ r, name: r.name, d: (r[mk] || 0) - (r[mk + 'P'] || 0) })), 3);
+      const drvLine = x => `<li><a href="${href({ c: x.r.id })}"><b>${esc(x.name)}</b></a> ${sgn(x.d)} (${dchipTxt(x.r[mk + 'C'])})${x.r.why.text ? ` <span class="un-n">— ${esc(x.r.why.text)}</span>` : ''}</li>`;
+      const drivers = `<section class="panel un-why"><div class="panel-h"><h2>Why ${esc(mLabel.toLowerCase())} ${totD >= 0 ? 'went up' : 'went down'}: ${sgn(totD)} (${dchipTxt(pctCh(totP + totD, totP))}), ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Which clusters moved the total and, inside each, what moved it: Google traffic or how many visitors converted${mk === 'reg' ? ', and which opportunities' : ''}.</p></div><div class="panel-b"><div class="grid-2 even"><div><h3 class="un-why-h down">Pulled it down</h3><ul>${cm.dn.length ? cm.dn.map(drvLine).join('') : '<li class="un-n">Nothing fell.</li>'}</ul></div><div><h3 class="un-why-h up">Pushed it up</h3><ul>${cm.up.length ? cm.up.map(drvLine).join('') : '<li class="un-n">Nothing rose.</li>'}</ul></div></div></div></section>`;
       const card = r => {
         const t = trendOf(r[mk + 'C']), [bc, bl] = TREND_B[t];
         const line = (l, k) => `<span>${l} <b>${fv(r[k])}</b> ${dchip(r[k + 'C'])}</span>`;
         return `<a class="card un-clc" href="${href({ c: r.id })}" title="Open ${esc(r.name)}">
           <div class="card-top"><span class="card-n">${esc(r.name)}</span><span class="badge ${bc}">${bl}</span></div>
           <div class="un-clc-v"><div><div class="card-v">${fv(r[mk])}</div><div class="card-m">${esc(mLabel)} · ${dchip(r[mk + 'C'])} vs ${esc(prv.label)}</div></div>${spark(r.S[mk].slice(0, li + 1), t === 'up' ? 'up' : t === 'down' ? 'down' : '')}</div>
+          ${r.why.lead && Math.abs((r[mk] || 0) - (r[mk + 'P'] || 0)) >= 1 ? `<div class="un-clc-why"><b>Why:</b> ${esc(r.why.lead)}</div>` : ''}
           <div class="un-clc-m">${[['reg', 'Registrations'], ['opp', 'Opportunities'], ['stu', 'Signups'], ['ses', 'Sessions'], ['nb', 'Non-brand clicks']].filter(([k]) => k !== mk).map(([k, l]) => line(l, k)).join('')}</div>
         </a>`;
       };
@@ -3193,17 +3243,19 @@
         numCol('reg', 'Registrations'), chgCol('reg', 'Change'), numCol('opp', 'Opportunities'), chgCol('opp', 'Change'),
         numCol('stu', 'Signups'), chgCol('stu', 'Change'),
         { k: 'regRate', l: 'Regs per 100 sessions', r: 1, f: r => r.regRate == null ? '—' : r.regRate.toFixed(1), csv: r => r.regRate == null ? '' : r.regRate.toFixed(2) },
-        numCol('ses', 'Organic sessions'), chgCol('ses', 'Change'), numCol('nb', 'Non-brand clicks'), chgCol('nb', 'Change')
+        numCol('ses', 'Organic sessions'), chgCol('ses', 'Change'), numCol('nb', 'Non-brand clicks'), chgCol('nb', 'Change'),
+        { k: 'whyT', l: `Why ${mLabel.toLowerCase()} moved`, sort: false, f: r => `<small>${esc(r.whyT || '—')}</small>`, csv: r => r.whyT || '' }
       ], rows, { sort: mk, file: `unstop-clusters-${gran}`, search: false, pageSize: 50 })}</section>`;
       const blocks = () => {
         const tot = m => allSeries(m), T = { nb: tot('nbClicks'), ses: tot('sessions'), stu: tot('students'), reg: tot('regs') };
         return [
           { title: 'Headline numbers (all clusters)', head: ['Metric', cur.label, prv.label, 'Change'], rows: [['Opportunity registrations', 'reg'], ['Student signups', 'stu'], ['Organic sessions', 'ses'], ['Non-brand clicks', 'nb']].map(([l, k]) => [{ t: l, b: 1 }, fv(T[k][li]), fv(T[k][li - 1]), { chg: pctCh(T[k][li], T[k][li - 1]) }]).concat(OB ? [[{ t: 'Opportunities registered for', b: 1 }, fv(oppAll('cur')), fv(oppAll('prev')), { chg: pctCh(oppAll('cur'), oppAll('prev')) }]] : []) },
-          { title: `Clusters, sorted by ${mLabel.toLowerCase()} (high to low)`, head: ['Cluster', 'Trend', 'Registrations', 'Change', 'Opportunities', 'Change', 'Signups', 'Change', 'Regs per 100 sessions', 'Organic sessions', 'Change', 'Non-brand clicks', 'Change'], rows: rows.map(r => [{ t: r.name, b: 1 }, { t: TREND_B[trendOf(r[mk + 'C'])][1] }, fv(r.reg), { chg: r.regC }, fv(r.opp), { chg: r.oppC }, fv(r.stu), { chg: r.stuC }, r.regRate == null ? '—' : r.regRate.toFixed(1), fv(r.ses), { chg: r.sesC }, fv(r.nb), { chg: r.nbC }]) },
+          { title: `Why ${mLabel.toLowerCase()} moved: ${sgn(totD)} (${dchipTxt(pctCh(totP + totD, totP))})`, head: ['Cluster', 'Change', '%', 'Main reason', 'Detail'], rows: [...cm.dn, ...cm.up].map(x => [{ t: x.name, b: 1 }, sgn(x.d), { chg: x.r[mk + 'C'] }, { t: x.r.why.lead || '—' }, { t: x.r.why.text || '' }]) },
+          { title: `Clusters, sorted by ${mLabel.toLowerCase()} (high to low)`, head: ['Cluster', 'Trend', 'Registrations', 'Change', 'Opportunities', 'Change', 'Signups', 'Change', 'Regs per 100 sessions', 'Organic sessions', 'Change', 'Non-brand clicks', 'Change', 'Why'], rows: rows.map(r => [{ t: r.name, b: 1 }, { t: TREND_B[trendOf(r[mk + 'C'])][1] }, fv(r.reg), { chg: r.regC }, fv(r.opp), { chg: r.oppC }, fv(r.stu), { chg: r.stuC }, r.regRate == null ? '—' : r.regRate.toFixed(1), fv(r.ses), { chg: r.sesC }, fv(r.nb), { chg: r.nbC }, { t: r.why.lead || '' }]) },
           { title: `${mLabel}, last 12 ${per}s`, head: ['Cluster', ...pers.map(p => p.label + (p.partial ? '*' : ''))], rows: rows.map(r => [{ t: r.name, b: 1 }, ...r.S[mk].map(fv)]) }
         ];
       };
-      const html = intro + tabs + notes + periodLine + tiles + summary + copyBtn + cards + tbl +
+      const html = intro + tabs + notes + periodLine + tiles + drivers + copyBtn + cards + tbl +
         `<p class="hint">Sources: Search Console (Google web search; non-brand = searches without your brand terms) and GA4 (Organic Search; signups = ${esc(((settings(D.site).events || {}).studentSignup || []).join(', ') || 'not set')}; registrations = students with ${esc(((settings(D.site).events || {}).opportunityAction || []).join(', ') || 'not set')} that carries an opportunity_id, counted per day). Clusters are set in <a href="#funnelsetup">Funnel setup</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
       return { html, mount: () => { drawTable('t-un-cl-all'); reload(); if (live && !CO.get(ok)) loadClusterOpps(D, cur, prv, ok); const b = document.getElementById('un-cl-copy'); if (b) b.addEventListener('click', () => { const B = blocks(); copyRich(sheetCopyHtml('Unstop SEO clusters · ' + (gran === 'week' ? 'week on week' : 'month on month'), subT + ' · Search Console + GA4 (Organic Search)', B), plainOf('Unstop SEO clusters', B), 'un-cl-msg'); }); } };
     }
@@ -3247,14 +3299,14 @@
     const qk = [trKey(D), sel.id, cur.start, prv.start].join('|');
     let qs = live ? CQ.get(qk) : null;
     if (!live) { const so = sectioner(D); const src = (A.QP && A.QP.length ? A.QP.filter(r => so(r.p) === sel.id) : (A.Q || [])).slice(0, 120); let seed = 7; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; const f = gran === 'week' ? 1 / 13 : 1 / 3; const mkq = k => src.map(r => ({ keys: [r.q], clicks: (+r.clicks || 0) * f * (k ? .8 + R() * .4 : 1), impressions: (+r.impr || 0) * f, position: (+r.pos || 10) + (k ? R() * 2 - 1 : 0) })); qs = { status: 'done', cur: mkq(0), prev: mkq(1) }; }
-    let qHtml;
+    let qHtml, qRows = null;
     if (!qs || qs.status === 'loading') qHtml = '<p class="progress">Loading searches from Search Console…</p>';
     else if (qs.status === 'error') qHtml = `<p class="start-error">${esc(qs.error)}</p>`;
     else {
       const isB = brandOf(A), m = new Map();
-      const put = (L, k) => L.forEach(r => { const q = r.keys[0]; const o = m.get(q) || { q, c: 0, p: 0, im: 0, pos: null, posP: null }; if (k) { o.p += r.clicks; o.posP = r.position; } else { o.c += r.clicks; o.im += r.impressions; o.pos = r.position; } m.set(q, o); });
+      const put = (L, k) => L.forEach(r => { const q = r.keys[0]; const o = m.get(q) || { q, c: 0, p: 0, im: 0, imP: 0, pos: null, posP: null }; if (k) { o.p += r.clicks; o.imP += r.impressions; o.posP = r.position; } else { o.c += r.clicks; o.im += r.impressions; o.pos = r.position; } m.set(q, o); });
       put(qs.cur, 0); put(qs.prev, 1);
-      const qRows = [...m.values()].map(o => ({ ...o, d: o.c - o.p, ch: pctCh(o.c, o.p), dPos: o.pos != null && o.posP != null ? o.pos - o.posP : null, brand: isB(o.q) ? 'Branded' : 'Non-brand' })).filter(o => o.c + o.p >= 1);
+      qRows = [...m.values()].map(o => ({ ...o, d: o.c - o.p, ch: pctCh(o.c, o.p), dPos: o.pos != null && o.posP != null ? o.pos - o.posP : null, brand: isB(o.q) ? 'Branded' : 'Non-brand' })).filter(o => o.c + o.p >= 1);
       qHtml = table('t-un-cl-q', [
         { k: 'q', l: 'Search', cls: 'q', f: r => esc(r.q), csv: r => r.q }, { k: 'brand', l: 'Type', csv: r => r.brand },
         { k: 'c', l: `Clicks (${cur.label})`, r: 1, f: r => fmtN(Math.round(r.c)), csv: r => Math.round(r.c) }, { k: 'p', l: `Clicks (${prv.label})`, r: 1, f: r => fmtN(Math.round(r.p)), csv: r => Math.round(r.p) },
@@ -3263,13 +3315,29 @@
         { k: 'pos', l: 'Position', r: 1, f: r => r.pos == null ? '—' : r.pos.toFixed(1) + ' ' + (r.dPos == null ? '' : dchip(r.dPos, true, 'pos')), csv: r => r.pos == null ? '' : r.pos.toFixed(1) }
       ], qRows, { sort: 'd', file: `unstop-${sel.id}-searches-${gran}`, pageSize: 20, placeholder: 'Filter searches', filters: [{ key: 'brand', label: 'Type', options: [['Non-brand', 'Non-brand'], ['Branded', 'Branded']], test: (r, v) => r.brand === v }] });
     }
+    // ── why it moved ──
+    const W = [];
+    const fR = funnelSplit(S.reg[li], S.reg[li - 1], S.ses[li], S.ses[li - 1], 'Registrations'), fS = funnelSplit(S.stu[li], S.stu[li - 1], S.ses[li], S.ses[li - 1], 'Signups'), cS = clickSplit(S.c[li], S.c[li - 1], S.im[li], S.im[li - 1]);
+    if (fR || fS) W.push({ h: 'Registrations and signups', main: fR ? fR.lead : fS.lead, items: [fR && fR.t, fS && fS.t].filter(Boolean) });
+    if (cS) W.push({ h: 'Traffic from Google', main: cS.lead, items: [cS.t, `Non-brand clicks ${sgn((S.nb[li] || 0) - (S.nb[li - 1] || 0))} (${dchipTxt(pctCh(S.nb[li], S.nb[li - 1]))}); branded clicks ${sgn(((S.c[li] || 0) - (S.nb[li] || 0)) - ((S.c[li - 1] || 0) - (S.nb[li - 1] || 0)))} (${dchipTxt(pctCh((S.c[li] || 0) - (S.nb[li] || 0), (S.c[li - 1] || 0) - (S.nb[li - 1] || 0)))}).`, `Organic sessions ${sgn((S.ses[li] || 0) - (S.ses[li - 1] || 0))} (${dchipTxt(pctCh(S.ses[li], S.ses[li - 1]))}).`] });
+    const mvBlock = (h, L, unit) => { const m = movers(L, 3); if (!m.up.length && !m.dn.length) return; W.push({ h, items: [m.dn.length ? 'Down most: ' + moverTxt(m.dn, unit) + '.' : '', m.up.length ? 'Up most: ' + moverTxt(m.up, unit) + '.' : ''].filter(Boolean) }); };
+    if (oc.length) mvBlock('Opportunities (registrations)', oc.map(o => ({ name: o.name, d: o.cur - o.prev })), '');
+    if (pgRows.length) { mvBlock('Landing pages (registrations)', pgRows.map(r => ({ name: r.path, d: (r.reg || 0) - (r.regP || 0) })), ''); mvBlock('Landing pages (organic sessions)', pgRows.map(r => ({ name: r.path, d: (r.ses || 0) - (r.sesP || 0) })), ''); }
+    if (qRows && qRows.length) {
+      const qWhy = r => { const ic = pctCh(r.im, r.imP); if (r.pos != null && r.posP != null && Math.abs(r.pos - r.posP) >= 0.5 && Math.sign(r.posP - r.pos) === Math.sign(r.d)) return `position ${r.posP.toFixed(1)} → ${r.pos.toFixed(1)}`; if (ic != null && Math.abs(ic) >= 15 && Math.sign(ic) === Math.sign(r.d)) return `impressions ${dchipTxt(ic)}, search demand`; return r.im && r.imP ? `CTR ${(r.p / r.imP * 100).toFixed(1)}% → ${(r.c / r.im * 100).toFixed(1)}%` : ''; };
+      mvBlock('Searches (Google clicks)', qRows.filter(r => r.brand === 'Non-brand').map(r => ({ name: '“' + r.q + '”', d: r.d, why: qWhy(r) })), 'clicks');
+      const bq = qRows.filter(r => r.brand === 'Branded').reduce((a, r) => a + r.d, 0); if (Math.abs(bq) >= 5) W.push({ h: 'Branded searches', items: [`Searches with “unstop” in them ${sgn(bq)} clicks: this follows brand demand (marketing, campus drives, news), not SEO work.`] });
+    }
+    const pend = [(!ps || ps.status === 'loading') && 'landing pages', (!qs || qs.status === 'loading') && 'searches', (!os || os.status === 'loading') && 'opportunities'].filter(Boolean);
+    const whyHtml = `<section class="panel un-why"><div class="panel-h"><h2>Why it moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Every change split into what caused it: Google traffic (impressions, ranking, click-through), how many visitors converted, and which opportunities, pages and searches gained or lost.${pend.length ? ` Still loading: ${pend.join(', ')}.` : ''}</p></div><div class="panel-b"><div class="un-why-g">${W.map(w => `<div class="un-why-c"><h3>${esc(w.h)}</h3>${w.main ? `<p class="un-why-main">Main reason: <b>${esc(w.main)}</b></p>` : ''}<ul>${w.items.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('') || '<p class="un-n">No change big enough to explain.</p>'}</div></div></section>`;
     const blocks = () => [
+      { title: 'Why it moved', head: ['Area', 'Main reason', 'Detail'], rows: W.map(w => [{ t: w.h, b: 1 }, { t: w.main || '' }, { t: w.items.join(' ') }]) },
       { title: `${sel.name}: ${cur.label} vs ${prv.label}`, head: ['Metric', cur.label, prv.label, 'Change'], rows: [['Non-brand clicks', 'nb'], ['Organic sessions', 'ses'], ['Student signups', 'stu'], ['Opportunity registrations', 'reg']].map(([l, k]) => [{ t: l, b: 1 }, fv(S[k][li]), fv(S[k][li - 1]), { chg: pctCh(S[k][li], S[k][li - 1]) }]) },
       { title: gran === 'week' ? 'Week by week' : 'Month by month', head: [gran === 'week' ? 'Week of' : 'Month', 'Non-brand clicks', 'Change', 'Impressions', 'Organic sessions', 'Change', 'Signups', 'Change', 'Registrations', 'Change', 'Regs per 100 sessions'], rows: perRows.map(r => [{ t: r.label, b: 1 }, fv(r.nb), { chg: r.nbC }, fv(r.im), fv(r.ses), { chg: r.sesC }, fv(r.stu), { chg: r.stuC }, fv(r.reg), { chg: r.regC }, r.regRate == null ? '—' : r.regRate.toFixed(1)]) },
       { title: `Opportunities students registered for (${cur.label}), high to low`, head: ['Opportunity', 'ID', cur.label, prv.label, 'Change'], rows: oc.slice().sort((a, b) => b.cur - a.cur).slice(0, 20).map(r => [r.path ? { t: r.name, href: 'https://unstop.com' + r.path } : { t: r.name }, r.id, fv(r.cur), fv(r.prev), { chg: r.prev ? r.ch : null }]) },
       { title: `Top landing pages by registrations (${cur.label})`, head: ['Landing page', 'Sessions', 'Signups', 'Registrations', 'Change'], rows: pgRows.slice().sort((a, b) => (b.reg || 0) - (a.reg || 0)).slice(0, 15).map(r => [{ t: r.path, href: 'https://unstop.com' + r.path }, fv(r.ses), fv(r.stu), fv(r.reg), { chg: r.regC }]) }
     ];
-    const html = intro + tabs + notes + periodLine + tiles + copyBtn +
+    const html = intro + tabs + notes + periodLine + tiles + whyHtml + copyBtn +
       `<section class="panel"><div class="panel-h"><h2>Opportunities students registered for: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Students who came from Google to this cluster and registered, by opportunity, high to low. ${OB ? `${fmtN(oc.filter(o => o.cur > 0).length)} opportunities got registrations in ${esc(cur.label)}.` : ''}</p></div>${oppHtml}</section>` + perTbl +
       `<section class="panel"><div class="panel-h"><h2>Landing pages: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>GA4 organic sessions that started on each page, and the signups and registrations in those visits.</p></div>${pageHtml}</section>` +
       `<section class="panel"><div class="panel-h"><h2>Searches that moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Google searches that brought clicks to this cluster, sorted by the change in clicks.</p></div>${qHtml}</section>` +
