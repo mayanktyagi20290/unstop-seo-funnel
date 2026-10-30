@@ -11,7 +11,7 @@ window.CW_CONFIG = {
   googleClientId: '303461488867-0bmr9c2749ebh6n8uvkmes7q1bfguopo.apps.googleusercontent.com',
 
   // Rows pulled per dimension through the API (GSC returns 25,000 per page).
-  maxRows: 100000,
+  maxRows: 25000, // one request per list: the funnel screens load their own exact totals, so the long tail is not needed here
 
   // Rows pulled for the query × page report used by cannibalisation.
   maxQueryPageRows: 25000,

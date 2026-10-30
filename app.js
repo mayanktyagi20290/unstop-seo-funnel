@@ -480,7 +480,7 @@
     const refresh = () => {
       data.pending = { qp: left.has('query-page pairs'), prev: left.has('previous period'), more: left.has('more rows') };
       status(label() || (data.failed ? 'Some extra data could not load' : ''));
-      if (A && D === data) { const y = window.scrollY; A = analyse(); counts(); route(); window.scrollTo(0, y); }
+      if (A && D === data && !left.size) { const y = window.scrollY; A = analyse(); counts(); route(); window.scrollTo(0, y); } // one re-analysis when the background loads are all in
     };
     const jobs = [job('query-page pairs', pull(o.site, o.start, o.end, ['query', 'page'], CFG.maxQueryPageRows, '', 0, true), rows => { data.QP = rows.map(r => mapRow(r, ['q', 'p'])); })];
     if (o.compare) jobs.push(job('previous period', Promise.all([
@@ -683,7 +683,7 @@
     $('top-scope').title = canSwitch ? 'Analyse another folder or page' : 'Set by the Page filter in the export';
     counts();
     show('app');
-    if (!knownRoute(location.hash.slice(1))) history.replaceState(null, '', '#funnel');
+    if (!knownRoute(location.hash.slice(1))) history.replaceState(null, '', '#clusters');
     route();
   }
   function fmtDate(s) { const d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); }
@@ -725,7 +725,7 @@
   }
   function route() {
     if (!A) return;
-    let raw = location.hash.slice(1) || 'funnel';
+    let raw = location.hash.slice(1) || 'clusters';
     // the old regex tool was replaced by Smart filters; keep old links working
     if (raw.split('?')[0] === 'regex') { history.replaceState(null, '', '#filters'); raw = 'filters'; }
     const base = raw.split('?')[0];
