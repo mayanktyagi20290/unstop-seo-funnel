@@ -2902,7 +2902,8 @@
     const prog = () => { const p = document.getElementById('un-tr-prog'); if (p) p.textContent = `Loading… ${st.done} of ${st.total} requests`; };
     const jobsG = [], jobsA = [];
     const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), tok = token();
-    const stuEv = (s.events && s.events.studentSignup) || [];
+    const stuEv = (s.events && s.events.studentSignup) || [], regEv = (s.events && s.events.opportunityAction) || [];
+    const hasOppT = { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } };
     list.forEach(sec => {
       const rx = U.sectionRegex(sec, null), ex = U.sectionExclude(sec, s.sections);
       const pf = [{ dimension: 'page', operator: 'includingRegex', expression: rx }].concat(ex ? [{ dimension: 'page', operator: 'excludingRegex', expression: ex }] : []);
@@ -2911,12 +2912,14 @@
       jobsG.push(() => q([]).then(o => { st.gsc[sec.id].all = o; }));
       if (A.brandRx) jobsG.push(() => q([{ dimension: 'query', operator: 'excludingRegex', expression: A.brandRx }]).then(o => { st.gsc[sec.id].nb = o; }));
       if (pid && tok) {
-        st.ga[sec.id] = { ses: {}, stu: {} };
+        st.ga[sec.id] = { ses: {}, stu: {}, reg: {} };
         const lp = { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(rx) } } };
         const exp = [U.GA.organicFilter, lp].concat(ex ? [{ notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(ex) } } } }] : []);
         const rows = body => runReport(pid, body).then(r => U.gaRows(r));
         jobsA.push(() => rows({ dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: 'sessions' }], dimensionFilter: { andGroup: { expressions: exp } }, limit: 1000 }).then(L => { L.forEach(r => { st.ga[sec.id].ses[String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')] = r.sessions; }); }));
         if (stuEv.length) jobsA.push(() => rows({ dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: 'eventCount' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', stuEv)]) } }, limit: 1000 }).then(L => { L.forEach(r => { st.ga[sec.id].stu[String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')] = r.eventCount; }); }));
+        // registrations = students (users) per day with the registration event that carries an opportunity_id
+        if (regEv.length) jobsA.push(() => rows({ dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', regEv), hasOppT]) } }, limit: 1000 }).then(L => { L.forEach(r => { st.ga[sec.id].reg[String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')] = r.totalUsers; }); }));
       }
     });
     st.gaOk = !!(pid && tok);
@@ -2933,18 +2936,18 @@
     const tot = new Map(); (A.P || []).forEach(r => { const id = so(r.p); tot.set(id, (tot.get(id) || 0) + (+r.clicks || 0)); });
     const st = { status: 'done', sample: true, start, end, gsc: {}, ga: {}, gaOk: true, errors: [], at: Date.now() };
     list.forEach(sec => {
-      const base = (tot.get(sec.id) || 0) / 90, slope = (R() - .45) * .004, o = { all: {}, nb: {} }, g = { ses: {}, stu: {} };
-      for (let d = start, i = 0; d <= end; d = addD(d, 1), i++) { const wk = [1, 1.05, 1.04, 1.02, .95, .8, .78][(new Date(d + 'T00:00:00Z').getUTCDay() + 6) % 7]; const c = Math.max(0, base * wk * (1 + slope * (i - 400)) * (.85 + R() * .3)); o.all[d] = { c, i: c * (18 + R() * 8) }; o.nb[d] = { c: c * .7, i: c * 17 }; g.ses[d] = c * 1.1; g.stu[d] = c * (.01 + R() * .02); }
+      const base = (tot.get(sec.id) || 0) / 90, slope = (R() - .45) * .004, o = { all: {}, nb: {} }, g = { ses: {}, stu: {}, reg: {} };
+      for (let d = start, i = 0; d <= end; d = addD(d, 1), i++) { const wk = [1, 1.05, 1.04, 1.02, .95, .8, .78][(new Date(d + 'T00:00:00Z').getUTCDay() + 6) % 7]; const c = Math.max(0, base * wk * (1 + slope * (i - 400)) * (.85 + R() * .3)); o.all[d] = { c, i: c * (18 + R() * 8) }; o.nb[d] = { c: c * .7, i: c * 17 }; g.ses[d] = c * 1.1; g.stu[d] = c * (.01 + R() * .02); g.reg[d] = c * (.03 + R() * .05); }
       st.gsc[sec.id] = o; st.ga[sec.id] = g;
     });
     return st;
   }
-  const TR_METRICS = [['clicks', 'Search Console clicks'], ['nbClicks', 'Non-brand clicks'], ['impr', 'Impressions'], ['sessions', 'GA4 organic sessions'], ['students', 'Student signups (GA4)'], ['cvr', 'Student signups per 100 sessions']];
+  const TR_METRICS = [['clicks', 'Search Console clicks'], ['nbClicks', 'Non-brand clicks'], ['impr', 'Impressions'], ['sessions', 'GA4 organic sessions'], ['students', 'Student signups (GA4)'], ['regs', 'Registrations (GA4)'], ['cvr', 'Student signups per 100 sessions']];
   function trSum(st, id, p, metric) {
-    const g = st.gsc[id] || { all: {}, nb: {} }, a = st.ga[id] || { ses: {}, stu: {} };
-    let c = 0, i = 0, nb = 0, ses = 0, stu = 0;
-    for (let d = p.start; d <= p.end; d = addD(d, 1)) { const x = g.all[d]; if (x) { c += x.c; i += x.i; } const y = g.nb[d]; if (y) nb += y.c; ses += a.ses[d] || 0; stu += a.stu[d] || 0; }
-    return metric === 'clicks' ? c : metric === 'nbClicks' ? nb : metric === 'impr' ? i : metric === 'sessions' ? (st.gaOk ? ses : null) : metric === 'students' ? (st.gaOk ? stu : null) : metric === 'cvr' ? (st.gaOk && ses ? stu / ses * 100 : null) : null;
+    const g = st.gsc[id] || { all: {}, nb: {} }, a = st.ga[id] || { ses: {}, stu: {}, reg: {} }, ar = a.reg || {};
+    let c = 0, i = 0, nb = 0, ses = 0, stu = 0, reg = 0;
+    for (let d = p.start; d <= p.end; d = addD(d, 1)) { const x = g.all[d]; if (x) { c += x.c; i += x.i; } const y = g.nb[d]; if (y) nb += y.c; ses += a.ses[d] || 0; stu += a.stu[d] || 0; reg += ar[d] || 0; }
+    return metric === 'regs' ? (st.gaOk ? reg : null) : metric === 'clicks' ? c : metric === 'nbClicks' ? nb : metric === 'impr' ? i : metric === 'sessions' ? (st.gaOk ? ses : null) : metric === 'students' ? (st.gaOk ? stu : null) : metric === 'cvr' ? (st.gaOk && ses ? stu / ses * 100 : null) : null;
   }
   V.trends = (A, D) => {
     demoFill(D);
@@ -2968,7 +2971,7 @@
     const thead = `<tr><th>Cluster</th>${pers.map(p => `<th class="r">${esc(p.label)}${p.partial ? '*' : ''}</th>`).join('')}<th class="r">Last ${gran} vs previous</th></tr>`;
     const trow = (r, isTot) => `<tr${isTot ? ' class="un-b2e-sec"' : ''}><td>${isTot ? '<b>All clusters</b>' : `<a href="${href({ c: r.id })}"><b>${esc(r.name)}</b></a><br><small class="un-n">${esc(r.rules.slice(0, 3).join(', '))}${r.rules.length > 3 ? '…' : ''}</small>`}</td>${r.vals.map((v, j) => `<td class="r">${cell(v, j ? r.vals[j - 1] : null)}</td>`).join('')}<td class="r">${isPct ? (r.vals[li] != null && r.vals[li - 1] != null ? `<span class="un-d ${r.vals[li] >= r.vals[li - 1] ? 'up' : 'down'}">${(r.vals[li] - r.vals[li - 1] >= 0 ? '+' : '') + (r.vals[li] - r.vals[li - 1]).toFixed(2)}</span>` : '—') : dchip(lastChg(r.vals))}</td></tr>`;
     const mLabel = TR_METRICS.find(m => m[0] === metric)[1];
-    const gaMissing = !st.gaOk && ['sessions', 'students', 'cvr'].includes(metric);
+    const gaMissing = !st.gaOk && ['sessions', 'students', 'regs', 'cvr'].includes(metric);
     const tsv = () => [['Cluster', ...pers.map(p => p.label + (p.partial ? ' (partial)' : '')), `Last ${gran} vs previous`].join('\t')].concat([{ name: 'All clusters', vals: tot }, ...rows].map(r => [r.name, ...r.vals.map(v => v == null ? '' : isPct ? v.toFixed(2) : String(Math.round(v))), isPct ? '' : (lastChg(r.vals) == null ? '' : lastChg(r.vals).toFixed(1) + '%')].join('\t'))).join('\n');
     // up / down summary: biggest moves in the last full period
     const moves = rows.map(r => ({ r, c: lastChg(r.vals), d: (r.vals[li] || 0) - (r.vals[li - 1] || 0) })).filter(x => x.c != null && Math.abs(x.d) >= (isPct ? .05 : 5));
@@ -3027,18 +3030,258 @@
       const dim = gran === 'month' ? 'yearMonth' : 'date';
       const range = [{ startDate: pers[0].start, endDate: pers[pers.length - 1].end }];
       const stuEv = (s.events && s.events.studentSignup) || [];
-      const [S, E] = await Promise.all([
+      const regEv = (s.events && s.events.opportunityAction) || [];
+      const hasOppP = { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } };
+      const [S, E, G] = await Promise.all([
         runReport(pid, { dateRanges: range, dimensions: [{ name: 'landingPage' }, { name: dim }], metrics: [{ name: 'sessions' }], dimensionFilter: { andGroup: { expressions: exp } }, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 50000 }).then(U.gaRows),
-        stuEv.length ? runReport(pid, { dateRanges: range, dimensions: [{ name: 'landingPage' }, { name: dim }], metrics: [{ name: 'eventCount' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', stuEv)]) } }, limit: 50000 }).then(U.gaRows) : Promise.resolve([])
+        stuEv.length ? runReport(pid, { dateRanges: range, dimensions: [{ name: 'landingPage' }, { name: dim }], metrics: [{ name: 'eventCount' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', stuEv)]) } }, limit: 50000 }).then(U.gaRows) : Promise.resolve([]),
+        regEv.length ? runReport(pid, { dateRanges: range, dimensions: [{ name: 'landingPage' }, { name: dim }], metrics: [{ name: 'totalUsers' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', regEv), hasOppP]) } }, limit: 50000 }).then(U.gaRows).catch(() => []) : Promise.resolve([])
       ]);
       const idxOf = v => { const d = String(v); if (gran === 'month') { const m = d.replace(/^(\d{4})(\d{2})$/, '$1-$2'); return pers.findIndex(p => p.key === m); } const iso = d.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'); return pers.findIndex(p => iso >= p.start && iso <= p.end); };
-      const m = new Map(); const get = p => { const key = U.pathOnly(p); if (!m.has(key)) m.set(key, { path: key, stu: pers.map(() => 0), ses: pers.map(() => 0) }); return m.get(key); };
+      const m = new Map(); const get = p => { const key = U.pathOnly(p); if (!m.has(key)) m.set(key, { path: key, stu: pers.map(() => 0), ses: pers.map(() => 0), reg: pers.map(() => 0) }); return m.get(key); };
       S.forEach(r => { const j = idxOf(r[dim]); if (j >= 0) get(r.landingPage).ses[j] += r.sessions; });
       E.forEach(r => { const j = idxOf(r[dim]); if (j >= 0) get(r.landingPage).stu[j] += r.eventCount; });
+      G.forEach(r => { const j = idxOf(r[dim]); if (j >= 0) get(r.landingPage).reg[j] += r.totalUsers; });
       st.rows = [...m.values()]; st.status = 'done';
     } catch (e) { st.status = 'error'; st.error = e.message; }
     if (TRP.get(k) === st) rerender();
   }
+
+  // ════════════════════════════ CLUSTERS: WEEK ON WEEK, MONTH ON MONTH, DEEP DIVE ════════════════════════════
+  // Unstop's own clusters (not raw folders) with the full funnel per cluster: non-brand clicks, GA4 organic
+  // sessions, student signups and opportunity registrations, the last full week or month against the one
+  // before. Uses the same per-cluster daily data as Cluster trends (one load serves both screens).
+  // #clusters?by=week|month&m=regs|students|sessions|nbClicks&c=<cluster id>
+  const CQ = new Map(); // cluster searches: key → { status, cur, prev }
+  const CL_M = [['regs', 'Registrations'], ['students', 'Signups'], ['sessions', 'Organic sessions'], ['nbClicks', 'Non-brand clicks']];
+  const spark = (vals, cls) => {
+    const v = vals.map(x => x == null ? 0 : x), mx = Math.max(...v, 1), mn = Math.min(...v), w = 120, h = 30, n = v.length;
+    const pts = v.map((x, i) => `${(i / Math.max(1, n - 1) * w).toFixed(1)},${(h - 2 - (x - mn) / Math.max(1e-9, mx - mn) * (h - 4)).toFixed(1)}`).join(' ');
+    return `<svg class="un-spark ${cls || ''}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.6" points="${pts}"/><circle cx="${w}" cy="${pts.split(' ').pop().split(',')[1]}" r="2.4" fill="currentColor"/></svg>`;
+  };
+  const pctCh = (a, b) => a == null || b == null || !b ? null : (a - b) / b * 100;
+  const trendOf = c => c == null ? 'steady' : c >= 5 ? 'up' : c <= -5 ? 'down' : 'steady';
+  const TREND_B = { up: ['b-strong', 'Growing'], down: ['b-work', 'Falling'], steady: ['b-steady', 'Steady'] };
+  // formatted copy that pastes into Google Sheets as a presentation table
+  function sheetCopyHtml(title, sub, blocks) {
+    const F = 'font-family:Arial;font-size:10pt;', e = x => esc(x == null ? '' : String(x));
+    let w = 2; blocks.forEach(b => { w = Math.max(w, b.head.length); });
+    let h = `<tr><td colspan="${w}" style="${F}font-size:16pt;font-weight:bold;color:#1a1a2e">${e(title)}</td></tr><tr><td colspan="${w}" style="${F}color:#5f6368">${e(sub)}</td></tr>`;
+    blocks.forEach(b => {
+      h += `<tr><td></td></tr><tr><td colspan="${w}" style="${F}font-size:12pt;font-weight:bold;color:#fff;background:#1f3a68">${e(b.title)}</td></tr>`;
+      h += '<tr>' + b.head.map((x, i) => `<td style="${F}font-weight:bold;color:#1f3a68;background:#e8eefc;${i ? 'text-align:right;' : ''}">${e(x)}</td>`).join('') + '</tr>';
+      b.rows.forEach((r, ri) => {
+        const bg = ri % 2 ? 'background:#f6f8fc;' : '';
+        h += '<tr>' + r.map((c, i) => {
+          if (c && typeof c === 'object') {
+            if (c.chg !== undefined) { const v = c.chg; const t = v == null ? '—' : (Math.abs(v) < .5 ? '● ' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1) + '%'; const col = v == null || Math.abs(v) < .5 ? '#5f6368' : (c.lowerBetter ? v < 0 : v > 0) ? '#137333' : '#c5221f'; return `<td style="${F}${bg}text-align:right;color:${col};font-weight:bold">${t}</td>`; }
+            if (c.href) return `<td style="${F}${bg}"><a href="${e(c.href)}">${e(c.t)}</a></td>`;
+            return `<td style="${F}${bg}${c.b ? 'font-weight:bold;' : ''}${i ? 'text-align:right;' : ''}">${e(c.t)}</td>`;
+          }
+          return `<td style="${F}${bg}${i ? 'text-align:right;' : ''}">${e(c)}</td>`;
+        }).join('') + '</tr>';
+      });
+    });
+    h += `<tr><td></td></tr><tr><td colspan="${w}" style="${F}color:#5f6368;font-style:italic">▲ green = better, ▼ red = worse. Signups and registrations are students in Google organic visits (GA4).</td></tr>`;
+    return `<meta charset="utf-8"><table style="border-collapse:collapse">${h}</table>`;
+  }
+  async function copyRich(html, text, msgId) {
+    const m = document.getElementById(msgId);
+    try { if (window.ClipboardItem && navigator.clipboard.write) await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]); else await navigator.clipboard.writeText(text); if (m) m.textContent = 'Copied with formatting. Paste into Google Sheets with Ctrl/Cmd + V.'; }
+    catch (e) { if (m) m.textContent = 'Copy was blocked by the browser.'; }
+  }
+  const plainOf = (title, blocks) => [title, ''].concat(...blocks.map(b => [b.title, b.head.join('\t'), ...b.rows.map(r => r.map(c => c && typeof c === 'object' ? (c.chg !== undefined ? (c.chg == null ? '' : c.chg.toFixed(1) + '%') : c.t) : c).join('\t')), ''])).join('\n');
+  async function loadClusterQueries(D, A, sec, cur, prev, k) {
+    const st = { status: 'loading' }; CQ.set(k, st);
+    try {
+      const s = settings(D.site), rx = U.sectionRegex(sec, null), ex = U.sectionExclude(sec, s.sections);
+      const pf = [{ dimension: 'page', operator: 'includingRegex', expression: rx }].concat(ex ? [{ dimension: 'page', operator: 'excludingRegex', expression: ex }] : []);
+      const q = p => window.CW_SOURCE.gsc.query({ startDate: p.start, endDate: p.end, type: 'web', dimensions: ['query'], rowLimit: 500, dimensionFilterGroups: [{ groupType: 'and', filters: pf }] }).then(d => d.rows || []);
+      const [a, b] = await Promise.all([q(cur), q(prev)]);
+      Object.assign(st, { status: 'done', cur: a, prev: b });
+    } catch (e) { st.status = 'error'; st.error = e.message; }
+    if (CQ.get(k) === st) rerender();
+  }
+  // opportunities registered for from organic visits: landing page × opportunity, last full period vs the one before
+  const CO = new Map();
+  const oppPageName = path => { const seg = U.pathOnly(path).split('/').filter(Boolean); const slug = seg.filter(x => /[a-z]/i.test(x) && !/^(register|edit|apply|details)$/i.test(x)).sort((a, b) => b.length - a.length)[0] || ''; const t = slug.replace(/^crp-/i, '').replace(/-\d{5,}$/, '').replace(/-/g, ' ').trim(); return t ? t.replace(/\b([a-z])/g, c => c.toUpperCase()).replace(/\b(Iit|Iiit|Nit|Ai|Ml|Hr|Tcs|Nqt|Hp|Idfc|Ril|Vit|Ltd)\b/g, m => m.toUpperCase()) : ''; };
+  async function loadClusterOpps(D, cur, prv, k) {
+    const s = settings(D.site), st = { status: 'loading' }; CO.set(k, st);
+    const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), regEv = (s.events && s.events.opportunityAction) || [];
+    if (!pid || !token() || !regEv.length) { st.status = 'error'; st.error = !regEv.length ? 'Set the registration event in Funnel setup.' : 'Sign in with Search Console + GA4 to load opportunities.'; rerender(); return; }
+    try {
+      const hasOpp = { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } };
+      const r = await runReport(pid, { dateRanges: [{ startDate: cur.start, endDate: cur.end, name: 'cur' }, { startDate: prv.start, endDate: prv.end, name: 'prev' }], dimensions: [{ name: 'landingPage' }, { name: 'customEvent:opportunity_id' }, { name: 'pagePath' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: { andGroup: { expressions: [U.GA.organicFilter, U.GA.inList('eventName', regEv), hasOpp] } }, orderBys: [{ metric: { metricName: 'totalUsers' }, desc: true }], limit: 100000 });
+      st.rows = U.gaRows(r).map(x => ({ land: U.pathOnly(x.landingPage || ''), id: x['customEvent:opportunity_id'], page: U.pathOnly(x.pagePath || ''), n: +x.totalUsers || 0, range: x.range === 'prev' || x.range === 'date_range_1' ? 'prev' : 'cur' }));
+      st.status = 'done';
+    } catch (e) { st.status = 'error'; st.error = e.message; }
+    if (CO.get(k) === st) rerender();
+  }
+  // per cluster: opportunities with registrations and the top ones, from the landing-page × opportunity rows
+  function oppsByCluster(rows, so) {
+    const m = new Map();
+    rows.forEach(r => { const cid = so(r.land); const c = m.get(cid) || new Map(); const o = c.get(r.id) || { id: r.id, cur: 0, prev: 0, path: '' }; o[r.range] += r.n; if (r.page && /-\d{5,}/.test(r.page) && (!o.path || r.page.length < o.path.length || !/-\d{5,}/.test(o.path))) o.path = r.page.replace(/\/(register|apply)(\/.*)?$/, ''); c.set(r.id, o); m.set(cid, c); });
+    return m;
+  }
+  V.clusters = (A, D) => {
+    demoFill(D);
+    ['t-un-cl-all', 't-un-cl-opp', 't-un-cl-per', 't-un-cl-pg', 't-un-cl-q'].forEach(k => delete TABLES[k]);
+    const P = fParams(), gran = P.get('by') === 'month' ? 'month' : 'week', metric = CL_M.some(m => m[0] === P.get('m')) ? P.get('m') : 'regs', pick = P.get('c') || '';
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const href = o => '#clusters?' + new URLSearchParams(Object.entries({ by: gran, m: metric, c: pick, ...o }).filter(([, v]) => v)).toString();
+    const list = trList(D), sel = list.find(x => x.id === pick);
+    const per = gran === 'week' ? 'week' : 'month';
+    const intro = sel
+      ? `<p class="un-n" style="margin:0 0 4px"><a href="${href({ c: '' })}">← All clusters</a></p>` + head(sel.name + ': deep dive', `Every ${per} of the last 12 for this cluster: Google non-brand clicks, organic sessions, student signups and opportunity registrations, the landing pages that bring the students, and the searches that moved. Pages: ${esc(sel.rules.slice(0, 6).join(', '))}${sel.rules.length > 6 ? '…' : ''}`)
+      : head('Clusters: week on week, month on month', 'Unstop’s clusters with the full SEO funnel: non-brand clicks from Google, organic sessions, student signups and opportunity registrations. The last full ' + per + ' against the one before; click a cluster for its deep dive.');
+    const st = live ? TR.get(trKey(D)) : sampleTrends(D, A);
+    const tabs = `<div class="un-row" style="flex-wrap:wrap;gap:8px;margin:4px 0 12px"><div class="un-tabs">${[['week', 'Week on week'], ['month', 'Month on month']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="${href({ by: v })}">${l}</a>`).join('')}</div>${sel ? '' : `<div class="un-tabs"><span class="un-n" style="padding:6px 4px">Cards by</span>${CL_M.map(([v, l]) => `<a class="${metric === v ? 'on' : ''}" href="${href({ m: v })}">${esc(l)}</a>`).join('')}</div>`}</div>`;
+    if (live && (!st || st.status === 'loading')) return { html: intro + tabs + `<div class="note"><span id="un-tr-prog">${st ? `Loading… ${st.done} of ${st.total} requests` : 'Starting…'}</span><br><small>Each cluster is asked for separately (Search Console all and non-brand; GA4 sessions, signups and registrations by day for 13 months), so the totals are exact. Takes about a minute; Cluster trends uses the same data.</small></div>`, mount: () => { if (!st) loadTrends(D, A); } };
+    const pers = trPeriods(st.end, gran), li = pers[pers.length - 1].partial ? pers.length - 2 : pers.length - 1, cur = pers[li], prv = pers[li - 1];
+    const series = (id, m) => pers.map(p => trSum(st, id, p, m));
+    const ok = [trKey(D), cur.start, prv.start].join('|');
+    let os = live ? CO.get(ok) : null;
+    if (!live) { let seed = 13; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; const rows = []; (A.P || []).map(r => U.pathOnly(r.p)).filter(x => /-\d{5,}$/.test(x)).slice(0, 400).forEach(x => { const id = x.match(/-(\d{5,})$/)[1]; const b = Math.round(R() * 60); rows.push({ land: x, id, page: x, n: b, range: 'cur' }, { land: x, id, page: x, n: Math.round(b * (.7 + R() * .6)), range: 'prev' }); }); os = { status: 'done', rows }; }
+    const OB = os && os.status === 'done' ? oppsByCluster(os.rows, sectioner(D)) : null;
+    const oppCount = (cid, k) => { if (!OB) return null; const c = OB.get(cid); return c ? [...c.values()].filter(o => o[k] > 0).length : 0; };
+    const oppAll = k => { if (!OB) return null; const ids = new Set(); [...OB.entries()].forEach(([cid, c]) => { if (!list.some(x => x.id === cid)) return; c.forEach(o => { if (o[k] > 0) ids.add(o.id); }); }); return ids.size; };
+    const oppTile = (cnt, cntP) => `<div class="kpi"><span class="kpi-l">Opportunities registered for</span><b class="kpi-v">${cnt == null ? '—' : fmtN(cnt)}</b><span class="kpi-d">${cnt == null ? (os && os.status === 'error' ? esc(os.error) : 'Loading…') : `${dchip(pctCh(cnt, cntP))} vs ${esc(prv.label)} (${fmtN(cntP)})`}</span><span class="kpi-d un-n">different opportunities with at least one organic registration</span></div>`;
+    const allSeries = m => pers.map((p, j) => list.reduce((a, x) => a + (trSum(st, x.id, p, m) || 0), 0));
+    const ga = st.gaOk;
+    const fv = v => v == null ? '—' : fmtN(Math.round(v));
+    const kpi = (label, vals, sub) => { const c = pctCh(vals[li], vals[li - 1]); return `<div class="kpi"><span class="kpi-l">${esc(label)}</span><b class="kpi-v">${fv(vals[li])}</b><span class="kpi-d">${dchip(c)} vs ${esc(prv.label)} (${fv(vals[li - 1])})</span>${spark(vals.slice(0, li + 1), c == null ? '' : c >= 0 ? 'up' : 'down')}${sub ? `<span class="kpi-d un-n">${sub}</span>` : ''}</div>`; };
+    const rate = (a, b) => b ? a / b * 100 : null;
+    const notes = (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
+      (!ga ? '<div class="note">GA4 is not connected in this tab: sign in again with Search Console + GA4 to see sessions, signups and registrations.</div>' : '') +
+      (st.errors && st.errors.length ? `<div class="note un-warn">${fmtN(st.errors.length)} request${st.errors.length === 1 ? '' : 's'} failed: ${esc(st.errors[0])}</div>` : '');
+    const periodLine = `<p class="un-meta">Last full ${per}: <b>${esc(cur.label)}</b> (${fmtD(cur.start)} – ${fmtD(cur.end)}) vs <b>${esc(prv.label)}</b> (${fmtD(prv.start)} – ${fmtD(prv.end)})${pers[pers.length - 1].partial ? ` · ${esc(pers[pers.length - 1].label)} is still running and is shown in the tables only` : ''}${live ? ' · <button class="btn-quiet sm" type="button" id="un-cl-reload">Reload</button>' : ''}</p>`;
+    const copyBtn = `<div class="un-row" style="gap:8px;margin:0 0 10px"><button class="btn-primary sm" type="button" id="un-cl-copy">Copy for Google Sheets</button><span id="un-cl-msg" class="un-n"></span></div>`;
+    const reload = () => { const rl = document.getElementById('un-cl-reload'); if (rl) rl.addEventListener('click', () => { TR.delete(trKey(D)); [...TRP.keys()].forEach(k => TRP.delete(k)); [...CQ.keys()].forEach(k => CQ.delete(k)); [...CO.keys()].forEach(k => CO.delete(k)); rerender(); }); };
+    const subT = `${gran === 'week' ? 'Weekly' : 'Monthly'} · ${cur.label} vs ${prv.label}`;
+
+    // ───────────── overview: every cluster ─────────────
+    if (!sel) {
+      const rows = list.map(sec => {
+        const S = { nb: series(sec.id, 'nbClicks'), ses: series(sec.id, 'sessions'), stu: series(sec.id, 'students'), reg: series(sec.id, 'regs') };
+        const r = { id: sec.id, name: sec.name, rules: sec.rules, S };
+        [['nb', 'nb'], ['ses', 'ses'], ['stu', 'stu'], ['reg', 'reg']].forEach(([k]) => { r[k] = S[k][li]; r[k + 'P'] = S[k][li - 1]; r[k + 'C'] = pctCh(S[k][li], S[k][li - 1]); });
+        r.regRate = rate(r.reg || 0, r.ses); r.stuRate = rate(r.stu || 0, r.ses);
+        r.opp = oppCount(sec.id, 'cur'); r.oppP = oppCount(sec.id, 'prev'); r.oppC = pctCh(r.opp, r.oppP);
+        return r;
+      }).filter(r => r.S.nb.some(v => v) || r.S.ses.some(v => v));
+      const mk = { regs: 'reg', students: 'stu', sessions: 'ses', nbClicks: 'nb' }[metric], mLabel = CL_M.find(m => m[0] === metric)[1];
+      rows.sort((a, b) => (b[mk] || 0) - (a[mk] || 0));
+      const tiles = `<div class="kpis un-clk">${kpi('Opportunity registrations', ga ? allSeries('regs') : pers.map(() => null))}${oppTile(oppAll('cur'), oppAll('prev'))}${kpi('Student signups', ga ? allSeries('students') : pers.map(() => null))}${kpi('Organic sessions', ga ? allSeries('sessions') : pers.map(() => null))}${kpi('Non-brand clicks (Google)', allSeries('nbClicks'))}</div>`;
+      const ups = rows.filter(r => r[mk + 'C'] != null && (r[mk] - r[mk + 'P']) > 0).sort((a, b) => (b[mk] - b[mk + 'P']) - (a[mk] - a[mk + 'P'])).slice(0, 3);
+      const downs = rows.filter(r => r[mk + 'C'] != null && (r[mk] - r[mk + 'P']) < 0).sort((a, b) => (a[mk] - a[mk + 'P']) - (b[mk] - b[mk + 'P'])).slice(0, 3);
+      const mv = r => `<a href="${href({ c: r.id })}">${esc(r.name)}</a> ${(r[mk] - r[mk + 'P']) > 0 ? '+' : ''}${fmtN(Math.round(r[mk] - r[mk + 'P']))} (${dchip(r[mk + 'C'])})`;
+      const summary = `<div class="grid-2 even"><div class="note"><b>${esc(mLabel)} up most</b>: ${ups.length ? ups.map(mv).join(' · ') : 'none'}</div><div class="note"><b>${esc(mLabel)} down most</b>: ${downs.length ? downs.map(mv).join(' · ') : 'none'}</div></div>`;
+      const card = r => {
+        const t = trendOf(r[mk + 'C']), [bc, bl] = TREND_B[t];
+        const line = (l, k) => `<span>${l} <b>${fv(r[k])}</b> ${dchip(r[k + 'C'])}</span>`;
+        return `<a class="card un-clc" href="${href({ c: r.id })}" title="Open ${esc(r.name)}">
+          <div class="card-top"><span class="card-n">${esc(r.name)}</span><span class="badge ${bc}">${bl}</span></div>
+          <div class="un-clc-v"><div><div class="card-v">${fv(r[mk])}</div><div class="card-m">${esc(mLabel)} · ${dchip(r[mk + 'C'])} vs ${esc(prv.label)}</div></div>${spark(r.S[mk].slice(0, li + 1), t === 'up' ? 'up' : t === 'down' ? 'down' : '')}</div>
+          <div class="un-clc-m">${[['reg', 'Registrations'], ['opp', 'Opportunities'], ['stu', 'Signups'], ['ses', 'Sessions'], ['nb', 'Non-brand clicks']].filter(([k]) => k !== mk).map(([k, l]) => line(l, k)).join('')}</div>
+        </a>`;
+      };
+      const cards = `<section class="panel"><div class="panel-h"><h2>Clusters by ${esc(mLabel.toLowerCase())}, last ${per} vs the one before</h2><p>Growing: up 5% or more. Falling: down 5% or more. The line is the last 12 ${per}s. Click a card for the cluster’s deep dive.</p></div><div class="panel-b cards-wrap"><div class="cards">${rows.map(card).join('')}</div></div></section>`;
+      const chgCol = (k, l, lower) => ({ k: k + 'C', l, r: 1, f: r => dchip(r[k + 'C'], lower), csv: r => r[k + 'C'] == null ? '' : r[k + 'C'].toFixed(1) });
+      const numCol = (k, l) => ({ k, l, r: 1, f: r => fv(r[k]), csv: r => r[k] == null ? '' : Math.round(r[k]) });
+      const tbl = `<section class="panel"><div class="panel-h"><h2>All clusters: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Sorted by registrations, high to low; click any column to sort by it. Opportunities = different opportunities that got at least one registration from Google organic visits.</p></div>${table('t-un-cl-all', [
+        { k: 'name', l: 'Cluster', f: r => `<a href="${href({ c: r.id })}"><b>${esc(r.name)}</b></a>`, csv: r => r.name },
+        numCol('reg', 'Registrations'), chgCol('reg', 'Change'), numCol('opp', 'Opportunities'), chgCol('opp', 'Change'),
+        numCol('stu', 'Signups'), chgCol('stu', 'Change'),
+        { k: 'regRate', l: 'Regs per 100 sessions', r: 1, f: r => r.regRate == null ? '—' : r.regRate.toFixed(1), csv: r => r.regRate == null ? '' : r.regRate.toFixed(2) },
+        numCol('ses', 'Organic sessions'), chgCol('ses', 'Change'), numCol('nb', 'Non-brand clicks'), chgCol('nb', 'Change')
+      ], rows, { sort: mk, file: `unstop-clusters-${gran}`, search: false, pageSize: 50 })}</section>`;
+      const blocks = () => {
+        const tot = m => allSeries(m), T = { nb: tot('nbClicks'), ses: tot('sessions'), stu: tot('students'), reg: tot('regs') };
+        return [
+          { title: 'Headline numbers (all clusters)', head: ['Metric', cur.label, prv.label, 'Change'], rows: [['Opportunity registrations', 'reg'], ['Student signups', 'stu'], ['Organic sessions', 'ses'], ['Non-brand clicks', 'nb']].map(([l, k]) => [{ t: l, b: 1 }, fv(T[k][li]), fv(T[k][li - 1]), { chg: pctCh(T[k][li], T[k][li - 1]) }]).concat(OB ? [[{ t: 'Opportunities registered for', b: 1 }, fv(oppAll('cur')), fv(oppAll('prev')), { chg: pctCh(oppAll('cur'), oppAll('prev')) }]] : []) },
+          { title: `Clusters, sorted by ${mLabel.toLowerCase()} (high to low)`, head: ['Cluster', 'Trend', 'Registrations', 'Change', 'Opportunities', 'Change', 'Signups', 'Change', 'Regs per 100 sessions', 'Organic sessions', 'Change', 'Non-brand clicks', 'Change'], rows: rows.map(r => [{ t: r.name, b: 1 }, { t: TREND_B[trendOf(r[mk + 'C'])][1] }, fv(r.reg), { chg: r.regC }, fv(r.opp), { chg: r.oppC }, fv(r.stu), { chg: r.stuC }, r.regRate == null ? '—' : r.regRate.toFixed(1), fv(r.ses), { chg: r.sesC }, fv(r.nb), { chg: r.nbC }]) },
+          { title: `${mLabel}, last 12 ${per}s`, head: ['Cluster', ...pers.map(p => p.label + (p.partial ? '*' : ''))], rows: rows.map(r => [{ t: r.name, b: 1 }, ...r.S[mk].map(fv)]) }
+        ];
+      };
+      const html = intro + tabs + notes + periodLine + tiles + summary + copyBtn + cards + tbl +
+        `<p class="hint">Sources: Search Console (Google web search; non-brand = searches without your brand terms) and GA4 (Organic Search; signups = ${esc(((settings(D.site).events || {}).studentSignup || []).join(', ') || 'not set')}; registrations = students with ${esc(((settings(D.site).events || {}).opportunityAction || []).join(', ') || 'not set')} that carries an opportunity_id, counted per day). Clusters are set in <a href="#funnelsetup">Funnel setup</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
+      return { html, mount: () => { drawTable('t-un-cl-all'); reload(); if (live && !CO.get(ok)) loadClusterOpps(D, cur, prv, ok); const b = document.getElementById('un-cl-copy'); if (b) b.addEventListener('click', () => { const B = blocks(); copyRich(sheetCopyHtml('Unstop SEO clusters · ' + (gran === 'week' ? 'week on week' : 'month on month'), subT + ' · Search Console + GA4 (Organic Search)', B), plainOf('Unstop SEO clusters', B), 'un-cl-msg'); }); } };
+    }
+
+    // ───────────── deep dive: one cluster ─────────────
+    const S = { c: series(sel.id, 'clicks'), nb: series(sel.id, 'nbClicks'), im: series(sel.id, 'impr'), ses: series(sel.id, 'sessions'), stu: series(sel.id, 'students'), reg: series(sel.id, 'regs') };
+    const tiles = `<div class="kpis un-clk">${kpi('Opportunity registrations', S.reg, ga && S.ses[li] ? `${rate(S.reg[li] || 0, S.ses[li]).toFixed(1)} per 100 sessions` : '')}${oppTile(oppCount(sel.id, 'cur'), oppCount(sel.id, 'prev'))}${kpi('Student signups', S.stu)}${kpi('Organic sessions', S.ses)}${kpi('Non-brand clicks (Google)', S.nb)}</div>`;
+    const perRows = pers.map((p, j) => ({ j, label: p.label + (p.partial ? ' (running)' : ''), start: p.start, c: S.c[j], nb: S.nb[j], im: S.im[j], ctr: S.im[j] ? S.c[j] / S.im[j] * 100 : null, ses: S.ses[j], stu: S.stu[j], reg: S.reg[j], stuRate: rate(S.stu[j] || 0, S.ses[j]), regRate: rate(S.reg[j] || 0, S.ses[j]), ...(j && !p.partial ? { nbC: pctCh(S.nb[j], S.nb[j - 1]), sesC: pctCh(S.ses[j], S.ses[j - 1]), stuC: pctCh(S.stu[j], S.stu[j - 1]), regC: pctCh(S.reg[j], S.reg[j - 1]) } : { nbC: null, sesC: null, stuC: null, regC: null }) })).reverse();
+    const num = (k, l) => ({ k, l, r: 1, f: r => fv(r[k]), csv: r => r[k] == null ? '' : Math.round(r[k]) });
+    const chg = (k, l) => ({ k, l, r: 1, f: r => r[k] == null ? '<span class="un-n">—</span>' : dchip(r[k]), csv: r => r[k] == null ? '' : r[k].toFixed(1) });
+    const perTbl = `<section class="panel"><div class="panel-h"><h2>${gran === 'week' ? 'Week by week (Monday to Sunday)' : 'Month by month'}</h2><p>Newest first. Each change is against the ${per} before.</p></div>${table('t-un-cl-per', [
+      { k: 'start', l: gran === 'week' ? 'Week of' : 'Month', f: r => `<b>${esc(r.label)}</b>`, csv: r => r.label },
+      num('reg', 'Registrations'), chg('regC', 'Change'), num('stu', 'Signups'), chg('stuC', 'Change'),
+      { k: 'regRate', l: 'Regs per 100 sessions', r: 1, f: r => r.regRate == null ? '—' : r.regRate.toFixed(1), csv: r => r.regRate == null ? '' : r.regRate.toFixed(2) },
+      num('ses', 'Organic sessions'), chg('sesC', 'Change'), num('nb', 'Non-brand clicks'), chg('nbC', 'Change'), num('c', 'All clicks'), num('im', 'Impressions'), { k: 'ctr', l: 'CTR', r: 1, f: r => r.ctr == null ? '—' : r.ctr.toFixed(2) + '%', csv: r => r.ctr == null ? '' : r.ctr.toFixed(2) }
+    ], perRows, { sort: 'start', file: `unstop-${sel.id}-${gran}`, search: false, pageSize: 13 })}</section>`;
+    // opportunities students registered for, from this cluster's organic landing pages
+    const oc = OB ? [...(OB.get(sel.id) || new Map()).values()].filter(o => o.cur + o.prev > 0).map(o => ({ ...o, name: (o.path && oppPageName(o.path)) || 'Opportunity ' + o.id, d: o.cur - o.prev, ch: pctCh(o.cur, o.prev) })) : [];
+    const oppHtml = !os || os.status === 'loading' ? '<p class="progress">Loading opportunities from GA4…</p>' : os.status === 'error' ? `<p class="start-error">${esc(os.error)}</p>` : table('t-un-cl-opp', [
+      { k: 'name', l: 'Opportunity', f: r => r.path ? `<a href="https://unstop.com${esc(r.path)}" target="_blank" rel="noopener"><b>${esc(r.name)}</b></a>` : `<b>${esc(r.name)}</b>`, csv: r => r.name },
+      { k: 'id', l: 'ID', csv: r => r.id },
+      { k: 'cur', l: `Registrations (${cur.label})`, r: 1, f: r => fmtN(Math.round(r.cur)), csv: r => Math.round(r.cur) },
+      { k: 'prev', l: `Registrations (${prv.label})`, r: 1, f: r => fmtN(Math.round(r.prev)), csv: r => Math.round(r.prev) },
+      { k: 'd', l: 'Change', r: 1, f: r => `${r.d > 0 ? '+' : ''}${fmtN(Math.round(r.d))} ${r.prev ? dchip(r.ch) : '<span class="un-d up">new</span>'}`, csv: r => Math.round(r.d) }
+    ], oc, { sort: 'cur', file: `unstop-${sel.id}-opportunities-${gran}`, pageSize: 20, placeholder: 'Filter opportunities', searchKeys: ['name', 'id'] });
+    // landing pages
+    const pk = trKey(D) + '|' + sel.id + '|' + gran;
+    let ps = live ? TRP.get(pk) : null;
+    if (!live) { const so = sectioner(D); const pages = (A.P || []).filter(r => so(r.p) === sel.id).slice(0, 200); let seed = 5; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; ps = { status: 'done', rows: pages.map(r => { const b = (+r.clicks || 0) / 12; return { path: U.pathOnly(r.p), ses: pers.map(() => b * 1.1 * (.8 + R() * .4)), stu: pers.map(() => b * (.01 + R() * .03)), reg: pers.map(() => b * (.02 + R() * .06)) }; }) }; }
+    let pageHtml;
+    const pgRows = ps && ps.status === 'done' ? ps.rows.map(r => { const reg = r.reg || pers.map(() => 0); return { path: r.path, name: r.path, ses: r.ses[li], sesP: r.ses[li - 1], stu: r.stu[li], stuP: r.stu[li - 1], reg: reg[li], regP: reg[li - 1], sesC: pctCh(r.ses[li], r.ses[li - 1]), stuC: pctCh(r.stu[li], r.stu[li - 1]), regC: pctCh(reg[li], reg[li - 1]), reg12: reg.reduce((a, v) => a + v, 0), stu12: r.stu.reduce((a, v) => a + v, 0), ses12: r.ses.reduce((a, v) => a + v, 0) }; }).filter(r => r.ses12 > 0) : [];
+    pgRows.forEach(r => { r.regRate = rate(r.reg12, r.ses12); });
+    if (!ps || ps.status === 'loading') pageHtml = '<p class="progress">Loading landing pages from GA4…</p>';
+    else if (ps.status === 'error') pageHtml = `<p class="start-error">${esc(ps.error)}</p>`;
+    else pageHtml = table('t-un-cl-pg', [
+      { k: 'path', l: 'Landing page', cls: 'u', f: r => `<a href="${esc(focusHref({ u: r.path }))}">${esc(r.path)}</a>`, csv: r => r.path },
+      num('ses', `Sessions (${cur.label})`), chg('sesC', 'Change'), num('stu', 'Signups'), chg('stuC', 'Change'), num('reg', 'Registrations'), chg('regC', 'Change'),
+      num('reg12', `Registrations, 12 ${per}s`), { k: 'regRate', l: 'Regs per 100 sessions', r: 1, f: r => r.regRate == null ? '—' : r.regRate.toFixed(1), csv: r => r.regRate == null ? '' : r.regRate.toFixed(2) }
+    ], pgRows, { sort: 'reg', file: `unstop-${sel.id}-landing-pages-${gran}`, pageSize: 25, placeholder: 'Filter pages' });
+    // searches: last full period vs the one before
+    const qk = [trKey(D), sel.id, cur.start, prv.start].join('|');
+    let qs = live ? CQ.get(qk) : null;
+    if (!live) { const so = sectioner(D); const src = (A.QP && A.QP.length ? A.QP.filter(r => so(r.p) === sel.id) : (A.Q || [])).slice(0, 120); let seed = 7; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; const f = gran === 'week' ? 1 / 13 : 1 / 3; const mkq = k => src.map(r => ({ keys: [r.q], clicks: (+r.clicks || 0) * f * (k ? .8 + R() * .4 : 1), impressions: (+r.impr || 0) * f, position: (+r.pos || 10) + (k ? R() * 2 - 1 : 0) })); qs = { status: 'done', cur: mkq(0), prev: mkq(1) }; }
+    let qHtml;
+    if (!qs || qs.status === 'loading') qHtml = '<p class="progress">Loading searches from Search Console…</p>';
+    else if (qs.status === 'error') qHtml = `<p class="start-error">${esc(qs.error)}</p>`;
+    else {
+      const isB = brandOf(A), m = new Map();
+      const put = (L, k) => L.forEach(r => { const q = r.keys[0]; const o = m.get(q) || { q, c: 0, p: 0, im: 0, pos: null, posP: null }; if (k) { o.p += r.clicks; o.posP = r.position; } else { o.c += r.clicks; o.im += r.impressions; o.pos = r.position; } m.set(q, o); });
+      put(qs.cur, 0); put(qs.prev, 1);
+      const qRows = [...m.values()].map(o => ({ ...o, d: o.c - o.p, ch: pctCh(o.c, o.p), dPos: o.pos != null && o.posP != null ? o.pos - o.posP : null, brand: isB(o.q) ? 'Branded' : 'Non-brand' })).filter(o => o.c + o.p >= 1);
+      qHtml = table('t-un-cl-q', [
+        { k: 'q', l: 'Search', cls: 'q', f: r => esc(r.q), csv: r => r.q }, { k: 'brand', l: 'Type', csv: r => r.brand },
+        { k: 'c', l: `Clicks (${cur.label})`, r: 1, f: r => fmtN(Math.round(r.c)), csv: r => Math.round(r.c) }, { k: 'p', l: `Clicks (${prv.label})`, r: 1, f: r => fmtN(Math.round(r.p)), csv: r => Math.round(r.p) },
+        { k: 'd', l: 'Change', r: 1, f: r => `${r.d > 0 ? '+' : ''}${fmtN(Math.round(r.d))} ${dchip(r.ch)}`, csv: r => Math.round(r.d) },
+        { k: 'im', l: 'Impressions', r: 1, f: r => fmtN(Math.round(r.im)), csv: r => Math.round(r.im) },
+        { k: 'pos', l: 'Position', r: 1, f: r => r.pos == null ? '—' : r.pos.toFixed(1) + ' ' + (r.dPos == null ? '' : dchip(r.dPos, true, 'pos')), csv: r => r.pos == null ? '' : r.pos.toFixed(1) }
+      ], qRows, { sort: 'd', file: `unstop-${sel.id}-searches-${gran}`, pageSize: 20, placeholder: 'Filter searches', filters: [{ key: 'brand', label: 'Type', options: [['Non-brand', 'Non-brand'], ['Branded', 'Branded']], test: (r, v) => r.brand === v }] });
+    }
+    const blocks = () => [
+      { title: `${sel.name}: ${cur.label} vs ${prv.label}`, head: ['Metric', cur.label, prv.label, 'Change'], rows: [['Non-brand clicks', 'nb'], ['Organic sessions', 'ses'], ['Student signups', 'stu'], ['Opportunity registrations', 'reg']].map(([l, k]) => [{ t: l, b: 1 }, fv(S[k][li]), fv(S[k][li - 1]), { chg: pctCh(S[k][li], S[k][li - 1]) }]) },
+      { title: gran === 'week' ? 'Week by week' : 'Month by month', head: [gran === 'week' ? 'Week of' : 'Month', 'Non-brand clicks', 'Change', 'Impressions', 'Organic sessions', 'Change', 'Signups', 'Change', 'Registrations', 'Change', 'Regs per 100 sessions'], rows: perRows.map(r => [{ t: r.label, b: 1 }, fv(r.nb), { chg: r.nbC }, fv(r.im), fv(r.ses), { chg: r.sesC }, fv(r.stu), { chg: r.stuC }, fv(r.reg), { chg: r.regC }, r.regRate == null ? '—' : r.regRate.toFixed(1)]) },
+      { title: `Opportunities students registered for (${cur.label}), high to low`, head: ['Opportunity', 'ID', cur.label, prv.label, 'Change'], rows: oc.slice().sort((a, b) => b.cur - a.cur).slice(0, 20).map(r => [r.path ? { t: r.name, href: 'https://unstop.com' + r.path } : { t: r.name }, r.id, fv(r.cur), fv(r.prev), { chg: r.prev ? r.ch : null }]) },
+      { title: `Top landing pages by registrations (${cur.label})`, head: ['Landing page', 'Sessions', 'Signups', 'Registrations', 'Change'], rows: pgRows.slice().sort((a, b) => (b.reg || 0) - (a.reg || 0)).slice(0, 15).map(r => [{ t: r.path, href: 'https://unstop.com' + r.path }, fv(r.ses), fv(r.stu), fv(r.reg), { chg: r.regC }]) }
+    ];
+    const html = intro + tabs + notes + periodLine + tiles + copyBtn +
+      `<section class="panel"><div class="panel-h"><h2>Opportunities students registered for: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Students who came from Google to this cluster and registered, by opportunity, high to low. ${OB ? `${fmtN(oc.filter(o => o.cur > 0).length)} opportunities got registrations in ${esc(cur.label)}.` : ''}</p></div>${oppHtml}</section>` + perTbl +
+      `<section class="panel"><div class="panel-h"><h2>Landing pages: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>GA4 organic sessions that started on each page, and the signups and registrations in those visits.</p></div>${pageHtml}</section>` +
+      `<section class="panel"><div class="panel-h"><h2>Searches that moved: ${esc(cur.label)} vs ${esc(prv.label)}</h2><p>Google searches that brought clicks to this cluster, sorted by the change in clicks.</p></div>${qHtml}</section>` +
+      `<p class="hint"><a href="#trends?by=${gran}&c=${encodeURIComponent(sel.id)}">Same cluster in Cluster trends</a> · <a href="#journeys?f=${encodeURIComponent(sel.rules[0] || '')}">Journeys from ${esc(sel.rules[0] || '')}</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
+    return { html, mount: () => {
+      ['t-un-cl-opp', 't-un-cl-per', 't-un-cl-pg', 't-un-cl-q'].forEach(id => { if (document.getElementById(id)) drawTable(id); });
+      reload(); if (live && !CO.get(ok)) loadClusterOpps(D, cur, prv, ok);
+      if (live && !TRP.get(pk)) loadTrendPages(D, sel, gran, pers);
+      if (live && !CQ.get(qk)) loadClusterQueries(D, A, sel, cur, prv, qk);
+      const b = document.getElementById('un-cl-copy'); if (b) b.addEventListener('click', () => { const B = blocks(); copyRich(sheetCopyHtml(`Unstop SEO · ${sel.name}`, subT + ' · Search Console + GA4 (Organic Search)', B), plainOf(sel.name, B), 'un-cl-msg'); });
+    } };
+  };
 
   // ════════════════════════════ JOURNEYS: WHERE THEY SIGN UP, WHAT THEY APPLY TO ════════════════════════════
   // For organic visits that started in one folder or on one page (say /internship/…): the page each student
@@ -3400,7 +3643,7 @@
   };
 
   // every funnel screen tries the one-sign-in GA4 load after it renders
-  ['b2e', 'board', 'trends', 'journeys', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
+  ['b2e', 'board', 'trends', 'clusters', 'journeys', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
     V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); if (k === 'b2e' || k === 'leads') salesAuto(D); } }; };
   });
