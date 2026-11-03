@@ -3612,8 +3612,37 @@
       'NEW TRACKING SET UP', ...NEW_TRACKING.map(([a, b]) => `• ${a}: ${b}`), '',
       'Thanks,', 'Mayank'].filter(x => x !== null).join('\n');
     // ── reference sheet: every number in the email, its source, and the data behind it ──
-    const sheet = () => {
+    // proof data for the sheet, fetched when the sheet is downloaded: landing pages, opportunities, searches,
+    // employer pages and job / internship posts, for both periods (GA4 Data API and Search Console)
+    const proof = async msg => {
+      const out = { errs: [] }, sx = settings(D.site), pid = String(sx.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), tok = token(), src = window.CW_SOURCE;
+      const stuEv = (sx.events && sx.events.studentSignup) || [], regEv = (sx.events && sx.events.opportunityAction) || [];
+      const hasOpp = { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } };
+      const and = (...e) => ({ andGroup: { expressions: e } });
+      const P = { c: cur, p: prv }, jobs = [];
+      const gaQ = (key, per, body) => jobs.push(() => runReport(pid, { dateRanges: [{ startDate: P[per].start, endDate: P[per].end }], ...body }).then(r => { out[key + per] = U.gaRows(r); }).catch(e => out.errs.push(key + ': ' + e.message)));
+      const gscQ = (key, per, body) => jobs.push(() => src.gsc.query({ startDate: P[per].start, endDate: P[per].end, type: 'web', ...body }).then(d => { out[key + per] = d.rows || []; }).catch(e => out.errs.push(key + ': ' + e.message)));
+      ['c', 'p'].forEach(per => {
+        if (pid && tok) {
+          gaQ('lpS', per, { dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'sessions' }], dimensionFilter: and(U.GA.organicFilter), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 1000 });
+          if (stuEv.length) gaQ('lpU', per, { dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and(U.GA.organicFilter, U.GA.inList('eventName', stuEv)), limit: 1000 });
+          if (regEv.length) gaQ('lpR', per, { dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(U.GA.organicFilter, U.GA.inList('eventName', regEv), hasOpp), limit: 1000 });
+          if (regEv.length) gaQ('opp', per, { dimensions: [{ name: 'customEvent:opportunity_id' }, { name: 'pagePath' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(U.GA.organicFilter, U.GA.inList('eventName', regEv), hasOpp), orderBys: [{ metric: { metricName: 'totalUsers' }, desc: true }], limit: 2000 });
+          gaQ('post', per, { dimensions: [{ name: 'customEvent:listing_type' }, { name: 'customEvent:listing_method' }, { name: 'sessionDefaultChannelGroup' }, { name: 'landingPage' }], metrics: [{ name: 'eventCount' }], dimensionFilter: and(U.GA.inList('eventName', ['listing_published'])), limit: 1000 });
+        }
+        if (src && src.gsc) {
+          gscQ('q', per, { dimensions: ['query'], rowLimit: 1000 });
+          gscQ('emp', per, { dimensions: ['page'], rowLimit: 500, dimensionFilterGroups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/employers/' }] }] });
+        }
+      });
+      let done = 0; const qd = jobs.slice();
+      await Promise.all(Array.from({ length: 4 }, async () => { while (qd.length) { await qd.shift()(); done++; if (msg) msg(`Building the reference sheet… ${done} of ${jobs.length}`); } }));
+      out.ga = !!(pid && tok); out.gsc = !!(src && src.gsc);
+      return out;
+    };
+    const sheet = async msg => {
       if (!window.XLSX) throw new Error('The spreadsheet library is still loading. Try again in a moment.');
+      const PR = (window.CW_SOURCE && window.CW_SOURCE.kind === 'api') ? await proof(msg) : { errs: ['Proof tabs need a live Search Console + GA4 connection (sample data has none).'] };
       const r1 = v => v == null ? '' : Math.round(v), chgP = (a, b) => { const v = pc(a, b); return v == null ? '' : Math.round(v * 10) / 10; };
       const met = [['Google clicks (all)', 'clicks', 'Search Console, web search'], ['Non-brand clicks', 'nbClicks', 'Search Console, queries without the brand terms'], ['Branded clicks', 'brand', 'Search Console'], ['Impressions', 'impr', 'Search Console'], ['Organic sessions', 'sessions', 'GA4, Session default channel group = Organic Search'], ['Student signups', 'students', `GA4 event ${evL('studentSignup')}, organic sessions`], ['Opportunity registrations', 'regs', `GA4 users with ${evL('opportunityAction')} carrying an opportunity_id, organic sessions, per day added up`]];
       const sum = [['Section', 'Metric', `${cur.label} (${cur.start} – ${cur.end})`, `${prv.label} (${prv.start} – ${prv.end})`, 'Change %', 'Source']];
@@ -3629,8 +3658,58 @@
       const ld = [['Date', 'Period', 'Segment', 'Page', 'Email type', 'Company domain']]; if (!SLr) ld.push(['Leads sheet not loaded: open the B2E dashboard once, then download again.']);
       [['this', cur], ['before', prv]].forEach(([nm, p]) => [['B2B', 'B2E (J&I)'], ['B2E', 'B2E']].forEach(([k, g]) => (leadsIn(p, g) || []).forEach(l => ld.push([l.day, nm, k, l.path, l.kind, l.kind === 'official' ? l.domain : '']))));
       const notes = [['Topic', 'Detail']].concat(lines.check.map(t => ['Being verified', strip(t)]), NEW_TRACKING.map(([a, b]) => ['New tracking: ' + a, b]), defs.map(t => ['How counted', t]), [['Segments', 'B2C = every page type except employer pages; B2B = job board / sourcing, /employers/hire-*, free job posting pages; B2E = the other employer pages. Rules are in Site clusters.']]);
+      // ── proof tabs ──
+      const pth = u => { try { return new URL(u).pathname; } catch (e) { return String(u || '').split('?')[0]; } };
+      const so = sectioner(D), clu = path => { const id = so('https://unstop.com' + path); const x = list.find(y => y.id === id); return x ? x.name : 'Other'; };
+      const mapBy = (rows, k, v) => { const m = new Map(); (rows || []).forEach(r => { const key = String(r[k] || '').split('?')[0]; m.set(key, (m.get(key) || 0) + (+r[v] || 0)); }); return m; };
+      const lpTab = [['Landing page (organic)', 'Cluster', 'Sessions', 'Sessions before', 'Student signups', 'Signups before', 'Registrations', 'Registrations before', 'Registrations change']];
+      if (PR.lpSc || PR.lpSp) {
+        const S = [mapBy(PR.lpSc, 'landingPage', 'sessions'), mapBy(PR.lpSp, 'landingPage', 'sessions')], U2 = [mapBy(PR.lpUc, 'landingPage', 'eventCount'), mapBy(PR.lpUp, 'landingPage', 'eventCount')], R = [mapBy(PR.lpRc, 'landingPage', 'totalUsers'), mapBy(PR.lpRp, 'landingPage', 'totalUsers')];
+        const keys = [...new Set([...S[0].keys(), ...S[1].keys(), ...R[0].keys(), ...R[1].keys()])].filter(k => k && !/^\(not set\)$/.test(k));
+        keys.map(k => [k, clu(k), S[0].get(k) || 0, S[1].get(k) || 0, U2[0].get(k) || 0, U2[1].get(k) || 0, R[0].get(k) || 0, R[1].get(k) || 0]).map(r => r.concat([r[6] - r[7]]))
+          .sort((a, b) => b[6] - a[6] || b[2] - a[2]).slice(0, 500).forEach(r => lpTab.push(r));
+      } else lpTab.push(['Needs GA4: sign in with Search Console + GA4, then download again.']);
+      const opTab = [['Opportunity ID', 'Opportunity page', 'Students registered (organic)', 'Before', 'Change']];
+      if (PR.oppc || PR.oppp) {
+        const tot = [new Map(), new Map()], page = new Map();
+        [PR.oppc, PR.oppp].forEach((L, i) => (L || []).forEach(r => { const id = r['customEvent:opportunity_id']; tot[i].set(id, (tot[i].get(id) || 0) + (+r.totalUsers || 0)); const pp = String(r.pagePath || ''); if (!page.has(id) || (/\/register/.test(page.get(id)) && !/\/register/.test(pp))) page.set(id, pp); }));
+        [...new Set([...tot[0].keys(), ...tot[1].keys()])].map(id => [id, 'https://unstop.com' + (page.get(id) || ''), tot[0].get(id) || 0, tot[1].get(id) || 0]).map(r => r.concat([r[2] - r[3]])).sort((a, b) => b[2] - a[2]).slice(0, 300).forEach(r => opTab.push(r));
+      } else opTab.push(['Needs GA4.']);
+      const qTab = [['Search query', 'Branded?', 'Clicks', 'Clicks before', 'Change', 'Impressions', 'Impressions before', 'Avg position', 'Avg position before']];
+      if (PR.qc || PR.qp) {
+        const qm = new Map(); [PR.qc, PR.qp].forEach((L, i) => (L || []).forEach(r => { const k = r.keys[0], o = qm.get(k) || [0, 0, 0, 0, null, null]; o[i] = r.clicks; o[2 + i] = r.impressions; o[4 + i] = Math.round(r.position * 10) / 10; qm.set(k, o); }));
+        [...qm].map(([k, o]) => [k, isB(k) ? 'Branded' : 'Non-brand', o[0], o[1], o[0] - o[1], o[2], o[3], o[4] == null ? '' : o[4], o[5] == null ? '' : o[5]]).sort((a, b) => b[2] - a[2]).forEach(r => qTab.push(r));
+      } else qTab.push(['Needs Search Console.']);
+      const empTab = [['Employer page', 'Segment', 'Google clicks', 'Clicks before', 'Impressions', 'Impressions before', 'Avg position', 'Organic sessions', 'Sessions before', 'Organic leads', 'Leads before', 'Organic job / internship posts (since 30 Oct)']];
+      if (PR.empc || PR.empp) {
+        const em = new Map(); [PR.empc, PR.empp].forEach((L, i) => (L || []).forEach(r => { const k = pth(r.keys[0]), o = em.get(k) || [0, 0, 0, 0, null]; o[i] = r.clicks; o[2 + i] = r.impressions; if (!i) o[4] = Math.round(r.position * 10) / 10; em.set(k, o); }));
+        const S = [mapBy(PR.lpSc, 'landingPage', 'sessions'), mapBy(PR.lpSp, 'landingPage', 'sessions')];
+        const ldc = path => [cur, prv].map(p => (lead(p) || []).filter(l => (l.path || '').split('?')[0] === path).length);
+        const posts = new Map(); (PR.postc || []).forEach(r => { if (r.sessionDefaultChannelGroup !== 'Organic Search') return; const k = String(r.landingPage || '').split('?')[0]; posts.set(k, (posts.get(k) || 0) + (+r.eventCount || 0)); });
+        [...em].map(([k, o]) => { const l = ldc(k); return [k, b2bIds.includes(so('https://unstop.com' + k)) ? 'B2B' : 'B2E', o[0], o[1], o[2], o[3], o[4] == null ? '' : o[4], S[0].get(k) || 0, S[1].get(k) || 0, l[0], l[1], posts.get(k) || 0]; }).sort((a, b) => b[2] - a[2]).forEach(r => empTab.push(r));
+      } else empTab.push(['Needs Search Console.']);
+      const poTab = [['Listing type', 'Method', 'Channel', 'Landing page', 'Posts (listing_published)', 'Posts before']];
+      if (PR.postc || PR.postp) {
+        const pm = new Map(); [PR.postc, PR.postp].forEach((L, i) => (L || []).forEach(r => { const k = [r['customEvent:listing_type'] || '(not set)', r['customEvent:listing_method'] || '(not set)', r.sessionDefaultChannelGroup, String(r.landingPage || '').split('?')[0]].join('\t'); const o = pm.get(k) || [0, 0]; o[i] += +r.eventCount || 0; pm.set(k, o); }));
+        [...pm].map(([k, o]) => k.split('\t').concat(o)).sort((a, b) => b[4] - a[4]).forEach(r => poTab.push(r));
+        poTab.push([], ['Tracking started 30 Oct 2026; the new vs edit split (listing_method = edit) started 3 Nov 2026. Earlier rows with an empty type are mostly edits of existing listings.']);
+      } else poTab.push(['Needs GA4.']);
+      // ── SOP: how anyone can rebuild each number by hand ──
+      const dr = `${cur.start} to ${cur.end} (and ${prv.start} to ${prv.end} for the comparison)`;
+      const sop = [['Number in the email', 'Where to check', 'Steps (exact settings)', 'Proof tab in this file']].concat([
+        ['Google clicks, impressions, CTR (overall)', 'Search Console → Performance → Search results', `Property sc-domain:unstop.com · Search type: Web · Date: Custom ${dr} · Compare: previous period. Read Total clicks / Total impressions / Average CTR.`, 'Summary, Day by day'],
+        ['Non-brand vs branded clicks', 'Search Console → Performance → Search results', `Same dates · + New → Query → Custom (regex) → "Doesn't match regex" → the brand terms (${(A.brandRx || 'brand terms set in the tool').slice(0, 120)}). The total is non-brand; branded = all clicks minus non-brand.`, 'Searches (column Branded?)'],
+        ['Which searches moved', 'Search Console → Performance → Queries tab', 'Same dates and compare · sort by Clicks difference.', 'Searches'],
+        ['B2B / B2E clicks', 'Search Console → Performance', `Same dates · + New → Page → Custom (regex) → B2B: /employers/(ai-sourcing-agent|hire-|free-job-posting)|/free-job-posting · B2E: contains /employers/ and does not match the B2B regex.`, 'Employer pages, Day by day'],
+        ['Organic sessions by landing page', 'GA4 → Explore → Free form', `Dates ${dr} · Rows: Landing page · Values: Sessions · Filter: Session default channel group exactly matches Organic Search.`, 'Student landing pages'],
+        ['Student signups', 'GA4 → Explore → Free form', `Same as above · Values: Event count · add filter Event name exactly matches ${evL('studentSignup')}. Ready-made: Explore "SEO: organic signups & opportunity posts by landing page", tab 1.`, 'Student landing pages'],
+        ['Opportunity registrations', 'GA4 → Explore → Free form', `Same as above · Values: Total users · filters Event name exactly matches ${evL('opportunityAction')} and opportunity_id does not exactly match (not set). Rows: opportunity_id for the opportunity list. Ready-made: same Explore, tab 3.`, 'Student landing pages, Opportunities'],
+        ['Job & internship posts', 'GA4 → Explore', 'Ready-made: Explore "Job board: job & internship posts" (funnels and Counts tab) and "SEO: organic signups & opportunity posts by landing page", tab 2. Event listing_published, split by listing_type and listing_method.', 'Job & internship posts, Employer pages'],
+        ['Employer leads', 'B2B Form Leads Google Sheet (tabs "Last 18 Months Data" and "from oct 14")', `Filter Channel = Organic and created_at in ${dr}; leave out @unstop.com and other internal emails; the page column (link) gives B2B or B2E.`, 'Leads, Employer pages'],
+        ['Rankings (top 3 / top 10 / 11–20)', 'Search Console → Performance → Queries', `Dates ${D.start} to ${D.end} · Average position on · non-brand regex filter as above · count queries by position.`, 'Searches']
+      ]);
       const wb = XLSX.utils.book_new(), add = (rows, nm, w) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = w.map(x => ({ wch: x })); XLSX.utils.book_append_sheet(wb, ws, nm); };
-      add(sum, 'Summary', [34, 42, 22, 22, 10, 60]); add(cl, 'By cluster', [6, 44].concat(Array(12).fill(13))); add(dy, 'Day by day', [12, 8, 10, 14, 12, 10, 10, 13]); add(ld, 'Leads', [12, 8, 8, 52, 12, 28]); add(notes, 'Notes', [34, 120]);
+      add(sum, 'Summary', [34, 42, 22, 22, 10, 60]); add(cl, 'By cluster', [6, 44].concat(Array(12).fill(13))); add(dy, 'Day by day', [12, 8, 10, 14, 12, 10, 10, 13]); add(ld, 'Leads', [12, 8, 8, 52, 12, 28]); add(lpTab, 'Student landing pages', [70, 34, 10, 14, 14, 14, 13, 18, 18]); add(opTab, 'Opportunities', [16, 90, 26, 10, 10]); add(qTab, 'Searches', [50, 11, 10, 13, 10, 12, 18, 12, 18]); add(empTab, 'Employer pages', [70, 8, 13, 13, 12, 18, 12, 16, 14, 13, 12, 30]); add(poTab, 'Job & internship posts', [12, 10, 16, 60, 22, 12]); add(sop, 'How to check (SOP)', [34, 44, 120, 30]); add(notes.concat(PR.errs.map(e => ['Could not load', e])), 'Notes', [34, 120]);
       XLSX.writeFile(wb, `Unstop SEO ${gran === 'week' ? 'weekly' : 'monthly'} reference ${cur.start} to ${cur.end}.xlsx`);
     };
     const html = intro + tabs +
@@ -3647,7 +3726,7 @@
       `<section class="panel"><div class="panel-h"><h2>New tracking set up</h2><p>What GTM and GA4 now measure, so these numbers can join the review.</p></div><div class="panel-b">${ul(NEW_TRACKING.map(([a, b]) => `<b>${esc(a)}</b>: ${esc(b)}`))}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>How the numbers are counted</h2><p>Every number above can be rebuilt from these sources.</p></div><div class="panel-b">${ul(defs.map(esc))}</div></section>` +
       `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report?by=${gran}">Weekly SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
-    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); const x = document.getElementById('un-sum-xlsx'); if (x) x.addEventListener('click', () => { const m = document.getElementById('un-sum-msg'); try { sheet(); m.textContent = 'Reference sheet downloaded. Attach it to the email.'; } catch (e) { m.textContent = e.message; } }); } };
+    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); const x = document.getElementById('un-sum-xlsx'); if (x) x.addEventListener('click', () => { const m = document.getElementById('un-sum-msg'); x.disabled = true; sheet(t => { m.textContent = t; }).then(() => { m.textContent = 'Reference sheet downloaded. Attach it to the email.'; }).catch(e => { m.textContent = e.message; }).finally(() => { x.disabled = false; }); }); } };
   };
 
   // ════════════════════════════ JOURNEYS: WHERE THEY SIGN UP, WHAT THEY APPLY TO ════════════════════════════
