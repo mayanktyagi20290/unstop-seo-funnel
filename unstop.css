@@ -142,3 +142,4 @@
 .panel[id]{scroll-margin-top:110px}
 .un-q-more>summary{cursor:pointer;list-style:none}.un-q-more>summary::-webkit-details-marker{display:none}.un-q-more>summary h2:after{content:' ▸';color:var(--muted)}.un-q-more[open]>summary h2:after{content:' ▾'}
 .un-q-a{margin:6px 0 8px;padding-left:18px;font-size:14px;line-height:1.5}.un-q-a li{border:0;padding:0;margin:2px 0}
+.un-sum-l{margin:0;padding-left:18px;line-height:1.55}.un-sum-l li{margin:4px 0}.un-sum-t td:first-child{min-width:200px}
