@@ -3495,6 +3495,14 @@
   // registrations → employer leads), split by page type and by branded / non-branded. Only numbers this tool
   // measures (Search Console, GA4, the leads sheet). #summary?by=week|month
   const PT = [['opp', 'Opportunity & competition pages'], ['org', 'College & company pages'], ['blog', 'Blog & guides'], ['emp', 'Employer-facing pages'], ['home', 'Home page'], ['prod', 'Practice, courses & tools']];
+  // tracking set up in GTM / GA4, listed in the summary so the review sees what can now be measured (edit here when more goes live)
+  const NEW_TRACKING = [
+    ['Recruiter job board funnel (GTM + GA4)', 'how many jobs and internships recruiters post, by AI or manual, step by step from choosing the type to publishing; edits of existing listings are kept apart. GA4 Explore: "Job board: job & internship posts". Live since 30 Oct 2026; new vs edit split since 3 Nov 2026.'],
+    ['Organic signups and posts by landing page (GA4 Explore)', 'three tabs: organic student signups by landing page, organic job & internship posts by landing page, and organic student registrations by opportunity. GA4 Explore: "SEO: organic signups & opportunity posts by landing page".'],
+    ['Student signup tracking', 'the signup_email_verified event, so organic signups are counted when the email is verified.'],
+    ['Opportunity registration form drop-off', 'which fields on the registration form, including screening questions, are filled or skipped.'],
+    ['Employer page demo clicks and form submissions', 'demo clicks and form submits on /employers/ pages, reported as employer leads.']
+  ];
   V.summary = (A, D) => {
     demoFill(D);
     delete TABLES['t-un-sum'];
@@ -3577,7 +3585,7 @@
     const text = () => [`Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${gran === 'week' ? 'last 7 days' : PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '', `Here is the ${gran === 'week' ? 'weekly' : 'monthly'} SEO update for ${PL} (${fmtD(cur.start)} – ${fmtD(cur.end)}), compared with ${PLp} (${fmtD(prv.start)} – ${fmtD(prv.end)}). Numbers are from Search Console and GA4 (Organic Search, website), split by page type, with branded and non-branded searches apart.`, '', 'HEADLINE', ...lines.head.map(t => '• ' + strip(t)), '', 'WHAT IMPROVED', ...(lines.up.length ? lines.up : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '', 'WHERE WE FOCUS NEXT', ...(lines.focus.length ? lines.focus : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '',
       ...(lines.check.length ? ['NUMBERS TO CHECK', ...lines.check.map(t => '• ' + strip(t)), ''] : []),
       `BY PAGE TYPE (vs ${cmpL})`, ...chainRows.map(r => { const b = r.p; return `• ${r.name}: non-brand clicks ${n(r.c.nbClicks)} (${tx(pc(r.c.nbClicks, b.nbClicks))}), sessions ${n(r.c.sessions)} (${tx(pc(r.c.sessions, b.sessions))}), signups ${n(r.c.students)} (${tx(pc(r.c.students, b.students))})${r.c.regs || b.regs ? `, registrations ${n(r.c.regs)} (${tx(pc(r.c.regs, b.regs))})` : ''}`; }), '',
-      `RANKINGS (non-brand searches by average position, Search Console ${fmtD(D.start)} – ${fmtD(D.end)})`, `• Top 3: ${fmtN(top3)} · Top 10: ${fmtN(top10)} · Positions 11–20: ${fmtN(qw.length)}`, '', 'EMPLOYER LEADS', '• ' + strip(leadsHtml.replace(/<p class="hint">.*$/, '')), '', 'HOW THE NUMBERS ARE COUNTED', ...defs.map(t => '• ' + t), '', `Detail by cluster and page is in the Unstop SEO tool (Clusters: week & month).`, '', 'Thanks,', 'Mayank'].join('\n');
+      `RANKINGS (non-brand searches by average position, Search Console ${fmtD(D.start)} – ${fmtD(D.end)})`, `• Top 3: ${fmtN(top3)} · Top 10: ${fmtN(top10)} · Positions 11–20: ${fmtN(qw.length)}`, '', 'EMPLOYER LEADS', '• ' + strip(leadsHtml.replace(/<p class="hint">.*$/, '')), '', 'NEW TRACKING SET UP', ...NEW_TRACKING.map(([a, b]) => `• ${a}: ${b}`), '', 'HOW THE NUMBERS ARE COUNTED', ...defs.map(t => '• ' + t), '', `Detail by cluster and page is in the Unstop SEO tool (Clusters: week & month).`, '', 'Thanks,', 'Mayank'].join('\n');
     const html = intro + tabs +
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
       (!ga ? '<div class="note">GA4 is not connected in this tab: sessions, signups and registrations are empty.</div>' : '') +
@@ -3589,6 +3597,7 @@
       `<section class="panel"><div class="panel-h"><h2>The chain by page type</h2><p>Visibility (impressions, clicks, CTR) → traffic → signups → registrations, branded and non-branded apart.</p></div><div class="panel-b">${tbl}</div></section>` +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Rankings (non-brand)</h2></div><div class="panel-b">${vis}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Employer leads (leads sheet)</h2></div><div class="panel-b">${leadsHtml}</div></section></div>` +
+      `<section class="panel"><div class="panel-h"><h2>New tracking set up</h2><p>What GTM and GA4 now measure, so these numbers can join the review.</p></div><div class="panel-b">${ul(NEW_TRACKING.map(([a, b]) => `<b>${esc(a)}</b>: ${esc(b)}`))}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>How the numbers are counted</h2><p>Every number above can be rebuilt from these sources.</p></div><div class="panel-b">${ul(defs.map(esc))}</div></section>` +
       `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report?by=${gran}">Weekly SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
     return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); } };
