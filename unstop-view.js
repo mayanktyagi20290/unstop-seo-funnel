@@ -3640,13 +3640,16 @@
       out.ga = !!(pid && tok); out.gsc = !!(src && src.gsc);
       return out;
     };
+    // styled workbook: the xlsx-js-style build (same API as SheetJS, plus cell styles), loaded once on demand
+    const loadStyled = () => window.XLSXS !== undefined ? Promise.resolve(window.XLSXS) : new Promise(res => { const keep = window.XLSX, sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js'; sc.onload = () => { window.XLSXS = window.XLSX; if (keep) window.XLSX = keep; res(window.XLSXS); }; sc.onerror = () => { window.XLSXS = null; res(null); }; document.head.appendChild(sc); });
     const sheet = async msg => {
       if (!window.XLSX) throw new Error('The spreadsheet library is still loading. Try again in a moment.');
+      const XS = await loadStyled(), X = XS || window.XLSX;
       const PR = (window.CW_SOURCE && window.CW_SOURCE.kind === 'api') ? await proof(msg) : { errs: ['Proof tabs need a live Search Console + GA4 connection (sample data has none).'] };
       const r1 = v => v == null ? '' : Math.round(v), chgP = (a, b) => { const v = pc(a, b); return v == null ? '' : Math.round(v * 10) / 10; };
       const met = [['Google clicks (all)', 'clicks', 'Search Console, web search'], ['Non-brand clicks', 'nbClicks', 'Search Console, queries without the brand terms'], ['Branded clicks', 'brand', 'Search Console'], ['Impressions', 'impr', 'Search Console'], ['Organic sessions', 'sessions', 'GA4, Session default channel group = Organic Search'], ['Student signups', 'students', `GA4 event ${evL('studentSignup')}, organic sessions`], ['Opportunity registrations', 'regs', `GA4 users with ${evL('opportunityAction')} carrying an opportunity_id, organic sessions, per day added up`]];
       const sum = [['Section', 'Metric', `${cur.label} (${cur.start} – ${cur.end})`, `${prv.label} (${prv.start} – ${prv.end})`, 'Change %', 'Source']];
-      [['Overall', T]].concat(SEG.map(s => [`${s.k} — ${s.name}`, s])).forEach(([sec, o]) => met.forEach(([l, k, src]) => { if (!ga && ['sessions', 'students', 'regs'].includes(k)) return; sum.push([sec, l, r1(o.c[k]), r1(o.p[k]), chgP(o.c[k], o.p[k]), src]); }));
+      [['Overall', T]].concat(SEG.map(s => [{ B2C: 'B2C (students)', B2B: 'B2B (job-posting pages)', B2E: 'B2E (employer pages)' }[s.k], s])).forEach(([sec, o]) => met.forEach(([l, k, src]) => { if (!ga && ['sessions', 'students', 'regs'].includes(k)) return; sum.push([sec, l, r1(o.c[k]), r1(o.p[k]), chgP(o.c[k], o.p[k]), src]); }));
       if (LB.c) sum.push(['B2B — leads', 'Organic sales-form leads', LB.c.length, LB.p.length, chgP(LB.c.length, LB.p.length), 'Leads sheet, Channel = Organic, internal emails left out'], ['B2B — leads', 'of which company emails', off(LB.c), off(LB.p), chgP(off(LB.c), off(LB.p)), 'Leads sheet']);
       if (LE.c) sum.push(['B2E — leads', 'Organic sales-form leads', LE.c.length, LE.p.length, chgP(LE.c.length, LE.p.length), 'Leads sheet, Channel = Organic, internal emails left out'], ['B2E — leads', 'of which company emails', off(LE.c), off(LE.p), chgP(off(LE.c), off(LE.p)), 'Leads sheet']);
       sum.push(['Rankings', 'Non-brand searches in top 3 / top 10 / 11–20', `${top3} / ${top10} / ${qw.length}`, '', '', `Search Console, average position, ${D.start} – ${D.end}`]);
@@ -3708,9 +3711,33 @@
         ['Employer leads', 'B2B Form Leads Google Sheet (tabs "Last 18 Months Data" and "from oct 14")', `Filter Channel = Organic and created_at in ${dr}; leave out @unstop.com and other internal emails; the page column (link) gives B2B or B2E.`, 'Leads, Employer pages'],
         ['Rankings (top 3 / top 10 / 11–20)', 'Search Console → Performance → Queries', `Dates ${D.start} to ${D.end} · Average position on · non-brand regex filter as above · count queries by position.`, 'Searches']
       ]);
-      const wb = XLSX.utils.book_new(), add = (rows, nm, w) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = w.map(x => ({ wch: x })); XLSX.utils.book_append_sheet(wb, ws, nm); };
+      const NAVY = '1F3A5F', LINE = { style: 'thin', color: { rgb: 'D0D7E2' } }, BOX = { top: LINE, bottom: LINE, left: LINE, right: LINE };
+      const wb = X.utils.book_new(), add = (rows, nm, w) => {
+        const ws = X.utils.aoa_to_sheet(rows); ws['!cols'] = w.map(x => ({ wch: x }));
+        const hdr = rows[0] || [], ncol = Math.max(...rows.map(r => r.length), 1);
+        if (rows.length > 1 && rows[1].length > 1) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length - 1, c: hdr.length - 1 } }) };
+        if (XS) {
+          const chgCol = hdr.map(h => /change/i.test(String(h || '')));
+          let band = false, lastSec = null;
+          rows.forEach((r, ri) => {
+            if (ri && r[0] !== lastSec && (nm === 'Summary' || nm === 'Day by day')) { band = !band; lastSec = r[0]; }
+            for (let ci = 0; ci < ncol; ci++) {
+              const ref = X.utils.encode_cell({ r: ri, c: ci }); let c = ws[ref]; if (!c) { if (!ri || r.length < 2) continue; c = ws[ref] = { t: 's', v: '' }; }
+              if (!ri) { c.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: NAVY } }, alignment: { vertical: 'center', wrapText: true }, border: BOX }; continue; }
+              if (r.length < 2) { c.s = { font: { italic: true, color: { rgb: '6B7280' } } }; continue; }
+              const st = { border: BOX, alignment: { vertical: 'top', wrapText: typeof c.v === 'string' && c.v.length > 40 } };
+              if (band) st.fill = { fgColor: { rgb: 'F3F6FA' } };
+              if (c.t === 'n') { st.numFmt = chgCol[ci] && nm === 'Summary' ? '+0.0"%";-0.0"%";0"%"' : (Number.isInteger(c.v) ? '#,##0' : '#,##0.0'); if (chgCol[ci] && c.v) st.font = { bold: true, color: { rgb: c.v > 0 ? '15803D' : 'B91C1C' } }; }
+              if (ci === 0) st.font = Object.assign({ bold: nm === 'Summary' || nm === 'How to check (SOP)' }, st.font || {});
+              c.s = st;
+            }
+          });
+          ws['!rows'] = [{ hpt: 30 }];
+        }
+        X.utils.book_append_sheet(wb, ws, nm);
+      };
       add(sum, 'Summary', [34, 42, 22, 22, 10, 60]); add(cl, 'By cluster', [6, 44].concat(Array(12).fill(13))); add(dy, 'Day by day', [12, 8, 10, 14, 12, 10, 10, 13]); add(ld, 'Leads', [12, 8, 8, 52, 12, 28]); add(lpTab, 'Student landing pages', [70, 34, 10, 14, 14, 14, 13, 18, 18]); add(opTab, 'Opportunities', [16, 90, 26, 10, 10]); add(qTab, 'Searches', [50, 11, 10, 13, 10, 12, 18, 12, 18]); add(empTab, 'Employer pages', [70, 8, 13, 13, 12, 18, 12, 16, 14, 13, 12, 30]); add(poTab, 'Job & internship posts', [12, 10, 16, 60, 22, 12]); add(sop, 'How to check (SOP)', [34, 44, 120, 30]); add(notes.concat(PR.errs.map(e => ['Could not load', e])), 'Notes', [34, 120]);
-      XLSX.writeFile(wb, `Unstop SEO ${gran === 'week' ? 'weekly' : 'monthly'} reference ${cur.start} to ${cur.end}.xlsx`);
+      X.writeFile(wb, `Unstop SEO ${gran === 'week' ? 'weekly' : 'monthly'} reference ${cur.start} to ${cur.end}.xlsx`);
     };
     const html = intro + tabs +
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
