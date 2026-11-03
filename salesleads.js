@@ -66,7 +66,7 @@
       if (rows.length < 2) { info.push({ name: sh.name, rows: 0, used: 0, skipped: 'empty' }); return; }
       const map = headerMap(rows[0]);
       if (map.created == null || map.link == null || (map.email == null && map.domain == null)) { info.push({ name: sh.name, rows: rows.length - 1, used: 0, skipped: 'needs created_at, link and email or email domain columns' }); return; }
-      let used = 0, dup = 0;
+      let used = 0, dup = 0, dMin = null, dMax = null;
       for (let i = 1; i < rows.length; i++) {
         const r = rows[i], get = k => map[k] == null ? '' : r[map[k]];
         const email = String(get('email') || '').trim().toLowerCase();
@@ -77,9 +77,9 @@
         const ch = String(get('channel') || '').trim();
         const usertype = String(get('usertype') || '').trim();
         leads.push({ name: String(get('name') || '').trim().slice(0, 80), day, month: day ? day.slice(0, 7) : null, path: pagePath(get('link')), domain, kind: emailKind(domain, usertype), usertype, status: String(get('status') || '').trim(), channel: ch || 'Organic', source: sourceOf(ch), organic: !ch || /organic|seo/i.test(ch) });
-        used++;
+        used++; if (day) { if (!dMin || day < dMin) dMin = day; if (!dMax || day > dMax) dMax = day; }
       }
-      info.push({ name: sh.name, rows: rows.length - 1, used, dup });
+      info.push({ name: sh.name, rows: rows.length - 1, used, dup, min: dMin, max: dMax });
     });
     // one class per domain: a non-free domain that students mostly sign up with is a campus domain
     const dm = new Map(); leads.forEach(l => { if (l.kind !== 'official' && l.kind !== 'campus') return; const o = dm.get(l.domain) || { n: 0, st: 0, campusName: false }; o.n++; if (STUDENT_TYPES.test(l.usertype)) o.st++; if (CAMPUS_TLD.test(l.domain) || CAMPUS_WORD.test(l.domain)) o.campusName = true; dm.set(l.domain, o); });

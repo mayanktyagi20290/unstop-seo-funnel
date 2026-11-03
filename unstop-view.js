@@ -2162,6 +2162,8 @@
     return wb.SheetNames.map(n => ({ name: n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: false }) }));
   }
   function salesAuto(D) {
+    const cur = SALES.get(D.site);
+    if (cur && cur.source === 'sheet' && Date.now() - cur.at > 30 * 60e3 && SALESAUTO.get(D.site) !== 'loading') { SALES.delete(D.site); SALESAUTO.delete(D.site); } // the sheet is updated by hand (every Monday): read it again when it gets old
     if (!(window.CW_SOURCE && window.CW_SOURCE.kind === 'api') || SALES.has(D.site) || SALESAUTO.has(D.site) || !googleTok() || !sheetIdOf(salesSheetOf(D))) return;
     SALESAUTO.set(D.site, 'loading'); rerender();
     loadSalesSheet(D).then(() => SALESAUTO.set(D.site, 'done'), e => { SALESAUTO.set(D.site, 'error'); SALES.set(D.site, { error: e.message }); }).finally(rerender);
@@ -2594,7 +2596,8 @@
         <label class="field un-f sm"><span>Channel</span><select id="un-sl-ch"><option value="org" ${!slAll ? 'selected' : ''}>Organic only</option><option value="all" ${slAll ? 'selected' : ''}>All channels</option></select></label>
         <button class="btn-quiet sm" type="button" id="un-sl-load">${SLd && SLd.source === 'sheet' ? 'Reload the Google Sheet' : 'Load from the Google Sheet'}</button>
         <label class="btn-quiet sm un-file">Upload the sheet (.xlsx / .csv)<input type="file" id="un-sl-file" accept=".xlsx,.xls,.csv" hidden></label>
-        <span class="hint" id="un-sl-msg">${slAuto === 'loading' ? 'Loading the leads sheet…' : ''}</span></div>`;
+        <span class="hint" id="un-sl-msg">${slAuto === 'loading' ? 'Loading the leads sheet…' : ''}</span></div>` +
+      (SLr ? `<p class="un-meta" id="un-sl-status">${SLd.source === 'sheet' ? 'Google Sheet read' : 'Leads loaded'} ${esc(when(SLd.at))}: ${(SLr.sheets || []).map(x => x.skipped ? `tab “${esc(x.name)}” skipped (${esc(x.skipped)})` : `tab “${esc(x.name)}” ${fmtN(x.used)} leads${x.min ? ` (${esc(fmtD(x.min))} – ${esc(fmtD(x.max))})` : ''}${x.dup ? `, ${fmtN(x.dup)} duplicates dropped` : ''}`).join(' · ')}. Latest lead: <b>${esc(fmtD(SLr.max))}</b>.${slRange !== 'all' && SLr.max > D.end ? ` Leads after ${esc(fmtD(D.end))} are outside the dashboard dates: pick “Everything in the sheet” or move the date range.` : ''} The sheet is read again every time the tool opens, and every 30 minutes while it stays open.</p>` : '');
     if (!SLr) salesHtml = slCtl + `<div class="note">${SLd && SLd.error ? `<span class="start-error">${esc(SLd.error)}</span><br>` : ''}Reads the <b>B2B Form Leads</b> sheet (every tab, duplicates dropped) as the lead list: which page the sales form was filled on, and whether the email is an <b>official</b> company address, a <b>campus</b> (college / university) address or a <b>personal</b> one (Gmail etc.). Only rows whose Channel is Organic count unless you pick All channels. unstop.com emails are left out as internal. Names, emails and phone numbers are not shown or kept. Sheet: ${sheetIdOf(salesSheetOf(D)) ? `<a href="https://docs.google.com/spreadsheets/d/${esc(sheetIdOf(salesSheetOf(D)))}/edit" target="_blank" rel="noopener">open</a> · change it in <a href="#funnelsetup">Funnel setup</a>` : 'add the link in <a href="#funnelsetup">Funnel setup</a>'}.</div>`;
     else {
       const L = SLr.leads.filter(l => (slAll || l.organic) && (slRange === 'all' || slIn(l)));
