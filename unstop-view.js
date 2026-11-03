@@ -3490,6 +3490,116 @@
     } };
   };
 
+  // ════════════════════════════ BLOG INTELLIGENCE & SEO ACTIONS ════════════════════════════
+  // Per cluster (Blog by default): what is working, which pages to fix and how, which pages can reach
+  // page one, which ones are falling, competing pages, pages with traffic but few signups, and what to
+  // write next, from the searches people already make. Search Console for the top dates; GA4 optional.
+  // #actions?c=<cluster id>
+  const ACT = new Map();
+  const ACT_STOP = new Set('a an the for and or to in of on at by with from is are how what why which who when where can do does best top near me my your vs list 2023 2024 2025 2026 2027 i in'.split(' '));
+  async function loadActGa(D, sec, key) {
+    const s = settings(D.site), pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), st = { status: 'loading' }; ACT.set(key, st);
+    if (!pid || !token()) { st.status = 'none'; rerender(); return; }
+    try {
+      const rx = gaPathRx(U.sectionRegex(sec, null)), ex = U.sectionExclude(sec, s.sections);
+      const exp = [U.GA.organicFilter, { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: rx } } }].concat(ex ? [{ notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(ex) } } } }] : []);
+      const stuEv = (s.events && s.events.studentSignup) || [], regEv = (s.events && s.events.opportunityAction) || [];
+      const hasOpp = { notExpression: { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } } };
+      const q = (metric, extra) => runReport(pid, { dateRanges: [{ startDate: D.start, endDate: D.end }], dimensions: [{ name: 'landingPage' }], metrics: [{ name: metric }], dimensionFilter: { andGroup: { expressions: exp.concat(extra) } }, limit: 5000 }).then(U.gaRows);
+      const [S, E, R] = await Promise.all([q('sessions', []), stuEv.length ? q('eventCount', [U.GA.inList('eventName', stuEv)]) : [], regEv.length ? q('totalUsers', [U.GA.inList('eventName', regEv), hasOpp]) : []]);
+      const m = new Map(), g = k => { k = String(k || '').split('?')[0].toLowerCase(); if (!m.has(k)) m.set(k, { ses: 0, stu: 0, reg: 0 }); return m.get(k); };
+      S.forEach(r => { g(r.landingPage).ses += +r.sessions || 0; }); E.forEach(r => { g(r.landingPage).stu += +r.eventCount || 0; }); R.forEach(r => { g(r.landingPage).reg += +r.totalUsers || 0; });
+      st.status = 'done'; st.pages = m;
+    } catch (e) { st.status = 'error'; st.error = e.message; }
+    if (ACT.get(key) === st) rerender();
+  }
+  V.actions = (A, D) => {
+    const so = sectioner(D), P = fParams(), path = u => U.pathOnly(u).toLowerCase();
+    const isB = A.isBrand || (() => false), QP = (D.QP || []).filter(r => !isB(r.q));
+    // clusters with Google clicks, Blog first
+    const tot = new Map(); (A.P || []).forEach(r => { const id = so(r.p); const o = tot.get(id) || { clicks: 0, impr: 0 }; o.clicks += r.clicks; o.impr += r.impr; tot.set(id, o); });
+    const secs = so.sections.filter(x => tot.has(x.id) && x.id !== 'other').sort((a, b) => (b.id === 'blog') - (a.id === 'blog') || tot.get(b.id).clicks - tot.get(a.id).clicks);
+    const sel = secs.find(x => x.id === P.get('c')) || secs.find(x => x.id === 'blog') || secs[0];
+    const intro = head(sel && sel.id === 'blog' ? 'Blog intelligence & SEO actions' : 'SEO actions', 'What is working, which pages to fix and how, which pages can reach page one, what is falling, and what to write next, per cluster. Search Console for the dates at the top; GA4 adds signups and registrations.');
+    if (!sel) return { html: intro + '<p class="empty">No pages with Google clicks yet.</p>', mount: () => { } };
+    const pick = `<div class="un-tabs" style="flex-wrap:wrap;margin:4px 0 12px">${secs.slice(0, 18).map(x => `<a class="${x.id === sel.id ? 'on' : ''}" href="#actions?c=${encodeURIComponent(x.id)}">${esc(x.name.replace(/^[^›]*›\s*/, ''))}</a>`).join('')}</div>`;
+    const inC = u => so(u) === sel.id;
+    const pages = (A.P || []).filter(r => inC(r.p)).map(r => ({ ...r, path: path(r.p) }));
+    const sum = (L, k) => L.reduce((a, r) => a + (+r[k] || 0), 0);
+    const cl = sum(pages, 'clicks'), im = sum(pages, 'impr'), ctr = im ? cl / im * 100 : 0, pos = im ? pages.reduce((a, r) => a + r.pos * r.impr, 0) / im : 0;
+    const nbCl = sum(QP.filter(r => inC(r.p)), 'clicks');
+    // GA4 per landing page (optional)
+    const gk = [D.site, D.start, D.end, sel.id].join('|'); let G = ACT.get(gk);
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api';
+    const ga = G && G.status === 'done' ? G.pages : null;
+    const gaOf = p => ga ? ga.get(p) || ga.get(p.replace(/\/$/, '')) || { ses: 0, stu: 0, reg: 0 } : null;
+    const gaT = ga ? [...ga.values()].reduce((a, o) => ({ ses: a.ses + o.ses, stu: a.stu + o.stu, reg: a.reg + o.reg }), { ses: 0, stu: 0, reg: 0 }) : null;
+    const link = p => `<a href="https://unstop.com${esc(p)}" target="_blank" rel="noopener">${esc(p.length > 70 ? p.slice(0, 68) + '…' : p)}</a>`;
+    const n0 = v => fmtN(Math.round(v || 0)), p1 = v => (v || 0).toFixed(1);
+    const tbl = (cols, rows) => rows.length ? `<div class="tw"><table class="un-mini"><thead><tr>${cols.map(c => `<th${c[1] ? ' class="r"' : ''}>${esc(c[0])}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((v, i) => `<td${cols[i][1] ? ' class="r"' : ''}>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<p class="un-n">Nothing for these dates.</p>';
+    const sec = (id, t, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${t}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
+    // queries per page
+    const qBy = new Map(); QP.forEach(r => { const k = path(r.p); if (!qBy.has(k)) qBy.set(k, []); qBy.get(k).push(r); }); qBy.forEach(L => L.sort((a, b) => b.impr - a.impr));
+    const topQ = (p, f, n) => (qBy.get(p) || []).filter(f || (() => true)).slice(0, n || 3);
+    const qList = L => L.map(r => `<span class="tag" title="position ${p1(r.pos)}, ${n0(r.impr)} impressions">${esc(r.q)}</span>`).join(' ');
+    // 1. categories (blog: by topic words in the URL; other clusters: by first folder after the cluster root)
+    const CAT = [['Company exam prep', '🏢', '#1C4980', ['tcs', 'infosys', 'wipro', 'accenture', 'cognizant', 'capgemini', 'amazon', 'google', 'microsoft']], ['Exam & test prep', '📝', '#7C3AED', ['nqt', 'aptitude', 'placement', 'exam', 'test', 'syllabus', 'paper', 'mock']], ['Career advice', '💡', '#0E9F8E', ['career', 'interview', 'resume', 'cv', 'salary', 'tips', 'guide', 'skill']], ['Internship guides', '💼', '#0891B2', ['internship', 'intern']], ['Job guides', '🧳', '#D97706', ['job', 'jobs', 'hiring', 'recruitment', 'fresher']], ['Competition guides', '🥇', '#E11D48', ['hackathon', 'competition', 'case-study', 'challenge']], ['MBA & higher ed', '🎓', '#8B5CF6', ['mba', 'cat', 'gmat', 'gre', 'management']]];
+    const catOf = p => { for (const [l, , , kw] of CAT) if (kw.some(k => p.includes(k))) return l; return 'Other topics'; }, catMeta = l => CAT.find(c => c[0] === l) || [l, '📄', '#64748B'];
+    const cats = sel.id === 'blog' ? [...pages.reduce((m, r) => { const k = catOf(r.path); const o = m.get(k) || { l: k, clicks: 0, impr: 0, n: 0, pw: 0 }; o.clicks += r.clicks; o.impr += r.impr; o.n++; o.pw += r.pos * r.impr; m.set(k, o); return m; }, new Map()).values()].sort((a, b) => b.clicks - a.clicks) : [];
+    const exp = A.curve && A.curve.at ? A.curve.at : (CW.expCtr || (() => 3));
+    // 2. working: CTR at or above expected for the position, with clicks
+    const working = pages.filter(r => r.clicks >= 20 && r.ctr >= exp(r.pos)).sort((a, b) => b.clicks - a.clicks).slice(0, 10);
+    // 3. titles to rewrite: engine's list (CTR well below expected at the current position), this cluster
+    const ctrFix = (A.ctrPages || []).filter(r => inC(r.p)).slice(0, 12);
+    // 4. page one push: queries at 4–20 grouped by the page that ranks for them
+    const qw = new Map(); QP.filter(r => inC(r.p) && r.pos > 3.5 && r.pos <= 20 && r.impr >= 30).forEach(r => { const k = path(r.p); const o = qw.get(k) || { path: k, impr: 0, qs: [], gain: 0 }; o.impr += r.impr; o.qs.push(r); o.gain += Math.max(0, r.impr * (exp(r.pos <= 10 ? 3 : 7) - r.ctr) / 100); qw.set(k, o); });
+    const push = [...qw.values()].map(o => ({ ...o, qs: o.qs.sort((a, b) => b.impr - a.impr) })).sort((a, b) => b.gain - a.gain).slice(0, 12);
+    // 5. falling pages
+    const falls = A.decay && A.decay.pages ? A.decay.pages.filter(r => inC(r.p)).slice(0, 10) : null;
+    const fallDo = r => /position fell/.test(r.reason) ? 'Refresh the content: update facts and dates, add the sections the top results cover, re-check internal links to it.' : /CTR fell/.test(r.reason) ? 'Rewrite the title and description; check if a new search feature (AI overview, snippet) took the click.' : /impressions down|no longer/.test(r.reason) ? 'Demand or indexing dropped: check the URL in Search Console (indexed?) and whether the topic is seasonal.' : 'Compare its searches in Search Console and refresh the page.';
+    // 6. competing pages
+    const comp = (A.cannibal || []).map(c => { const seen = new Map(); (c.pages || []).filter(x => inC(x.p)).forEach(x => { const k = path(x.p).replace(/\/$/, ''); const o = seen.get(k); if (o) o.share += x.share; else seen.set(k, { ...x, share: x.share }); }); return { ...c, pages: [...seen.values()].sort((a, b) => b.share - a.share) }; }).filter(c => c.pages.length >= 2).slice(0, 8);
+    // 7. convert: traffic but few signups / registrations (GA4)
+    const avgRate = gaT && gaT.ses ? (gaT.stu + gaT.reg) / gaT.ses * 100 : 0;
+    const conv = ga ? [...ga.entries()].map(([p, o]) => ({ path: p, ...o, rate: o.ses ? (o.stu + o.reg) / o.ses * 100 : 0 })).filter(o => o.ses >= 100 && o.rate < avgRate * .5).sort((a, b) => b.ses - a.ses).slice(0, 10) : null;
+    // 8. what to write next: searches this cluster shows for but no page ranks well (best position > 12),
+    //    grouped into topics by their two main words
+    const bestQ = new Map(); QP.filter(r => inC(r.p)).forEach(r => { const o = bestQ.get(r.q); if (!o || r.pos < o.pos) bestQ.set(r.q, { ...r, impr: (o ? o.impr : 0) + r.impr }); else o.impr += r.impr; });
+    const words = q => q.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !ACT_STOP.has(w) && !/^\d+$/.test(w));
+    const topics = new Map();
+    [...bestQ.values()].filter(r => r.pos > 12 && r.impr >= 50).forEach(r => { const w = words(r.q); if (!w.length) return; const k = w.slice(0, 2).sort().join(' '); const o = topics.get(k) || { k, impr: 0, qs: [], best: 99 }; o.impr += r.impr; o.qs.push(r); o.best = Math.min(o.best, r.pos); topics.set(k, o); });
+    const fmtIdea = o => { const all = o.qs.map(x => x.q).join(' '), yr = /\b20\d\d\b/.test(all) ? ' (keep the year in the title)' : ''; return /\b(how|what|why|which|can|is|does)\b/.test(all) ? 'How-to / FAQ article' : /\b(salary|package|ctc)\b/.test(all) ? 'Salary guide by role and city' + yr : /\b(questions|paper|papers|syllabus|pattern|mock|test)\b/.test(all) ? 'Prep page: pattern, syllabus, sample questions' + yr : /\b(top|best|list|projects|ideas|topics|examples)\b/.test(all) ? 'List article with examples' + yr : /\b(january|february|march|april|may|june|july|august|september|october|november|december|upcoming|latest)\b/.test(all) ? 'Monthly roundup (refresh each month)' : 'Complete guide' + yr; };
+    const ideas = [...topics.values()].filter(o => o.qs.length >= 2 || o.impr >= 300).map(o => { const qs = o.qs.sort((a, b) => b.impr - a.impr); return { ...o, qs, k: qs.map(x => x.q).sort((a, b) => a.length - b.length)[0].replace(/\s*\b20\d\d\b/g, '').trim() }; }).sort((a, b) => b.impr - a.impr).slice(0, 15);
+    const asks = [...bestQ.values()].filter(r => /^(how|what|why|which|can|is|does|do|when|where|who)\b/i.test(r.q) && r.impr >= 30).sort((a, b) => b.impr - a.impr).slice(0, 15);
+    // ── copy as an action list ──
+    const plain = () => [`SEO actions — ${sel.name} (${D.start} to ${D.end})`, '',
+      'REWRITE TITLES & DESCRIPTIONS', ...ctrFix.map(r => `• ${path(r.p)}: position ${p1(r.pos)}, CTR ${p1(r.ctr)}% vs ${p1(r.bench)}% expected. Write the title around: ${(r.top || []).join(' · ')}`), '',
+      'PUSH TO PAGE ONE', ...push.map(o => `• ${o.path}: add sections / FAQs for ${o.qs.slice(0, 4).map(x => `"${x.q}" (pos ${p1(x.pos)})`).join(', ')}`), '',
+      ...(falls && falls.length ? ['RECOVER FALLING PAGES', ...falls.map(r => `• ${r.path}: clicks ${n0(r.prev.clicks)} → ${n0(r.cur.clicks)} (${r.reason}). ${fallDo(r)}`), ''] : []),
+      ...(conv && conv.length ? ['CONVERT TRAFFIC', ...conv.map(o => `• ${o.path}: ${n0(o.ses)} organic sessions, ${n0(o.stu)} signups, ${n0(o.reg)} registrations. Add a clear signup / register prompt and links to live opportunities.`), ''] : []),
+      'WHAT TO WRITE NEXT', ...ideas.map(o => `• ${o.k} — ${fmtIdea(o)} (${n0(o.impr)} impressions, best position ${p1(o.best)}): ${o.qs.slice(0, 4).map(x => x.q).join('; ')}`)].join('\n');
+    const kp = (l, v, s2) => `<div class="kpi"><span class="kpi-l">${esc(l)}</span><b class="kpi-v">${v}</b>${s2 ? `<span class="kpi-d un-n">${s2}</span>` : ''}</div>`;
+    const html = intro + pick +
+      `<p class="un-meta">${esc(sel.name)} · Search Console ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))} (the dates at the top) · <button class="btn-primary sm" type="button" id="un-act-copy">Copy action list</button> <span id="un-act-msg" class="un-n"></span></p>` +
+      (!D.QP ? '<div class="note">Search-by-page data is still loading or not in this export, so the query-based lists are empty. Wait a moment or connect Search Console.</div>' : '') +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));border-radius:12px;overflow:hidden;margin:4px 0 14px">${[[`${esc(sel.id === 'blog' ? 'Blog' : 'Google')} clicks`, n0(cl), `${n0(pages.filter(r => r.clicks > 0).length)} pages · ${n0(nbCl)} non-brand`, '#1C4980'], ['Impressions', n0(im), 'search appearances', '#0A66E4'], ['Avg CTR', p1(ctr) + '%', ctr < 2 ? '⚠ needs improvement' : 'healthy', ctr < 2 ? '#C2410C' : '#0E9F8E'], ['Avg position', p1(pos), pos <= 10 ? 'page one' : 'beyond page one', '#3B5BA9']].concat(gaT ? [['Organic sessions', n0(gaT.ses), `${n0(gaT.stu)} signups · ${n0(gaT.reg)} registrations`, '#0F766E']] : []).map(([l, v, sub, c]) => `<div style="background:${c};color:#fff;padding:16px 18px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.85">${l}</div><div style="font-size:28px;font-weight:800;line-height:1.2">${v}</div><div style="font-size:12px;opacity:.85">${sub}</div></div>`).join('')}</div>` +
+      (ctr < 2 && im ? `<div class="note un-warn" style="border-left:4px solid #C2410C"><b>CTR is low at ${p1(ctr)}%.</b> These pages got ${n0(im)} impressions for the dates at the top but ${n0(cl)} clicks. At a 3% CTR that would be about <b>+${n0(Math.max(0, im * .03 - cl))} more clicks</b> for the same dates, from better titles and descriptions (list below).</div>` : '') +
+      (cats.length ? sec('un-act-cat', '📂 Blog content categories', 'Blog pages grouped by the topic in their URL.', `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px">${cats.map(c => { const [l, e, col] = catMeta(c.l); return `<div style="border:1px solid var(--line-soft,#e5e7eb);border-left:4px solid ${col};border-radius:10px;padding:12px 14px"><div style="font-weight:600;font-size:13px">${e} ${esc(l)}</div><div style="font-size:24px;font-weight:800;color:${col}">${n0(c.clicks)}</div><div class="un-n" style="font-size:12px">CTR ${p1(c.impr ? c.clicks / c.impr * 100 : 0)}% · pos ${p1(c.impr ? c.pw / c.impr : 0)} · ${n0(c.n)} pages</div></div>`; }).join('')}</div>`) : '') +
+      `<div class="grid-2 even">` +
+      sec('un-act-work', "What's working", 'Pages earning at least the click rate expected for their position: use them as the model for titles, structure and internal links.', tbl([['Page'], ['Clicks', 1], ['CTR', 1], ['Position', 1]], working.map(r => [link(r.path), n0(r.clicks), p1(r.ctr) + '%', p1(r.pos)]))) +
+      sec('un-act-ctr', 'Rewrite titles & descriptions', 'Seen often in the top 10 but clicked far less than expected. Write the new title around the searches shown.', tbl([['Page'], ['Position', 1], ['Impressions', 1], ['CTR vs expected', 1], ['Write the title around']], ctrFix.map(r => [link(path(r.p)), p1(r.pos), n0(r.impr), `${p1(r.ctr)}% / ${p1(r.bench)}%`, qList(topQ(path(r.p), null, 3))]))) + `</div>` +
+      sec('un-act-push', 'Push to page one', 'Pages ranking 4–20 for these searches. Add a section or FAQ that answers each search, and link to the page from the strongest pages in the cluster.', tbl([['Page'], ['Impressions (4–20)', 1], ['Extra clicks at top positions', 1], ['Searches to cover (position)']], push.map(o => [link(o.path), n0(o.impr), '+' + n0(o.gain), o.qs.slice(0, 5).map(x => `<span class="tag">${esc(x.q)} · ${p1(x.pos)}</span>`).join(' ')]))) +
+      (falls ? sec('un-act-fall', 'Recover falling pages', 'Clicks down 25%+ against the period before the top dates, with the reason and the next step.', tbl([['Page'], ['Clicks', 1], ['Why'], ['Next step']], falls.map(r => [link(r.path), `${n0(r.prev.clicks)} → ${n0(r.cur.clicks)}`, esc(r.reason), esc(fallDo(r))]))) : '<div class="note">Turn on "compare with the previous period" in the date picker to see falling pages.</div>') +
+      (comp.length ? sec('un-act-comp', 'Pages competing for the same search', 'Two or more pages of this cluster share the same search, so neither ranks as well as one would. Pick one main page; link the others to it or merge them.', tbl([['Search'], ['Pages (share of impressions)']], comp.map(c => [esc(c.q), c.pages.slice(0, 3).map(x => `${link(path(x.p))} ${p1(x.share)}%`).join('<br>')]))) : '') +
+      (conv ? sec('un-act-conv', 'Convert the traffic', `Pages with 100+ organic sessions and less than half the cluster's signup + registration rate (${p1(avgRate)} per 100 sessions).`, tbl([['Landing page'], ['Sessions', 1], ['Signups', 1], ['Registrations', 1], ['Per 100 sessions', 1]], conv.map(o => [link(o.path), n0(o.ses), n0(o.stu), n0(o.reg), p1(o.rate)]))) : live ? (G && G.status === 'loading' ? '<p class="progress">Loading GA4 landing pages…</p>' : G && G.status === 'error' ? `<div class="note un-warn">GA4: ${esc(G.error)}</div>` : '') : '') +
+      sec('un-act-write', 'What to write next', 'Searches this cluster already shows for, where no page ranks better than 12, grouped into topics. Each topic is a new article or a new section; the format follows the words people use.', tbl([['Topic'], ['Format'], ['Impressions', 1], ['Best position now', 1], ['Searches it should answer']], ideas.map(o => [`<b>${esc(o.k)}</b>`, esc(fmtIdea(o)), n0(o.impr), p1(o.best), qList(o.qs.slice(0, 5))]))) +
+      (asks.length ? sec('un-act-ask', 'Questions people ask', 'Question searches this cluster shows for: answer them as FAQs on the page that ranks, or as short articles.', tbl([['Question'], ['Impressions', 1], ['Position', 1], ['Page that ranks']], asks.map(r => [esc(r.q), n0(r.impr), p1(r.pos), link(path(r.p))]))) : '');
+    return { html, mount: () => {
+      if (live && !G) loadActGa(D, sel, gk);
+      const b = document.getElementById('un-act-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-act-msg'); try { await navigator.clipboard.writeText(plain()); m.textContent = 'Copied.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } });
+    } };
+  };
+
   // ════════════════════════════ REVIEW SUMMARY: WEEKLY / MONTHLY, WRITTEN FOR THE BOSS ════════════════════════════
   // One page, written in sentences, along the chain the brief asks for (visibility → traffic → signups →
   // registrations → employer leads), split by page type and by branded / non-branded. Only numbers this tool
@@ -4162,7 +4272,7 @@
   };
 
   // every funnel screen tries the one-sign-in GA4 load after it renders
-  ['b2e', 'board', 'trends', 'clusters', 'summary', 'journeys', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
+  ['b2e', 'board', 'trends', 'clusters', 'summary', 'actions', 'journeys', 'funnel', 'ga4', 'acquisition', 'engagement', 'leads', 'focus', 'scorecards', 'reviews', 'urlclusters', 'visibility', 'quality'].forEach(k => {
     const f = V[k]; if (!f) return;
     V[k] = (A, D) => { const r = f(A, D); if (!r || typeof r !== 'object') return r; const m = r.mount; return { ...r, mount: () => { if (m) m(); gaAuto(D); if (k === 'b2e' || k === 'leads' || k === 'summary') salesAuto(D); } }; };
   });
