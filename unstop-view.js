@@ -3752,7 +3752,7 @@
       `<section class="panel"><div class="panel-h"><h2>Employer leads (leads sheet)</h2></div><div class="panel-b">${leadsHtml}</div></section></div>` +
       `<section class="panel"><div class="panel-h"><h2>New tracking set up</h2><p>What GTM and GA4 now measure, so these numbers can join the review.</p></div><div class="panel-b">${ul(NEW_TRACKING.map(([a, b]) => `<b>${esc(a)}</b>: ${esc(b)}`))}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>How the numbers are counted</h2><p>Every number above can be rebuilt from these sources.</p></div><div class="panel-b">${ul(defs.map(esc))}</div></section>` +
-      `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report?by=${gran}">Weekly SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
+      `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report">SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
     return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); const x = document.getElementById('un-sum-xlsx'); if (x) x.addEventListener('click', () => { const m = document.getElementById('un-sum-msg'); x.disabled = true; sheet(t => { m.textContent = t; }).then(() => { m.textContent = 'Reference sheet downloaded. Attach it to the email.'; }).catch(e => { m.textContent = e.message; }).finally(() => { x.disabled = false; }); }); } };
   };
 
@@ -3859,21 +3859,17 @@
   // Headline numbers, SEO share of all signups and registrations, clusters, top and falling landing pages,
   // a fix list and the top opportunities. Search Console (Google web) + GA4 (Organic Search).
   const RP = new Map();
-  function rpPeriods(end, gran) {
-    if (gran === 'month') {
-      const e = new Date(end + 'T00:00:00Z'); let y = e.getUTCFullYear(), m = e.getUTCMonth();
-      const lastDay = new Date(Date.UTC(y, m + 1, 0)); if (isoD(lastDay) > end) { m -= 1; }
-      const mk = (yy, mm) => { const s = new Date(Date.UTC(yy, mm, 1)), t = new Date(Date.UTC(yy, mm + 1, 0)); return { start: isoD(s), end: isoD(t), label: s.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) }; };
-      return { cur: mk(y, m), prev: mk(y, m - 1), yoy: mk(y - 1, m) };
-    }
-    const curS = addD(monday(addD(end, 1)), -7), lab = (s, t) => `${fmtD(s)} – ${fmtD(t)}`;
-    const cur = { start: curS, end: addD(curS, 6) }, prev = { start: addD(curS, -7), end: addD(curS, -1) };
-    cur.label = lab(cur.start, cur.end); prev.label = lab(prev.start, prev.end);
-    return { cur, prev };
+  // the report follows the date picker at the top: those dates against the same number of days just before,
+  // and the same dates a year earlier (shifted 364 days so weekdays line up)
+  function rpPeriods(D) {
+    const end = D.end || isoD(new Date()), start = D.start || addD(end, -6), days = Math.round((new Date(end) - new Date(start)) / 864e5) + 1, lab = (a, b) => `${fmtD(a)} – ${fmtD(b)}`;
+    const cur = { start, end }, prev = { start: addD(start, -days), end: addD(start, -1) }, yoy = { start: addD(start, -364), end: addD(end, -364) };
+    [cur, prev, yoy].forEach(p => { p.label = lab(p.start, p.end); });
+    return { cur, prev, yoy, days };
   }
   async function loadReport(D, A, gran, key) {
     const st = { status: 'loading', done: 0 }; RP.set(key, st); rerender();
-    const src = window.CW_SOURCE, s = settings(D.site), P = rpPeriods(D.end, gran), ranges = ['cur', 'prev'].concat(P.yoy ? ['yoy'] : []);
+    const src = window.CW_SOURCE, s = settings(D.site), P = rpPeriods(D), ranges = ['cur', 'prev'].concat(P.yoy ? ['yoy'] : []);
     const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), sign = (s.events && s.events.studentSignup) || [], apply = (s.events && s.events.opportunityAction) || [];
     const nb = A.brandRx ? [{ dimension: 'query', operator: 'excludingRegex', expression: A.brandRx }] : [];
     const g = (r, dims, filters, limit) => src.gsc.query({ startDate: P[r].start, endDate: P[r].end, type: 'web', dimensions: dims, rowLimit: limit || 1, dimensionFilterGroups: filters.length ? [{ groupType: 'and', filters }] : undefined }).then(d => d.rows || []);
@@ -3918,7 +3914,7 @@
     if (RP.get(key) === st) rerender();
   }
   function sampleReport(A, D, gran) {
-    const P = rpPeriods(D.end || isoD(new Date()), gran), f = gran === 'month' ? 4.3 : 1;
+    const P = rpPeriods(D), f = P.days / 7;
     let seed = 9; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     const pages = (A.P || []).slice(0, 400), sc = x => x * f / 13;
     const mkPages = k => pages.map(r => ({ keys: [r.p], clicks: sc(+r.clicks || 0) * (k === 'prev' ? .9 + R() * .25 : 1), impressions: sc(+r.impr || 0) }));
@@ -3937,11 +3933,11 @@
   V.report = (A, D) => {
     demoFill(D);
     ['t-un-rp-sign', 't-un-rp-reg', 't-un-rp-drop', 't-un-rp-fix', 't-un-rp-opp'].forEach(k => delete TABLES[k]);
-    const gran = fParams().get('by') === 'month' ? 'month' : 'week';
+    const RPD = rpPeriods(D), gran = RPD.days <= 14 ? 'week' : 'month'; // thresholds scale with the length of the dates
     const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
-    const intro = head(gran === 'week' ? 'Weekly SEO report' : 'Monthly SEO report', 'For the boss: SEO visibility, traffic, student signups and opportunity registrations from Google, this period against the last, with the share of all signups and registrations that came from SEO, the clusters, the landing pages that win, fall or need fixing, and the top opportunities.');
-    const tabs = `<div class="un-tabs" style="margin:4px 0 12px">${[['week', 'Week on week'], ['month', 'Month on month']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="#report?by=${v}">${l}</a>`).join('')}</div>`;
-    const key = [D.site, D.end, gran, JSON.stringify(settings(D.site).events || {})].join('|');
+    const intro = head('SEO report', 'For the boss: SEO visibility, traffic, student signups and opportunity registrations from Google, this period against the last, with the share of all signups and registrations that came from SEO, the clusters, the landing pages that win, fall or need fixing, and the top opportunities.');
+    const tabs = `<p class="un-meta">Dates follow the date picker at the top: <b>${esc(RPD.cur.label)}</b> (${RPD.days} days), compared with the ${RPD.days} days before (${esc(RPD.prev.label)}). Pick 7 days for a weekly report, 28 or 30 for a monthly one.</p>`;
+    const key = [D.site, D.start, D.end, JSON.stringify(settings(D.site).events || {})].join('|');
     const st = live ? RP.get(key) : sampleReport(A, D, gran);
     if (live && (!st || st.status === 'loading')) return { html: intro + tabs + `<p class="progress" id="un-rp-prog">Loading… ${st ? st.done : 0} requests done</p><p class="hint">About 20 Search Console and GA4 requests. Takes under a minute.</p>`, mount: () => { if (!st) loadReport(D, A, gran, key); } };
     if (st.status === 'error') return { html: intro + tabs + `<div class="note un-warn">${esc(st.error)}</div>`, mount: () => { } };
@@ -4046,7 +4042,7 @@
       const R_ = v => ({ h: e(v), r: 1 }), C_ = o => ({ h: e(o.t), s: o.s, r: 1 });
       const z = i => i % 2 ? css.tdz : css.td;
       // title
-      html += `<tr><td colspan="__W__" style="${css.title}">${e(gran === 'week' ? 'Weekly SEO report' : 'Monthly SEO report')} · Unstop</td></tr>`;
+      html += `<tr><td colspan="__W__" style="${css.title}">SEO report · Unstop</td></tr>`;
       html += `<tr><td colspan="__W__" style="${css.sub}">${e(curL)} vs ${e(prevL)} · Search Console = Google web search · GA4 = Organic Search, website only</td></tr>`;
       // key takeaways
       const pick = l => rows.find(r => r.l.startsWith(l));
@@ -4088,7 +4084,7 @@
     };
     const sec = (id, t, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(t)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
     const tsv = () => {
-      const L = [[gran === 'week' ? 'Weekly SEO report' : 'Monthly SEO report'], [], ['Number', curL, prevL, 'Change', ...(hasY ? [yL, 'vs last year'] : []), 'Source', 'Note']];
+      const L = [['SEO report: ' + curL], [], ['Number', curL, prevL, 'Change', ...(hasY ? [yL, 'vs last year'] : []), 'Source', 'Note']];
       rows.forEach(r => { const d = ch(r.c, r.p, r.kind), dy = ch(r.c, r.y, r.kind); const out = (v, k) => v == null || !isFinite(v) ? '' : k === 'pct' ? v.toFixed(1) + '%' : k === 'pos' || k === 'dec' ? v.toFixed(2) : String(Math.round(v)); const cd = (x, k) => x == null ? '' : k === 'n' ? x.toFixed(1) + '%' : x.toFixed(2); L.push([r.l, out(r.c, r.kind), out(r.p, r.kind), cd(d, r.kind), ...(hasY ? [out(r.y, r.kind), cd(dy, r.kind)] : []), r.src, r.note || '']); });
       L.push([], ['Cluster', 'Non-brand clicks', 'prev', 'Organic sessions', 'prev', 'Signups', 'prev', 'Registrations', 'prev']); clusters.forEach(x => L.push([x.name, Math.round(x.nbC), Math.round(x.nbP), Math.round(x.ses), Math.round(x.sesP), Math.round(x.sign), Math.round(x.signP), Math.round(x.reg), Math.round(x.regP)]));
       L.push([], ['Top landing pages by organic signups', 'Signups', 'prev']); top('sign').forEach(r => L.push([r.path, Math.round(r.sign), Math.round(r.signP)]));
@@ -4098,12 +4094,21 @@
       L.push([], ['Top opportunities by organic registrations', 'Opportunity ID', 'Registrations', 'prev']); opps.forEach(o => L.push([o.title, o.id, Math.round(o.c), Math.round(o.p)]));
       return L.map(r => r.join('\t')).join('\n');
     };
+    // ── what to do next: each line names the page, the numbers behind it and the next step ──
+    const f0 = v => fmtN(Math.round(v));
+    const acts = [];
+    drops.slice(0, 3).forEach(r => acts.push(`<b>Recover <a href="https://unstop.com${esc(r.path)}" target="_blank" rel="noopener">${esc(r.path)}</a></b>: Google clicks ${f0(r.p)} → ${f0(r.c)} (${r.dC.toFixed(0)}%). Next step: in Search Console open this page → Queries → compare dates to see which searches lost position, then update the title, intro and FAQs for those searches.`));
+    fix.slice(0, 3).forEach(r => acts.push(`<b>Convert <a href="https://unstop.com${esc(r.path)}" target="_blank" rel="noopener">${esc(r.path)}</a></b>: ${f0(r.ses)} organic sessions but ${f0(r.sign)} signups and ${f0(r.reg)} registrations. Next step: a clear Register / Sign up button above the fold and links to 3–5 live related opportunities.`));
+    const clDn = [...clusters].filter(x => x.regP > 0 && x.reg > 0).map(x => ({ x, d: x.reg - x.regP })).sort((a, b) => a.d - b.d)[0];
+    if (clDn && clDn.d < 0) acts.push(`<b>Check the ${esc(clDn.x.name)} cluster</b>: registrations ${f0(clDn.x.regP)} → ${f0(clDn.x.reg)}. Next step: <a href="#clusters?c=${encodeURIComponent(clDn.x.id || '')}">cluster deep dive</a> shows the pages, opportunities and searches behind it.`);
+    opps.filter(o => o.c > o.p && o.path).slice(0, 2).forEach(o => acts.push(`<b>Push <a href="https://unstop.com${esc(o.path)}" target="_blank" rel="noopener">${esc(o.title)}</a></b>: ${f0(o.c)} registrations from Google (${f0(o.p)} before). Next step: link to it from the top pages of its cluster while it is open.`));
+    const actHtml = `<section class="panel" id="un-rp-act"><div class="panel-h"><h2>What to do next</h2><p>From the tables below: pages losing Google clicks, pages with traffic but few signups, the cluster that fell most, and the opportunities gaining most. Each line has the numbers and the next step.</p></div><div class="panel-b">${acts.length ? `<ol class="un-sum-l">${acts.map(t => `<li>${t}</li>`).join('')}</ol>` : '<p class="un-n">Nothing needs action for these dates.</p>'}</div></section>`;
     const html = intro + tabs +
       `<p class="un-meta">${esc(curL)} vs ${esc(prevL)}${hasY ? ` and ${esc(yL)}` : ''} · Search Console: Google web search · GA4: Organic Search, website only</p>` +
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console + GA4 for real numbers.</div>' : '') +
       (st.noGa ? '<div class="note un-warn">GA4 is not connected in this tab, so traffic, signups and registrations are empty. Sign in again with Search Console + GA4.</div>' : '') +
       (st.errors && st.errors.length ? `<div class="note un-warn">${fmtN(st.errors.length)} request${st.errors.length === 1 ? '' : 's'} failed: ${esc(st.errors[0])}</div>` : '') +
-      `<div class="un-row" style="gap:8px;margin:0 0 10px"><button class="btn-primary sm" type="button" id="un-rp-copy">Copy whole report for Google Sheets</button><span id="un-rp-msg" class="un-n"></span></div>` +
+      `<div class="un-row" style="gap:8px;margin:0 0 10px"><button class="btn-primary sm" type="button" id="un-rp-copy">Copy whole report for Google Sheets</button><span id="un-rp-msg" class="un-n"></span></div>` + actHtml +
       sec('un-rp-head', '1. Headline numbers', 'SEO share = organic ÷ all channels on the website. Registrations are students, not form events (the form can fire more than once per registration).', headTbl) +
       sec('un-rp-cl', '2. Clusters', '', clTbl) +
       `<div class="grid-2 even">` + sec('un-rp-s', '3a. Top landing pages: organic signups', '', table('t-un-rp-sign', [pcol, n('sign', 'Signups', 'signP'), n('ses', 'Sessions')], top('sign'), { search: false, file: 'seo-report-top-signup-pages', pageSize: 10 })) +
