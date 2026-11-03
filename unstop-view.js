@@ -3505,7 +3505,10 @@
     const refresh = () => { const b = document.getElementById('un-sum-refresh'); if (b) b.addEventListener('click', () => { TR.delete(trKey(D)); try { localStorage.removeItem(TR_CACHE); } catch (e) { } [...TRP.keys()].forEach(k => TRP.delete(k)); [...CQ.keys()].forEach(k => CQ.delete(k)); [...CO.keys()].forEach(k => CO.delete(k)); SALES.delete(D.site); SALESAUTO.delete(D.site); rerender(); }); };
     const intro = head(gran === 'week' ? 'Weekly SEO summary' : 'Monthly SEO summary', 'Written for the review: what improved, what changed and where to focus, along the chain visibility → traffic → signups → registrations → employer leads, by page type, with branded and non-branded searches apart. Only numbers this tool measures.');
     if (live && (!st || st.status === 'loading')) return { html: intro + tabs + `<p class="progress" id="un-tr-prog">${st ? `Loading… ${st.done} of ${st.total} requests` : 'Starting…'} (about a minute, once; Clusters uses the same data).</p>`, mount: () => { refresh(); if (!st) loadTrends(D, A); } };
-    const list = trList(D), pers = trPeriods(st.end, gran), li = pers[pers.length - 1].partial ? pers.length - 2 : pers.length - 1, cur = pers[li], prv = pers[li - 1];
+    const list = trList(D), pers = trPeriods(st.end, gran), li = pers[pers.length - 1].partial ? pers.length - 2 : pers.length - 1;
+    // week: the last 7 days with data against the 7 days before them; month: the last full month against the one before
+    const d7 = (s, e) => ({ key: s, start: s, end: e, label: 'Last 7 days' });
+    const cur = gran === 'week' ? d7(addD(st.end, -6), st.end) : pers[li], prv = gran === 'week' ? { ...d7(addD(st.end, -13), addD(st.end, -7)), label: 'Previous 7 days' } : pers[li - 1];
     const shiftY = p => ({ start: gran === 'week' ? addD(p.start, -364) : (+p.start.slice(0, 4) - 1) + p.start.slice(4), end: gran === 'week' ? addD(p.end, -364) : (+p.end.slice(0, 4) - 1) + p.end.slice(4) });
     const yP = shiftY(cur), hasY = yP.start >= st.start;
     const M = ['clicks', 'nbClicks', 'impr', 'sessions', 'students', 'regs'];
@@ -3513,10 +3516,10 @@
     const ga = st.gaOk;
     const rows = PT.map(([t, name]) => { const ids = list.filter(x => x.type === t).map(x => x.id); if (!ids.length) return null; const c = sumIds(ids, cur), p = sumIds(ids, prv), y = hasY ? sumIds(ids, yP) : null; return { t, name, ids, c, p, y }; }).filter(r => r && (r.c.clicks + r.c.sessions > 0));
     const T = { c: sumIds(list.map(x => x.id), cur), p: sumIds(list.map(x => x.id), prv), y: hasY ? sumIds(list.map(x => x.id), yP) : null };
-    const PL = gran === 'week' ? `the week of ${cur.label}` : cur.label, PLp = gran === 'week' ? `the week of ${prv.label}` : prv.label;
+    const PL = gran === 'week' ? `the last 7 days (${fmtD(cur.start)} – ${fmtD(cur.end)})` : cur.label, PLp = gran === 'week' ? `the 7 days before (${fmtD(prv.start)} – ${fmtD(prv.end)})` : prv.label;
     const n = v => v == null ? '—' : fmtN(Math.round(v)), pc = (a, b) => pctCh(a, b), tx = v => v == null ? 'n/a' : (v > 0 ? '+' : '') + v.toFixed(Math.abs(v) < 10 ? 1 : 0) + '%';
     const chip = (a, b) => dchip(pc(a, b));
-    const cmpL = gran === 'week' ? 'last week' : 'last month'; // always against the period before
+    const cmpL = gran === 'week' ? 'the previous 7 days' : 'last month'; // always against the period before
     const base = r => r.p;
     // ── what improved / where to focus, by page type and by cluster ──
     const clus = list.map(x => { const c = sumIds([x.id], cur), p = sumIds([x.id], prv); return { id: x.id, name: x.name, type: x.type, c, p, d: c.regs - p.regs, ds: c.students - p.students }; }).filter(x => x.c.sessions + x.p.sessions > 0);
@@ -3556,7 +3559,7 @@
     const vis = `<p>Non-brand searches in the top 3: <b>${fmtN(top3)}</b> · top 10: <b>${fmtN(top10)}</b> · positions 11–20: <b>${fmtN(qw.length)}</b> (Search Console, dashboard dates ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}). <a href="#quickwins">Almost page one</a></p>`;
     // plain-text version for email
     const strip = h => h.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-    const text = () => [`Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '', `Here is the ${gran === 'week' ? 'weekly' : 'monthly'} SEO update for ${PL}. Numbers are from Search Console and GA4 (Organic Search, website), split by page type, with branded and non-branded searches apart.`, '', 'HEADLINE', ...lines.head.map(t => '• ' + strip(t)), '', 'WHAT IMPROVED', ...(lines.up.length ? lines.up : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '', 'WHERE WE FOCUS NEXT', ...(lines.focus.length ? lines.focus : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '',
+    const text = () => [`Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${gran === 'week' ? 'last 7 days' : PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '', `Here is the ${gran === 'week' ? 'weekly' : 'monthly'} SEO update for ${PL}. Numbers are from Search Console and GA4 (Organic Search, website), split by page type, with branded and non-branded searches apart.`, '', 'HEADLINE', ...lines.head.map(t => '• ' + strip(t)), '', 'WHAT IMPROVED', ...(lines.up.length ? lines.up : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '', 'WHERE WE FOCUS NEXT', ...(lines.focus.length ? lines.focus : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '',
       `BY PAGE TYPE (vs ${cmpL})`, ...chainRows.map(r => { const b = r.p; return `• ${r.name}: non-brand clicks ${n(r.c.nbClicks)} (${tx(pc(r.c.nbClicks, b.nbClicks))}), sessions ${n(r.c.sessions)} (${tx(pc(r.c.sessions, b.sessions))}), signups ${n(r.c.students)} (${tx(pc(r.c.students, b.students))}), registrations ${n(r.c.regs)} (${tx(pc(r.c.regs, b.regs))})`; }), '',
       'RANKINGS (non-brand)', `• Top 3: ${fmtN(top3)} · Top 10: ${fmtN(top10)} · Positions 11–20: ${fmtN(qw.length)}`, '', 'EMPLOYER LEADS', '• ' + strip(leadsHtml.replace(/<p class="hint">.*$/, '')), '', `Detail by cluster and page is in the Unstop SEO tool (Clusters: week & month).`, '', 'Thanks,', 'Mayank'].join('\n');
     const html = intro + tabs +
