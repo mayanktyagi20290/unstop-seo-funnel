@@ -3516,7 +3516,7 @@
     const ga = st.gaOk;
     const rows = PT.map(([t, name]) => { const ids = list.filter(x => x.type === t).map(x => x.id); if (!ids.length) return null; const c = sumIds(ids, cur), p = sumIds(ids, prv), y = hasY ? sumIds(ids, yP) : null; return { t, name, ids, c, p, y }; }).filter(r => r && (r.c.clicks + r.c.sessions > 0));
     const T = { c: sumIds(list.map(x => x.id), cur), p: sumIds(list.map(x => x.id), prv), y: hasY ? sumIds(list.map(x => x.id), yP) : null };
-    const PL = gran === 'week' ? `the last 7 days (${fmtD(cur.start)} – ${fmtD(cur.end)})` : cur.label, PLp = gran === 'week' ? `the 7 days before (${fmtD(prv.start)} – ${fmtD(prv.end)})` : prv.label;
+    const PL = gran === 'week' ? 'the last 7 days' : cur.label, PLp = gran === 'week' ? 'the 7 days before' : prv.label;
     const n = v => v == null ? '—' : fmtN(Math.round(v)), pc = (a, b) => pctCh(a, b), tx = v => v == null ? 'n/a' : (v > 0 ? '+' : '') + v.toFixed(Math.abs(v) < 10 ? 1 : 0) + '%';
     const chip = (a, b) => dchip(pc(a, b));
     const cmpL = gran === 'week' ? 'the previous 7 days' : 'last month'; // always against the period before
@@ -3524,9 +3524,10 @@
     // ── what improved / where to focus, by page type and by cluster ──
     const clus = list.map(x => { const c = sumIds([x.id], cur), p = sumIds([x.id], prv); return { id: x.id, name: x.name, type: x.type, c, p, d: c.regs - p.regs, ds: c.students - p.students }; }).filter(x => x.c.sessions + x.p.sessions > 0);
     const why = x => { const f = funnelSplit(x.c.regs, x.p.regs, x.c.sessions, x.p.sessions, 'Registrations'), cl = clickSplit(x.c.clicks, x.p.clicks, x.c.impr, x.p.impr); return f ? (f.main === 'traffic' && cl ? cl.lead : f.lead) : cl ? cl.lead : ''; };
-    const ups = clus.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 3), dns = clus.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, 3);
+    const thr = gran === 'week' ? 100 : 400, gap = x => (x.p.regs === 0 && x.p.sessions >= thr) || (x.c.regs === 0 && x.c.sessions >= thr);
+    const ups = clus.filter(x => x.d > 0 && !gap(x)).sort((a, b) => b.d - a.d).slice(0, 3), dns = clus.filter(x => x.d < 0 && !gap(x)).sort((a, b) => a.d - b.d).slice(0, 3);
     const avg = T.c.sessions ? T.c.regs / T.c.sessions * 100 : 0;
-    const room = clus.filter(x => x.c.sessions >= Math.max(gran === 'week' ? 100 : 400, T.c.sessions * .01) && x.c.sessions && x.c.regs / x.c.sessions * 100 < avg).map(x => ({ ...x, rate: x.c.regs / x.c.sessions * 100, gain: (avg - x.c.regs / x.c.sessions * 100) / 100 * x.c.sessions })).sort((a, b) => b.gain - a.gain).slice(0, 3);
+    const room = clus.filter(x => x.c.sessions >= Math.max(gran === 'week' ? 100 : 400, T.c.sessions * .01) && x.c.sessions && x.c.regs > 0 && !gap(x) && x.c.regs / x.c.sessions * 100 < avg).map(x => ({ ...x, rate: x.c.regs / x.c.sessions * 100, gain: (avg - x.c.regs / x.c.sessions * 100) / 100 * x.c.sessions })).sort((a, b) => b.gain - a.gain).slice(0, 3);
     // quick wins: non-brand searches at positions 11-20 for the dashboard dates (Search Console)
     const isB = brandOf(A), qw = (A.Q || []).filter(q => !isB(q.q) && q.pos > 10 && q.pos <= 20), qwImpr = qw.reduce((a, q) => a + (+q.impr || 0), 0);
     const top3 = (A.Q || []).filter(q => !isB(q.q) && q.pos <= 3).length, top10 = (A.Q || []).filter(q => !isB(q.q) && q.pos <= 10).length;
@@ -3540,7 +3541,7 @@
     const lines = {
       head: [
         `Organic search brought <b>${n(T.c.students)}</b> student signups and <b>${n(T.c.regs)}</b> opportunity registrations in ${esc(PL)} (${tx(pc(T.c.students, base(T).students))} and ${tx(pc(T.c.regs, base(T).regs))} vs ${cmpL}).`,
-        `Non-brand Google clicks, the part SEO work moves, were <b>${n(T.c.nbClicks)}</b> (${tx(pc(T.c.nbClicks, base(T).nbClicks))}); branded clicks ${n(T.c.brand)} (${tx(pc(T.c.brand, base(T).brand))}).`,
+        `Non-brand Google clicks were <b>${n(T.c.nbClicks)}</b> (${tx(pc(T.c.nbClicks, base(T).nbClicks))}); branded clicks ${n(T.c.brand)} (${tx(pc(T.c.brand, base(T).brand))}).`,
         best && best.c.regs - (base(best) || best.p).regs > 0 ? `Biggest gain by page type: <b>${esc(best.name)}</b>, ${n(best.c.regs)} registrations (+${n(best.c.regs - (base(best) || best.p).regs)} vs ${cmpL}) and ${n(best.c.students)} signups.` : ''
       ].filter(Boolean),
       up: ups.map(x => `<b>${esc(x.name)}</b>: registrations ${n(x.p.regs)} → ${n(x.c.regs)} (+${n(x.d)})${why(x) ? ` — ${esc(why(x))}` : ''}.`),
@@ -3548,8 +3549,22 @@
         ...dns.slice(0, 2).map(x => `<b>${esc(x.name)}</b>: registrations ${n(x.p.regs)} → ${n(x.c.regs)} (${n(x.d)})${why(x) ? ` — driver: ${esc(why(x))}` : ''}. Check its searches and pages in the cluster deep dive.`),
         ...room.slice(0, 2).map(x => `<b>${esc(x.name)}</b> converts ${x.rate.toFixed(1)} registrations per 100 sessions vs ${avg.toFixed(1)} on average; at the average it adds about <b>${n(x.gain)}</b> registrations a ${per} from traffic it already has.`),
         qw.length ? `<b>${fmtN(qw.length)}</b> non-brand searches rank at positions 11–20 (${fmtN(Math.round(qwImpr))} impressions, dashboard dates): the quickest ranking wins.` : ''
-      ].filter(Boolean)
+      ].filter(Boolean),
+      // numbers that jump from or to zero, or GA4 sessions far below Google clicks, point at tracking or page grouping, so they are listed to check
+      check: [
+        ...clus.filter(gap).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 4).map(x => `<b>${esc(x.name)}</b>: registrations ${n(x.p.regs)} → ${n(x.c.regs)} with ${n(x.p.sessions)} → ${n(x.c.sessions)} sessions. A move from or to zero usually means the registration event or the page grouping changed, so it is left out of the gains and drops above.`),
+        ...rows.filter(r => r.c.clicks >= 500 && r.c.sessions != null && r.c.sessions < r.c.clicks * .1).map(r => `<b>${esc(r.name)}</b>: ${n(r.c.clicks)} Google clicks but ${n(r.c.sessions)} GA4 organic sessions, so GA4 numbers for these pages are incomplete.`)
+      ]
     };
+    const evS = settings(D.site).events || {}, evL = k => (evS[k] || []).join(', ') || '—';
+    const defs = [
+      `Clicks, impressions, CTR and rankings: Google Search Console, web search, for the dates above. Branded = searches containing the brand terms set in this tool; non-brand = everything else.`,
+      `Organic sessions: GA4 sessions with Session default channel group = Organic Search, by landing page.`,
+      `Student signups: GA4 count of the ${evL('studentSignup')} event in those organic sessions.`,
+      `Opportunity registrations: GA4 users with the ${evL('opportunityAction')} event that carries an opportunity_id (not "(not set)"), in those organic sessions, counted per day and added up.`,
+      `Page type and cluster: the landing page URL, grouped by the rules in Site clusters.`,
+      `Employer leads: the B2B leads sheet, Channel = organic, internal emails left out.`
+    ];
     const ul = L => L.length ? `<ul class="un-sum-l">${L.map(t => `<li>${t}</li>`).join('')}</ul>` : '<p class="un-n">Nothing stood out this period.</p>';
     // chain table by page type
     const cell = (a, b, k) => `${k === 'pct' ? (a == null ? '—' : a.toFixed(k === 'pct' ? 2 : 1)) : n(a)} ${k === 'pct' ? (a != null && b != null ? `<span class="un-d ${a >= b ? 'up' : 'down'}">${(a - b >= 0 ? '+' : '') + (a - b).toFixed(2)}</span>` : '') : chip(a, b)}`;
@@ -3559,9 +3574,10 @@
     const vis = `<p>Non-brand searches in the top 3: <b>${fmtN(top3)}</b> · top 10: <b>${fmtN(top10)}</b> · positions 11–20: <b>${fmtN(qw.length)}</b> (Search Console, dashboard dates ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}). <a href="#quickwins">Almost page one</a></p>`;
     // plain-text version for email
     const strip = h => h.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-    const text = () => [`Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${gran === 'week' ? 'last 7 days' : PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '', `Here is the ${gran === 'week' ? 'weekly' : 'monthly'} SEO update for ${PL}. Numbers are from Search Console and GA4 (Organic Search, website), split by page type, with branded and non-branded searches apart.`, '', 'HEADLINE', ...lines.head.map(t => '• ' + strip(t)), '', 'WHAT IMPROVED', ...(lines.up.length ? lines.up : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '', 'WHERE WE FOCUS NEXT', ...(lines.focus.length ? lines.focus : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '',
-      `BY PAGE TYPE (vs ${cmpL})`, ...chainRows.map(r => { const b = r.p; return `• ${r.name}: non-brand clicks ${n(r.c.nbClicks)} (${tx(pc(r.c.nbClicks, b.nbClicks))}), sessions ${n(r.c.sessions)} (${tx(pc(r.c.sessions, b.sessions))}), signups ${n(r.c.students)} (${tx(pc(r.c.students, b.students))}), registrations ${n(r.c.regs)} (${tx(pc(r.c.regs, b.regs))})`; }), '',
-      'RANKINGS (non-brand)', `• Top 3: ${fmtN(top3)} · Top 10: ${fmtN(top10)} · Positions 11–20: ${fmtN(qw.length)}`, '', 'EMPLOYER LEADS', '• ' + strip(leadsHtml.replace(/<p class="hint">.*$/, '')), '', `Detail by cluster and page is in the Unstop SEO tool (Clusters: week & month).`, '', 'Thanks,', 'Mayank'].join('\n');
+    const text = () => [`Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${gran === 'week' ? 'last 7 days' : PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '', `Here is the ${gran === 'week' ? 'weekly' : 'monthly'} SEO update for ${PL} (${fmtD(cur.start)} – ${fmtD(cur.end)}), compared with ${PLp} (${fmtD(prv.start)} – ${fmtD(prv.end)}). Numbers are from Search Console and GA4 (Organic Search, website), split by page type, with branded and non-branded searches apart.`, '', 'HEADLINE', ...lines.head.map(t => '• ' + strip(t)), '', 'WHAT IMPROVED', ...(lines.up.length ? lines.up : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '', 'WHERE WE FOCUS NEXT', ...(lines.focus.length ? lines.focus : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '',
+      ...(lines.check.length ? ['NUMBERS TO CHECK', ...lines.check.map(t => '• ' + strip(t)), ''] : []),
+      `BY PAGE TYPE (vs ${cmpL})`, ...chainRows.map(r => { const b = r.p; return `• ${r.name}: non-brand clicks ${n(r.c.nbClicks)} (${tx(pc(r.c.nbClicks, b.nbClicks))}), sessions ${n(r.c.sessions)} (${tx(pc(r.c.sessions, b.sessions))}), signups ${n(r.c.students)} (${tx(pc(r.c.students, b.students))})${r.c.regs || b.regs ? `, registrations ${n(r.c.regs)} (${tx(pc(r.c.regs, b.regs))})` : ''}`; }), '',
+      `RANKINGS (non-brand searches by average position, Search Console ${fmtD(D.start)} – ${fmtD(D.end)})`, `• Top 3: ${fmtN(top3)} · Top 10: ${fmtN(top10)} · Positions 11–20: ${fmtN(qw.length)}`, '', 'EMPLOYER LEADS', '• ' + strip(leadsHtml.replace(/<p class="hint">.*$/, '')), '', 'HOW THE NUMBERS ARE COUNTED', ...defs.map(t => '• ' + t), '', `Detail by cluster and page is in the Unstop SEO tool (Clusters: week & month).`, '', 'Thanks,', 'Mayank'].join('\n');
     const html = intro + tabs +
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
       (!ga ? '<div class="note">GA4 is not connected in this tab: sessions, signups and registrations are empty.</div>' : '') +
@@ -3569,9 +3585,11 @@
       `<section class="panel"><div class="panel-h"><h2>Headline</h2></div><div class="panel-b">${ul(lines.head)}</div></section>` +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>What improved</h2><p>Clusters with the biggest gain in registrations against ${esc(PLp)}, with what drove it.</p></div><div class="panel-b">${ul(lines.up)}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Where we focus next</h2><p>The biggest changes to look into, the room to grow from existing traffic, and the quickest ranking wins.</p></div><div class="panel-b">${ul(lines.focus)}</div></section></div>` +
+      (lines.check.length ? `<section class="panel"><div class="panel-h"><h2>Numbers to check</h2><p>Changes that look like tracking or page grouping rather than real movement; they are kept out of the lists above.</p></div><div class="panel-b">${ul(lines.check)}</div></section>` : '') +
       `<section class="panel"><div class="panel-h"><h2>The chain by page type</h2><p>Visibility (impressions, clicks, CTR) → traffic → signups → registrations, branded and non-branded apart.</p></div><div class="panel-b">${tbl}</div></section>` +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Rankings (non-brand)</h2></div><div class="panel-b">${vis}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Employer leads (leads sheet)</h2></div><div class="panel-b">${leadsHtml}</div></section></div>` +
+      `<section class="panel"><div class="panel-h"><h2>How the numbers are counted</h2><p>Every number above can be rebuilt from these sources.</p></div><div class="panel-b">${ul(defs.map(esc))}</div></section>` +
       `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report?by=${gran}">Weekly SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
     return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); } };
   };
