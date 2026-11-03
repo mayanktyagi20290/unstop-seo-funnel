@@ -3501,9 +3501,10 @@
     const P = fParams(), gran = P.get('by') === 'week' ? 'week' : 'month', per = gran;
     const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
     const st = live ? trGet(D) : sampleTrends(D, A);
-    const tabs = `<div class="un-tabs" style="margin:4px 0 12px">${[['month', 'Monthly summary'], ['week', 'Weekly summary']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="#summary?by=${v}">${l}</a>`).join('')}</div>`;
+    const tabs = `<div class="un-row" style="gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 12px"><div class="un-tabs">${[['month', 'Monthly summary'], ['week', 'Weekly summary']].map(([v, l]) => `<a class="${gran === v ? 'on' : ''}" href="#summary?by=${v}">${l}</a>`).join('')}</div>${live ? `<button class="btn-quiet sm" type="button" id="un-sum-refresh" title="Load Search Console, GA4 and the leads sheet again">↻ Refresh data</button><span class="un-n">${st && st.at ? 'Data loaded ' + esc(when(st.at)) : ''}</span>` : ''}</div>`;
+    const refresh = () => { const b = document.getElementById('un-sum-refresh'); if (b) b.addEventListener('click', () => { TR.delete(trKey(D)); try { localStorage.removeItem(TR_CACHE); } catch (e) { } [...TRP.keys()].forEach(k => TRP.delete(k)); [...CQ.keys()].forEach(k => CQ.delete(k)); [...CO.keys()].forEach(k => CO.delete(k)); SALES.delete(D.site); SALESAUTO.delete(D.site); rerender(); }); };
     const intro = head(gran === 'week' ? 'Weekly SEO summary' : 'Monthly SEO summary', 'Written for the review: what improved, what changed and where to focus, along the chain visibility → traffic → signups → registrations → employer leads, by page type, with branded and non-branded searches apart. Only numbers this tool measures.');
-    if (live && (!st || st.status === 'loading')) return { html: intro + tabs + `<p class="progress" id="un-tr-prog">${st ? `Loading… ${st.done} of ${st.total} requests` : 'Starting…'} (about a minute, once; Clusters uses the same data).</p>`, mount: () => { if (!st) loadTrends(D, A); } };
+    if (live && (!st || st.status === 'loading')) return { html: intro + tabs + `<p class="progress" id="un-tr-prog">${st ? `Loading… ${st.done} of ${st.total} requests` : 'Starting…'} (about a minute, once; Clusters uses the same data).</p>`, mount: () => { refresh(); if (!st) loadTrends(D, A); } };
     const list = trList(D), pers = trPeriods(st.end, gran), li = pers[pers.length - 1].partial ? pers.length - 2 : pers.length - 1, cur = pers[li], prv = pers[li - 1];
     const shiftY = p => ({ start: gran === 'week' ? addD(p.start, -364) : (+p.start.slice(0, 4) - 1) + p.start.slice(4), end: gran === 'week' ? addD(p.end, -364) : (+p.end.slice(0, 4) - 1) + p.end.slice(4) });
     const yP = shiftY(cur), hasY = yP.start >= st.start;
@@ -3569,7 +3570,7 @@
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>Rankings (non-brand)</h2></div><div class="panel-b">${vis}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Employer leads (leads sheet)</h2></div><div class="panel-b">${leadsHtml}</div></section></div>` +
       `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report?by=${gran}">Weekly SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
-    return { html, mount: () => { const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); } };
+    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); } };
   };
 
   // ════════════════════════════ JOURNEYS: WHERE THEY SIGN UP, WHAT THEY APPLY TO ════════════════════════════
