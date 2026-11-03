@@ -3608,7 +3608,7 @@
       `B2B — ${b2b.name.toUpperCase()}`, ...segLines(b2b).map(t => '• ' + t), LB.c ? `• Organic sales-form leads from these pages: ${n(LB.c.length)} (${n(LB.p.length)} before), ${n(off(LB.c))} from company emails (${n(off(LB.p))} before)` : null,
       '• Job and internship posts: tracked in GA4 from 30 Oct 2026 (AI vs manual, new vs edits; new vs edit split since 3 Nov 2026). GA4 Explore: "Job board: job & internship posts".', '',
       `B2E — ${b2e.name.toUpperCase()}`, ...segLines(b2e).map(t => '• ' + t), LE.c ? `• Organic sales-form leads from these pages: ${n(LE.c.length)} (${n(LE.p.length)} before), ${n(off(LE.c))} from company emails (${n(off(LE.p))} before)` : null, '',
-      ...(lines.check.length ? ['BEING VERIFIED (kept out of the numbers above)', ...lines.check.map(t => '• ' + strip(t)), ''] : []),
+      ...(lines.check.length ? ['BEING VERIFIED (KEPT OUT OF THE NUMBERS ABOVE)', ...lines.check.map(t => '• ' + strip(t)), ''] : []),
       'NEW TRACKING SET UP', ...NEW_TRACKING.map(([a, b]) => `• ${a}: ${b}`), '',
       'Thanks,', 'Mayank'].filter(x => x !== null).join('\n');
     // ── reference sheet: every number in the email, its source, and the data behind it ──
@@ -3711,7 +3711,7 @@
         ['Employer leads', 'B2B Form Leads Google Sheet (tabs "Last 18 Months Data" and "from oct 14")', `Filter Channel = Organic and created_at in ${dr}; leave out @unstop.com and other internal emails; the page column (link) gives B2B or B2E.`, 'Leads, Employer pages'],
         ['Rankings (top 3 / top 10 / 11–20)', 'Search Console → Performance → Queries', `Dates ${D.start} to ${D.end} · Average position on · non-brand regex filter as above · count queries by position.`, 'Searches']
       ]);
-      const NAVY = '1F3A5F', LINE = { style: 'thin', color: { rgb: 'D0D7E2' } }, BOX = { top: LINE, bottom: LINE, left: LINE, right: LINE };
+      const NAVY = '1C4980', LINE = { style: 'thin', color: { rgb: 'D0D7E2' } }, BOX = { top: LINE, bottom: LINE, left: LINE, right: LINE };
       const wb = X.utils.book_new(), add = (rows, nm, w) => {
         const ws = X.utils.aoa_to_sheet(rows); ws['!cols'] = w.map(x => ({ wch: x }));
         const hdr = rows[0] || [], ncol = Math.max(...rows.map(r => r.length), 1);
@@ -3726,7 +3726,7 @@
               if (!ri) { c.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: NAVY } }, alignment: { vertical: 'center', wrapText: true }, border: BOX }; continue; }
               if (r.length < 2) { c.s = { font: { italic: true, color: { rgb: '6B7280' } } }; continue; }
               const st = { border: BOX, alignment: { vertical: 'top', wrapText: typeof c.v === 'string' && c.v.length > 40 } };
-              if (band) st.fill = { fgColor: { rgb: 'F3F6FA' } };
+              if (band) st.fill = { fgColor: { rgb: 'EEF4FD' } };
               if (c.t === 'n') { st.numFmt = chgCol[ci] && nm === 'Summary' ? '+0.0"%";-0.0"%";0"%"' : (Number.isInteger(c.v) ? '#,##0' : '#,##0.0'); if (chgCol[ci] && c.v) st.font = { bold: true, color: { rgb: c.v > 0 ? '15803D' : 'B91C1C' } }; }
               if (ci === 0) st.font = Object.assign({ bold: nm === 'Summary' || nm === 'How to check (SOP)' }, st.font || {});
               c.s = st;
@@ -3739,11 +3739,38 @@
       add(sum, 'Summary', [34, 42, 22, 22, 10, 60]); add(cl, 'By cluster', [6, 44].concat(Array(12).fill(13))); add(dy, 'Day by day', [12, 8, 10, 14, 12, 10, 10, 13]); add(ld, 'Leads', [12, 8, 8, 52, 12, 28]); add(lpTab, 'Student landing pages', [70, 34, 10, 14, 14, 14, 13, 18, 18]); add(opTab, 'Opportunities', [16, 90, 26, 10, 10]); add(qTab, 'Searches', [50, 11, 10, 13, 10, 12, 18, 12, 18]); add(empTab, 'Employer pages', [70, 8, 13, 13, 12, 18, 12, 16, 14, 13, 12, 30]); add(poTab, 'Job & internship posts', [12, 10, 16, 60, 22, 12]); add(sop, 'How to check (SOP)', [34, 44, 120, 30]); add(notes.concat(PR.errs.map(e => ['Could not load', e])), 'Notes', [34, 120]);
       X.writeFile(wb, `Unstop SEO ${gran === 'week' ? 'weekly' : 'monthly'} reference ${cur.start} to ${cur.end}.xlsx`);
     };
+    // ── charts in Unstop colours: the last 8 periods, drawn on the page and copied into the email as pictures ──
+    const UN = { navy: '#1C4980', blue: '#0A66E4', sky: '#7FB3F5', teal: '#0E9F8E', amber: '#F59E0B', light: '#EEF4FD' };
+    const wins = gran === 'week' ? Array.from({ length: 8 }, (_, i) => { const e = addD(st.end, -7 * (7 - i)); return { start: addD(e, -6), end: e, label: fmtD(addD(e, -6)).replace(/ \d{4}$/, '') }; }) : pers.slice(Math.max(0, li - 5), li + 1).map(p => ({ start: p.start, end: p.end, label: p.label }));
+    const ser = (ids, m) => wins.map(w => Math.round(sumIds(ids, w)[m] || 0));
+    const allIds = list.map(x => x.id);
+    const CH = [
+      { id: 'un-sum-ch1', title: `Non-brand Google clicks per ${gran === 'week' ? '7 days' : 'month'}`, after: 'OVERALL', cfg: () => ({ type: 'bar', data: { labels: wins.map(w => w.label), datasets: [{ label: 'Non-brand clicks', data: ser(allIds, 'nbClicks'), backgroundColor: wins.map((w, i) => i === wins.length - 1 ? UN.blue : UN.sky), borderRadius: 4 }] } }) },
+      ga ? { id: 'un-sum-ch2', title: `Students from Google: signups and registrations per ${gran === 'week' ? '7 days' : 'month'}`, after: 'B2C', cfg: () => ({ type: 'line', data: { labels: wins.map(w => w.label), datasets: [{ label: 'Opportunity registrations', data: ser(b2c.ids, 'regs'), borderColor: UN.navy, backgroundColor: UN.navy, tension: .3, yAxisID: 'y' }, { label: 'Student signups', data: ser(b2c.ids, 'students'), borderColor: UN.teal, backgroundColor: UN.teal, tension: .3, yAxisID: 'y2' }] }, options: { scales: { y: { beginAtZero: true, title: { display: true, text: 'Registrations' } }, y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Signups' } } } } }) } : null,
+      { id: 'un-sum-ch3', title: `Employer pages: Google clicks per ${gran === 'week' ? '7 days' : 'month'}`, after: 'B2E', cfg: () => ({ type: 'line', data: { labels: wins.map(w => w.label), datasets: [{ label: 'B2B (job-posting pages)', data: ser(b2b.ids, 'clicks'), borderColor: UN.blue, backgroundColor: UN.blue, tension: .3 }, { label: 'B2E (employer pages)', data: ser(b2e.ids, 'clicks'), borderColor: UN.amber, backgroundColor: UN.amber, tension: .3 }] } }) }
+    ].filter(Boolean);
+    const chHtml = `<section class="panel"><div class="panel-h"><h2>Charts</h2><p>The last ${wins.length} ${gran === 'week' ? '7-day periods' : 'months'}, in Unstop colours. "Copy email with charts" pastes them into the email as pictures.</p></div><div class="panel-b"><div class="grid-2 even">${CH.map(c => `<div><h3 style="margin:0 0 6px;font-size:14px;color:${UN.navy}">${esc(c.title)}</h3><div style="position:relative;height:240px;background:#fff"><canvas id="${c.id}"></canvas></div></div>`).join('')}</div></div></section>`;
+    const drawCh = () => CH.forEach(c => { const cfg = c.cfg(); cfg.options = Object.assign({ animation: false, maintainAspectRatio: false, devicePixelRatio: 2, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }, cfg.options || {}); chart(c.id, cfg); });
+    // email as HTML: Unstop header, sections, bullets and the charts as pictures
+    const emailHtml = () => {
+      const pic = {}; CH.forEach(c => { const el = document.getElementById(c.id); const cv = el && window.Chart && Chart.getChart ? Chart.getChart(el) : null; if (cv) { const tmp = document.createElement('canvas'); tmp.width = el.width; tmp.height = el.height; const x = tmp.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, tmp.width, tmp.height); x.drawImage(el, 0, 0); pic[c.after] = (pic[c.after] || '') + `<p style="margin:10px 0 2px;font:bold 13px Arial;color:${UN.navy}">${esc(c.title)}</p><img src="${tmp.toDataURL('image/png')}" width="600" alt="${esc(c.title)}" style="width:600px;max-width:100%;border:1px solid #D0D7E2;border-radius:6px">`; } });
+      const lines = text().split('\n'); let h = '', inList = false, sec = '';
+      const close = () => { if (inList) { h += '</ul>'; inList = false; } if (sec && pic[sec]) { h += pic[sec]; delete pic[sec]; } };
+      lines.forEach((l, i) => {
+        if (/^Subject:/.test(l)) return;
+        if (/^• /.test(l)) { if (!inList) { h += '<ul style="margin:4px 0 8px;padding-left:20px">'; inList = true; } h += `<li style="margin:3px 0;font:13px/1.5 Arial;color:#1f2937">${esc(l.slice(2))}</li>`; return; }
+        if (/^[A-Z0-9][A-Z0-9 &()—\/,.\-]+$/.test(l) && l.length > 3) { close(); sec = l.split(' ')[0]; h += `<div style="margin:16px 0 6px;padding:6px 10px;background:${UN.light};border-left:4px solid ${UN.blue};font:bold 13px Arial;color:${UN.navy}">${esc(l)}</div>`; return; }
+        if (!l) { if (inList) { h += '</ul>'; inList = false; } return; }
+        h += `<p style="margin:6px 0;font:13px/1.5 Arial;color:#1f2937">${esc(l)}</p>`;
+      });
+      close();
+      return `<div style="max-width:680px"><div style="background:${UN.navy};color:#fff;padding:14px 16px;border-radius:6px 6px 0 0;font:bold 16px Arial">unstop · ${esc(gran === 'week' ? 'Weekly' : 'Monthly')} SEO update<br><span style="font:12px Arial;color:#cfe0f7">${esc(fmtD(cur.start))} – ${esc(fmtD(cur.end))} vs ${esc(fmtD(prv.start))} – ${esc(fmtD(prv.end))}</span></div><div style="border:1px solid #D0D7E2;border-top:0;padding:8px 16px 16px">${h}</div></div>`;
+    };
     const html = intro + tabs +
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
       (!ga ? '<div class="note">GA4 is not connected in this tab: sessions, signups and registrations are empty.</div>' : '') +
-      `<p class="un-meta">${esc(cur.label)}: ${esc(fmtD(cur.start))} – ${esc(fmtD(cur.end))} · compared with ${esc(cmpL)} · <button class="btn-primary sm" type="button" id="un-sum-copy">Copy as email text</button> <button class="btn-quiet sm" type="button" id="un-sum-xlsx">Download reference sheet (.xlsx)</button> <span id="un-sum-msg" class="un-n"></span></p>` +
-      `<section class="panel"><div class="panel-h"><h2>Headline</h2></div><div class="panel-b">${ul(lines.head)}</div></section>` +
+      `<p class="un-meta">${esc(cur.label)}: ${esc(fmtD(cur.start))} – ${esc(fmtD(cur.end))} · compared with ${esc(cmpL)} · <button class="btn-primary sm" type="button" id="un-sum-copy">Copy as email text</button> <button class="btn-primary sm" type="button" id="un-sum-copyh">Copy email with charts</button> <button class="btn-quiet sm" type="button" id="un-sum-xlsx">Download reference sheet (.xlsx)</button> <span id="un-sum-msg" class="un-n"></span></p>` +
+      `<section class="panel"><div class="panel-h"><h2>Headline</h2></div><div class="panel-b">${ul(lines.head)}</div></section>` + chHtml +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>What improved</h2><p>Clusters with the biggest gain in registrations against ${esc(PLp)}, with what drove it.</p></div><div class="panel-b">${ul(lines.up)}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Where we focus next</h2><p>The biggest changes to look into, the room to grow from existing traffic, and the quickest ranking wins.</p></div><div class="panel-b">${ul(lines.focus)}</div></section></div>` +
       (lines.check.length ? `<section class="panel"><div class="panel-h"><h2>Numbers to check</h2><p>Changes that look like tracking or page grouping rather than real movement; they are kept out of the lists above.</p></div><div class="panel-b">${ul(lines.check)}</div></section>` : '') +
@@ -3753,7 +3780,7 @@
       `<section class="panel"><div class="panel-h"><h2>New tracking set up</h2><p>What GTM and GA4 now measure, so these numbers can join the review.</p></div><div class="panel-b">${ul(NEW_TRACKING.map(([a, b]) => `<b>${esc(a)}</b>: ${esc(b)}`))}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>How the numbers are counted</h2><p>Every number above can be rebuilt from these sources.</p></div><div class="panel-b">${ul(defs.map(esc))}</div></section>` +
       `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report">SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
-    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); const x = document.getElementById('un-sum-xlsx'); if (x) x.addEventListener('click', () => { const m = document.getElementById('un-sum-msg'); x.disabled = true; sheet(t => { m.textContent = t; }).then(() => { m.textContent = 'Reference sheet downloaded. Attach it to the email.'; }).catch(e => { m.textContent = e.message; }).finally(() => { x.disabled = false; }); }); } };
+    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); drawCh(); const ch = document.getElementById('un-sum-copyh'); if (ch) ch.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { const h = emailHtml(), t = text(); if (window.ClipboardItem && navigator.clipboard.write) await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([h], { type: 'text/html' }), 'text/plain': new Blob([t], { type: 'text/plain' }) })]); else await navigator.clipboard.writeText(t); m.textContent = 'Copied with charts. Paste into Gmail or Outlook; the subject line is in the plain-text copy.'; } catch (e) { m.textContent = 'Copy was blocked by the browser: ' + e.message; } }); const x = document.getElementById('un-sum-xlsx'); if (x) x.addEventListener('click', () => { const m = document.getElementById('un-sum-msg'); x.disabled = true; sheet(t => { m.textContent = t; }).then(() => { m.textContent = 'Reference sheet downloaded. Attach it to the email.'; }).catch(e => { m.textContent = e.message; }).finally(() => { x.disabled = false; }); }); } };
   };
 
   // ════════════════════════════ JOURNEYS: WHERE THEY SIGN UP, WHAT THEY APPLY TO ════════════════════════════
