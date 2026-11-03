@@ -3582,14 +3582,61 @@
     const vis = `<p>Non-brand searches in the top 3: <b>${fmtN(top3)}</b> · top 10: <b>${fmtN(top10)}</b> · positions 11–20: <b>${fmtN(qw.length)}</b> (Search Console, dashboard dates ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}). <a href="#quickwins">Almost page one</a></p>`;
     // plain-text version for email
     const strip = h => h.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-    const text = () => [`Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${gran === 'week' ? 'last 7 days' : PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '', `Here is the ${gran === 'week' ? 'weekly' : 'monthly'} SEO update for ${PL} (${fmtD(cur.start)} – ${fmtD(cur.end)}), compared with ${PLp} (${fmtD(prv.start)} – ${fmtD(prv.end)}). Numbers are from Search Console and GA4 (Organic Search, website), split by page type, with branded and non-branded searches apart.`, '', 'HEADLINE', ...lines.head.map(t => '• ' + strip(t)), '', 'WHAT IMPROVED', ...(lines.up.length ? lines.up : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '', 'WHERE WE FOCUS NEXT', ...(lines.focus.length ? lines.focus : ['Nothing stood out this period.']).map(t => '• ' + strip(t)), '',
-      ...(lines.check.length ? ['NUMBERS TO CHECK', ...lines.check.map(t => '• ' + strip(t)), ''] : []),
-      `BY PAGE TYPE (vs ${cmpL})`, ...chainRows.map(r => { const b = r.p; return `• ${r.name}: non-brand clicks ${n(r.c.nbClicks)} (${tx(pc(r.c.nbClicks, b.nbClicks))}), sessions ${n(r.c.sessions)} (${tx(pc(r.c.sessions, b.sessions))}), signups ${n(r.c.students)} (${tx(pc(r.c.students, b.students))})${r.c.regs || b.regs ? `, registrations ${n(r.c.regs)} (${tx(pc(r.c.regs, b.regs))})` : ''}`; }), '',
-      `RANKINGS (non-brand searches by average position, Search Console ${fmtD(D.start)} – ${fmtD(D.end)})`, `• Top 3: ${fmtN(top3)} · Top 10: ${fmtN(top10)} · Positions 11–20: ${fmtN(qw.length)}`, '', 'EMPLOYER LEADS', '• ' + strip(leadsHtml.replace(/<p class="hint">.*$/, '')), '', 'NEW TRACKING SET UP', ...NEW_TRACKING.map(([a, b]) => `• ${a}: ${b}`), '', 'HOW THE NUMBERS ARE COUNTED', ...defs.map(t => '• ' + t), '', `Detail by cluster and page is in the Unstop SEO tool (Clusters: week & month).`, '', 'Thanks,', 'Mayank'].join('\n');
+    // ── segments: B2C = students (every page type except employer pages), B2B = job-posting pages
+    //    (job board / sourcing, hire-by-role, free job posting), B2E = the other employer pages ──
+    const empIds = list.filter(x => x.type === 'emp').map(x => x.id), b2bIds = empIds.filter(id => id === 'empjobboard'), b2eIds = empIds.filter(id => id !== 'empjobboard');
+    const SEG = [['B2C', 'Students', list.filter(x => x.type !== 'emp').map(x => x.id)], ['B2B', 'Job-posting pages (job board, hire-by-role, free job posting)', b2bIds], ['B2E', 'Employer product pages (AI agents, assessments, branding, ATS)', b2eIds]]
+      .map(([k, name, ids]) => ({ k, name, ids, c: sumIds(ids, cur), p: sumIds(ids, prv) }));
+    const segOf = k => SEG.find(x => x.k === k);
+    const leadsIn = (p, grp) => { const L = lead(p); return L ? L.filter(l => salesPlace(l.path, sectioner(D)).group === grp) : null; };
+    const LB = { c: leadsIn(cur, 'B2E (J&I)'), p: leadsIn(prv, 'B2E (J&I)') }, LE = { c: leadsIn(cur, 'B2E'), p: leadsIn(prv, 'B2E') };
+    const off = L => L ? L.filter(l => l.kind === 'official').length : null;
+    const ctrT = o => o.impr ? (o.clicks / o.impr * 100).toFixed(1) + '%' : '—';
+    const vs = (a, b) => `${n(a)} (${tx(pc(a, b))}, from ${n(b)})`;
+    const segLines = s => [
+      `Google clicks: ${vs(s.c.clicks, s.p.clicks)}; non-brand ${vs(s.c.nbClicks, s.p.nbClicks)}`,
+      `Impressions: ${vs(s.c.impr, s.p.impr)}; CTR ${ctrT(s.p)} → ${ctrT(s.c)}`,
+      ga ? `Organic sessions: ${vs(s.c.sessions, s.p.sessions)}` : ''
+    ].filter(Boolean);
+    const b2c = segOf('B2C'), b2b = segOf('B2B'), b2e = segOf('B2E');
+    const text = () => [
+      `Subject: ${gran === 'week' ? 'Weekly' : 'Monthly'} SEO update — ${gran === 'week' ? 'last 7 days' : PL} (${fmtD(cur.start)} – ${fmtD(cur.end)})`, '', 'Hi Team,', '',
+      `Here is the SEO update for ${PL} (${fmtD(cur.start)} – ${fmtD(cur.end)}), compared with ${PLp} (${fmtD(prv.start)} – ${fmtD(prv.end)}). The attached reference sheet has every number below with its source and the day-by-day data.`, '',
+      'OVERALL', `• Non-brand Google clicks: ${vs(T.c.nbClicks, T.p.nbClicks)}; branded clicks ${vs(T.c.brand, T.p.brand)}`, ga ? `• Organic sessions: ${vs(T.c.sessions, T.p.sessions)}` : null, qw.length ? `• ${fmtN(qw.length)} non-brand searches rank at positions 11–20 (${fmtN(Math.round(qwImpr))} impressions): the quickest ranking wins.` : null, '',
+      'B2C — STUDENTS', ga ? `• Student signups: ${vs(b2c.c.students, b2c.p.students)}` : null, ga ? `• Opportunity registrations: ${vs(b2c.c.regs, b2c.p.regs)}` : null, ...segLines(b2c).map(t => '• ' + t),
+      ...lines.up.slice(0, 2).map(t => '• Worked: ' + strip(t)), ...lines.focus.filter(t => !/positions 11–20/.test(t)).slice(0, 3).map(t => '• Focus: ' + strip(t)), '',
+      `B2B — ${b2b.name.toUpperCase()}`, ...segLines(b2b).map(t => '• ' + t), LB.c ? `• Organic sales-form leads from these pages: ${n(LB.c.length)} (${n(LB.p.length)} before), ${n(off(LB.c))} from company emails (${n(off(LB.p))} before)` : null,
+      '• Job and internship posts: tracked in GA4 from 30 Oct 2026 (AI vs manual, new vs edits; new vs edit split since 3 Nov 2026). GA4 Explore: "Job board: job & internship posts".', '',
+      `B2E — ${b2e.name.toUpperCase()}`, ...segLines(b2e).map(t => '• ' + t), LE.c ? `• Organic sales-form leads from these pages: ${n(LE.c.length)} (${n(LE.p.length)} before), ${n(off(LE.c))} from company emails (${n(off(LE.p))} before)` : null, '',
+      ...(lines.check.length ? ['BEING VERIFIED (kept out of the numbers above)', ...lines.check.map(t => '• ' + strip(t)), ''] : []),
+      'NEW TRACKING SET UP', ...NEW_TRACKING.map(([a, b]) => `• ${a}: ${b}`), '',
+      'Thanks,', 'Mayank'].filter(x => x !== null).join('\n');
+    // ── reference sheet: every number in the email, its source, and the data behind it ──
+    const sheet = () => {
+      if (!window.XLSX) throw new Error('The spreadsheet library is still loading. Try again in a moment.');
+      const r1 = v => v == null ? '' : Math.round(v), chgP = (a, b) => { const v = pc(a, b); return v == null ? '' : Math.round(v * 10) / 10; };
+      const met = [['Google clicks (all)', 'clicks', 'Search Console, web search'], ['Non-brand clicks', 'nbClicks', 'Search Console, queries without the brand terms'], ['Branded clicks', 'brand', 'Search Console'], ['Impressions', 'impr', 'Search Console'], ['Organic sessions', 'sessions', 'GA4, Session default channel group = Organic Search'], ['Student signups', 'students', `GA4 event ${evL('studentSignup')}, organic sessions`], ['Opportunity registrations', 'regs', `GA4 users with ${evL('opportunityAction')} carrying an opportunity_id, organic sessions, per day added up`]];
+      const sum = [['Section', 'Metric', `${cur.label} (${cur.start} – ${cur.end})`, `${prv.label} (${prv.start} – ${prv.end})`, 'Change %', 'Source']];
+      [['Overall', T]].concat(SEG.map(s => [`${s.k} — ${s.name}`, s])).forEach(([sec, o]) => met.forEach(([l, k, src]) => { if (!ga && ['sessions', 'students', 'regs'].includes(k)) return; sum.push([sec, l, r1(o.c[k]), r1(o.p[k]), chgP(o.c[k], o.p[k]), src]); }));
+      if (LB.c) sum.push(['B2B — leads', 'Organic sales-form leads', LB.c.length, LB.p.length, chgP(LB.c.length, LB.p.length), 'Leads sheet, Channel = Organic, internal emails left out'], ['B2B — leads', 'of which company emails', off(LB.c), off(LB.p), chgP(off(LB.c), off(LB.p)), 'Leads sheet']);
+      if (LE.c) sum.push(['B2E — leads', 'Organic sales-form leads', LE.c.length, LE.p.length, chgP(LE.c.length, LE.p.length), 'Leads sheet, Channel = Organic, internal emails left out'], ['B2E — leads', 'of which company emails', off(LE.c), off(LE.p), chgP(off(LE.c), off(LE.p)), 'Leads sheet']);
+      sum.push(['Rankings', 'Non-brand searches in top 3 / top 10 / 11–20', `${top3} / ${top10} / ${qw.length}`, '', '', `Search Console, average position, ${D.start} – ${D.end}`]);
+      const seg = id => SEG.find(s => s.ids.includes(id));
+      const cl = [['Segment', 'Cluster', 'Clicks', 'Clicks before', 'Non-brand clicks', 'Non-brand before', 'Impressions', 'Impressions before'].concat(ga ? ['Sessions', 'Sessions before', 'Signups', 'Signups before', 'Registrations', 'Registrations before'] : [])];
+      list.forEach(x => { const c = sumIds([x.id], cur), p = sumIds([x.id], prv); if (!(c.clicks + p.clicks + (c.sessions || 0) + (p.sessions || 0))) return; cl.push([(seg(x.id) || {}).k || '', x.name, r1(c.clicks), r1(p.clicks), r1(c.nbClicks), r1(p.nbClicks), r1(c.impr), r1(p.impr)].concat(ga ? [r1(c.sessions), r1(p.sessions), r1(c.students), r1(p.students), r1(c.regs), r1(p.regs)] : [])); });
+      const dy = [['Date', 'Segment', 'Clicks', 'Non-brand clicks', 'Impressions'].concat(ga ? ['Sessions', 'Signups', 'Registrations'] : [])];
+      for (let d = prv.start; d <= cur.end; d = addD(d, 1)) SEG.forEach(s => { const o = sumIds(s.ids, { start: d, end: d }); dy.push([d, s.k, r1(o.clicks), r1(o.nbClicks), r1(o.impr)].concat(ga ? [r1(o.sessions), r1(o.students), r1(o.regs)] : [])); });
+      const ld = [['Date', 'Period', 'Segment', 'Page', 'Email type', 'Company domain']]; if (!SLr) ld.push(['Leads sheet not loaded: open the B2E dashboard once, then download again.']);
+      [['this', cur], ['before', prv]].forEach(([nm, p]) => [['B2B', 'B2E (J&I)'], ['B2E', 'B2E']].forEach(([k, g]) => (leadsIn(p, g) || []).forEach(l => ld.push([l.day, nm, k, l.path, l.kind, l.kind === 'official' ? l.domain : '']))));
+      const notes = [['Topic', 'Detail']].concat(lines.check.map(t => ['Being verified', strip(t)]), NEW_TRACKING.map(([a, b]) => ['New tracking: ' + a, b]), defs.map(t => ['How counted', t]), [['Segments', 'B2C = every page type except employer pages; B2B = job board / sourcing, /employers/hire-*, free job posting pages; B2E = the other employer pages. Rules are in Site clusters.']]);
+      const wb = XLSX.utils.book_new(), add = (rows, nm, w) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = w.map(x => ({ wch: x })); XLSX.utils.book_append_sheet(wb, ws, nm); };
+      add(sum, 'Summary', [34, 42, 22, 22, 10, 60]); add(cl, 'By cluster', [6, 44].concat(Array(12).fill(13))); add(dy, 'Day by day', [12, 8, 10, 14, 12, 10, 10, 13]); add(ld, 'Leads', [12, 8, 8, 52, 12, 28]); add(notes, 'Notes', [34, 120]);
+      XLSX.writeFile(wb, `Unstop SEO ${gran === 'week' ? 'weekly' : 'monthly'} reference ${cur.start} to ${cur.end}.xlsx`);
+    };
     const html = intro + tabs +
       (st.sample ? '<div class="note"><b>Sample data.</b> Connect Search Console and GA4 for real numbers.</div>' : '') +
       (!ga ? '<div class="note">GA4 is not connected in this tab: sessions, signups and registrations are empty.</div>' : '') +
-      `<p class="un-meta">${esc(cur.label)}: ${esc(fmtD(cur.start))} – ${esc(fmtD(cur.end))} · compared with ${esc(cmpL)} · <button class="btn-primary sm" type="button" id="un-sum-copy">Copy as email text</button> <span id="un-sum-msg" class="un-n"></span></p>` +
+      `<p class="un-meta">${esc(cur.label)}: ${esc(fmtD(cur.start))} – ${esc(fmtD(cur.end))} · compared with ${esc(cmpL)} · <button class="btn-primary sm" type="button" id="un-sum-copy">Copy as email text</button> <button class="btn-quiet sm" type="button" id="un-sum-xlsx">Download reference sheet (.xlsx)</button> <span id="un-sum-msg" class="un-n"></span></p>` +
       `<section class="panel"><div class="panel-h"><h2>Headline</h2></div><div class="panel-b">${ul(lines.head)}</div></section>` +
       `<div class="grid-2 even"><section class="panel"><div class="panel-h"><h2>What improved</h2><p>Clusters with the biggest gain in registrations against ${esc(PLp)}, with what drove it.</p></div><div class="panel-b">${ul(lines.up)}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>Where we focus next</h2><p>The biggest changes to look into, the room to grow from existing traffic, and the quickest ranking wins.</p></div><div class="panel-b">${ul(lines.focus)}</div></section></div>` +
@@ -3600,7 +3647,7 @@
       `<section class="panel"><div class="panel-h"><h2>New tracking set up</h2><p>What GTM and GA4 now measure, so these numbers can join the review.</p></div><div class="panel-b">${ul(NEW_TRACKING.map(([a, b]) => `<b>${esc(a)}</b>: ${esc(b)}`))}</div></section>` +
       `<section class="panel"><div class="panel-h"><h2>How the numbers are counted</h2><p>Every number above can be rebuilt from these sources.</p></div><div class="panel-b">${ul(defs.map(esc))}</div></section>` +
       `<p class="hint">Per-cluster detail: <a href="#clusters?by=${gran}">Clusters: week &amp; month</a> · page lists: <a href="#report?by=${gran}">Weekly SEO report</a>. ${st.at ? 'Loaded ' + when(st.at) + '.' : ''}</p>`;
-    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); } };
+    return { html, mount: () => { refresh(); const b = document.getElementById('un-sum-copy'); if (b) b.addEventListener('click', async () => { const m = document.getElementById('un-sum-msg'); try { await navigator.clipboard.writeText(text()); m.textContent = 'Copied. Paste into an email or a doc.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } }); const x = document.getElementById('un-sum-xlsx'); if (x) x.addEventListener('click', () => { const m = document.getElementById('un-sum-msg'); try { sheet(); m.textContent = 'Reference sheet downloaded. Attach it to the email.'; } catch (e) { m.textContent = e.message; } }); } };
   };
 
   // ════════════════════════════ JOURNEYS: WHERE THEY SIGN UP, WHAT THEY APPLY TO ════════════════════════════
