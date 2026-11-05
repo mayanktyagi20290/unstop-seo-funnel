@@ -355,7 +355,9 @@
     const tick = setInterval(() => progress(`Fetching queries, pages and daily totals… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
     try {
       const days = Math.round((new Date(end) - new Date(start)) / 864e5) + 1;
-      const pe = { v: addDays(start, -1) }, ps = { v: addDays(start, -days) };
+      // a full calendar month is compared with the calendar month before it (Oct vs Sep); any other range with the same number of days just before
+      const fullMonth = /-01$/.test(start) && addDays(end, 1).slice(8) === '01' && start.slice(0, 7) === end.slice(0, 7);
+      const pe = { v: addDays(start, -1) }, ps = { v: fullMonth ? addDays(start, -1).slice(0, 8) + '01' : addDays(start, -days) };
       // Step 1, in parallel: enough to show the dashboard (first 25,000 queries and pages, dates, devices).
       const FIRST = 25000;
       const [q, p, c, dev] = await Promise.all([
