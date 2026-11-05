@@ -2757,10 +2757,36 @@
       }).join('');
       return `<p class="hint">Same dates as this dashboard: Search Console ${esc(fmtD(D.start))} – ${esc(fmtD(D.end))}${g && !g.sample ? ` · GA4 ${esc(fmtD(gaStart))} – ${esc(fmtD(gaEnd))}` : ''}. Each link opens Google's own report with the same pages and dates, so the numbers can be checked without the tool.</p><div class="un-verify">${cards}</div>`;
     })();
-    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-verify', 'Check in Google'], ['un-b2e-why', 'Why numbers differ'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
+    const navLinks0 = [['un-b2e-sum', 'Summary'], ['un-b2e-verify', 'Check in Google'], ['un-b2e-why', 'Why numbers differ'], ['un-b2e-alerts', 'Drop alerts'], ['un-b2e-sales', 'Sales-form leads'], ['un-b2e-ai', 'AI traffic'], ['un-b2e-month', 'Month by month'], ['un-b2e-trend', 'Weekly trend'], ['un-b2e-prod', 'Products'], ['un-b2e-topics', 'Search topics'], ['un-b2e-qw', 'Quick wins'], ['un-b2e-pages', 'All landing pages'], ['un-b2e-rev', 'First review']];
     const navLinks = navLinks0.filter(([id]) => !(cfg.sales === false && id === 'un-b2e-sales')).map(([id, l]) => [id, id === 'un-b2e-prod' && cfg.productLabel ? cfg.productLabel : l]);
     const navHtml = `<nav class="un-b2e-nav">${navLinks.map(([id, l]) => `<a href="#" data-jump="${id}">${esc(l)}</a>`).join('')}</nav>`;
     const sec = (id, title, sub, body) => `<section class="panel" id="${id}"><div class="panel-h"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div><div class="panel-b">${body}</div></section>`;
+    // ── month by month: B2B (job-posting pages) vs B2E, any two months side by side ──
+    const monthHtml = (() => {
+      if (cfg.key !== 'b2e') return '';
+      const st = live ? trGet(D) : sampleTrends(D, A);
+      if (live && (!st || st.status === 'loading')) return `<p class="progress" id="un-tr-prog">${st ? `Loading… ${st.done} of ${st.total} requests` : 'Loading month-by-month data…'} (about a minute, once; Clusters uses the same data).</p>`;
+      const ms = trPeriods(st.end, 'month');
+      const full = ms.filter(m => !m.partial), STm = b2eState(SK);
+      const mA = ms.find(m => m.key === STm.mA) || full[full.length - 1] || ms[ms.length - 1], mB = ms.find(m => m.key === STm.mB) || full[full.length - 2] || ms[0];
+      const lab = m => m.label + (m.partial ? ' (to date)' : '');
+      const SEGS = [['B2B', 'Job-posting pages (job board, hire-by-role, free job posting)', realIds.filter(id => id === 'empjobboard'), 'B2E (J&I)'], ['B2E', 'Employer product pages', realIds.filter(id => id !== 'empjobboard'), 'B2E']].filter(x => x[2].length);
+      const gsc = (ids, m) => { let c = 0, i = 0, nb = 0, pw = 0; ids.forEach(id => { const g = st.gsc[id] || { all: {}, nb: {} }; for (let d = m.start; d <= m.end; d = addD(d, 1)) { const x = g.all[d]; if (x) { c += x.c; i += x.i; if (x.p != null) pw += x.p * x.i; } const y = g.nb[d]; if (y) nb += y.c; } }); return { clicks: c, impr: i, nb, brand: c - nb, ctr: i ? c / i * 100 : null, pos: i ? pw / i : null }; };
+      const gaS = (ids, m) => st.gaOk ? ids.reduce((a, id) => a + (trSum(st, id, m, 'sessions') || 0), 0) : null;
+      const leads = (grp, m) => SLr ? SLr.leads.filter(l => l.organic && l.kind !== 'internal' && l.day && l.day >= m.start && l.day <= m.end && salesPlace(l.path, so).group === grp) : null;
+      const row = (sg, m) => { const g = gsc(sg[2], m), L = leads(sg[3], m); return { ...g, ses: gaS(sg[2], m), leads: L ? L.length : null, off: L ? L.filter(l => l.kind === 'official').length : null }; };
+      const MET = [['Google clicks', 'clicks', 'n'], ['Non-brand clicks', 'nb', 'n'], ['Branded clicks', 'brand', 'n'], ['Impressions', 'impr', 'n'], ['CTR %', 'ctr', 'pct'], ['Avg position', 'pos', 'pos'], ['Organic sessions (GA4)', 'ses', 'n'], ['Organic sales-form leads', 'leads', 'n'], ['Leads from company emails', 'off', 'n']];
+      const fv = (v, k) => v == null ? '—' : k === 'pct' ? v.toFixed(2) : k === 'pos' ? v.toFixed(1) : fmtN(Math.round(v));
+      const ch = (a, b, k) => { if (a == null || b == null) return '<span class="un-n">—</span>'; if (k === 'n') return dchip(pctCh(a, b)); const d = a - b; const good = k === 'pos' ? d < 0 : d > 0; return `<span class="un-d ${Math.abs(d) < .005 ? '' : good ? 'up' : 'down'}">${d >= 0 ? '+' : ''}${d.toFixed(k === 'pos' ? 1 : 2)}</span>`; };
+      const R = SEGS.map(sg => ({ sg, a: row(sg, mA), b: row(sg, mB) }));
+      const opt = sel => ms.map(m => `<option value="${m.key}"${m.key === sel.key ? ' selected' : ''}>${esc(lab(m))}</option>`).join('');
+      const cmp = `<div class="tw"><table class="un-mini un-b2e"><thead><tr><th>Metric</th>${R.map(r => `<th class="r">${esc(r.sg[0])} · ${esc(lab(mA))}</th><th class="r">${esc(r.sg[0])} · ${esc(lab(mB))}</th><th class="r">Change</th>`).join('')}</tr></thead><tbody>${MET.map(([l, k, t]) => `<tr><td><b>${esc(l)}</b></td>${R.map(r => `<td class="r">${fv(r.a[k], t)}</td><td class="r">${fv(r.b[k], t)}</td><td class="r">${ch(r.a[k], r.b[k], t)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      const last6 = ms.slice(-7);
+      const grid = SEGS.map(sg => `<h3 style="margin:14px 0 6px;font-size:14px">${esc(sg[0])}: ${esc(sg[1])}</h3><div class="tw"><table class="un-mini"><thead><tr><th>Metric</th>${last6.map(m => `<th class="r">${esc(lab(m))}</th>`).join('')}</tr></thead><tbody>${MET.map(([l, k, t]) => `<tr><td>${esc(l)}</td>${last6.map(m => `<td class="r">${fv(row(sg, m)[k], t)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`).join('');
+      window.__unMonthTsv = () => [['Metric'].concat(R.flatMap(r => [`${r.sg[0]} ${lab(mA)}`, `${r.sg[0]} ${lab(mB)}`, `${r.sg[0]} change`])).join('\t')].concat(MET.map(([l, k, t]) => [l].concat(R.flatMap(r => [fv(r.a[k], t), fv(r.b[k], t), r.a[k] == null || r.b[k] == null ? '' : t === 'n' ? (pctCh(r.a[k], r.b[k]) == null ? '' : pctCh(r.a[k], r.b[k]).toFixed(1) + '%') : (r.a[k] - r.b[k]).toFixed(2)])).join('\t'))).join('\n');
+      return `<div class="un-row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label>Compare <select id="un-mm-a">${opt(mA)}</select></label><label>with <select id="un-mm-b">${opt(mB)}</select></label><button class="btn-quiet sm" type="button" id="un-mm-copy">Copy for Google Sheets</button><span id="un-mm-msg" class="un-n"></span></div>` + cmp +
+        `<p class="hint">B2B = job-posting pages (${esc(SEGS[0] ? so.label(SEGS[0][2][0]) : '')} cluster); B2E = the other employer pages. Search Console clicks by page, GA4 Organic Search sessions by landing page, leads from the leads sheet (Channel = Organic, internal emails left out)${SLr ? '' : ' — open the leads sheet in the Sales-form leads section to fill the lead rows'}. A month marked "to date" is not finished.</p>` + grid;
+    })();
     const html = intro +
       `<p class="un-meta">${esc(period)}</p>` + (notes.length ? `<div class="note">${notes.join('<br>')}</div>` : '') + alertTop + navHtml +
       `<div class="un-row" style="margin:6px 0 12px;flex-wrap:wrap;gap:8px"><div class="un-tabs" role="tablist" aria-label="Columns" ${cols[1].dummy ? 'hidden' : ''}>${[['all', 'All three'], ['0', heads[0] + ' only'], ['1', heads[1] + ' only'], ['2', 'Combined only']].map(([v, l]) => `<button type="button" class="${VIEW === v ? 'on' : ''}" data-b2v="${v}">${esc(l)}</button>`).join('')}</div><button class="btn-primary sm" type="button" id="un-b2e-copy">Copy for Google Sheets</button><button class="btn-quiet sm" type="button" id="un-b2e-csv">Download CSV</button>${live ? '<button class="btn-quiet sm" type="button" id="un-b2e-reload">Reload Search Console</button>' : ''}<span class="hint" id="un-b2e-msg">Copies the columns shown: ${esc(shown.map(i => heads[i]).join(', '))}. Paste into the sheet with Ctrl/Cmd + V.</span></div>` +
@@ -2771,6 +2797,7 @@
       sec('un-b2e-alerts', 'Drop alerts', 'Employer pages and non-brand keywords that lost clicks or ranking this week, with the likely reason.', alertHtml || '<p class="un-n">—</p>') +
       (cfg.sales === false ? '' : sec('un-b2e-sales', 'Sales-form leads (B2B Form Leads sheet)', 'Every sales-form submission by the page it was filled on, split into official, campus and personal email. Organic only by default. This is the lead list (CRM) for B2E.', salesHtml)) +
       sec('un-b2e-ai', 'AI assistant traffic by month', 'How many visits ChatGPT, Perplexity, Gemini and other assistants send each month, and to which pages.', aiHtml) +
+      (monthHtml ? sec('un-b2e-month', 'Month by month: B2B vs B2E', 'Pick any two months to compare, e.g. October against September; the tables below show the last seven months.', monthHtml) : '') +
       sec('un-b2e-trend', cols[1].dummy ? `Weekly trend: ${cols[0].name}` : `Weekly trend: ${cols[0].name} vs ${cols[1].name}`, 'Non-brand and brand Search Console clicks, impressions and position per week.', trendHtml) +
       sec('un-b2e-prod', cfg.productLabel || 'Products', (cfg.productIntro || 'Every employer product (the folder after /employers).') + ' Click one to list all its landing pages below.' + (QPe.length ? '' : ' Brand / non-brand and keyword counts need query × page rows.'), prodHtml) +
       sec('un-b2e-topics', 'Search topics: brand vs non-brand', 'Searches that bring people to the employer pages, grouped by topic. Click a keyword count to see the keywords.', topicHtml) +
@@ -2778,6 +2805,9 @@
       sec('un-b2e-pages', cfg.pagesTitle || 'All employer landing pages', `${fmtN(pagesAll.length)} pages with Search Console data${M ? ', with GA4 sessions, leads and employer signups' : ''}. Click a page to analyse it on its own.`, pagesHtml) +
       `<div id="un-b2e-rev">${reviewPanel()}</div>`;
     const mount = () => {
+      if (cfg.key === 'b2e' && live && !trGet(D)) loadTrends(D, A);
+      ['un-mm-a', 'un-mm-b'].forEach(idm => { const el = document.getElementById(idm); if (el) el.addEventListener('change', () => { b2eState(SK)[idm === 'un-mm-a' ? 'mA' : 'mB'] = el.value; rerender(); setTimeout(() => { const t = document.getElementById('un-b2e-month'); if (t) t.scrollIntoView({ block: 'start' }); }, 60); }); });
+      const mmc = document.getElementById('un-mm-copy'); if (mmc) mmc.addEventListener('click', async () => { const m = document.getElementById('un-mm-msg'); try { await navigator.clipboard.writeText(window.__unMonthTsv()); m.textContent = 'Copied. Paste into the sheet.'; } catch (e) { m.textContent = 'Copy was blocked by the browser.'; } });
       if (live) cols.forEach((c, i) => { if (!F[i]) { const sc = scOf(c.id); loadScope(D, A, sc, keyOf(sc), ov); } });
       const msg = t => { const el = document.getElementById('un-b2e-msg'); if (el) el.textContent = t; };
       const cp = document.getElementById('un-b2e-copy');
