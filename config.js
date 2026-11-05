@@ -37,7 +37,8 @@ window.CW_CONFIG = {
       // only this one: sign_up also fires on logins and inflates signups several times over
       studentSignup: ['signup_email_verified'],
       employerSignup: ['employer_sign_up', 'recruiter_signup'],
-      demoRequest: ['book_demo', 'demo_request', 'generate_lead'],
+      // GTM-NNBT7L: demo_click = a click on a Book / Request demo button on the employer pages
+      demoRequest: ['demo_click', 'book_demo', 'demo_request', 'generate_lead'],
       // not GA4's automatic form_submit: it fires on every form (search, login, registration)
       contactSubmit: ['contact_form_submit', 'contact_submit'],
       // GTM-NNBT7L: opportunity registration form (/{type}/{id}/register) fires form_submit_success with

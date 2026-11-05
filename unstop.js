@@ -428,6 +428,8 @@
       landingRegion: { dateRanges: both, dimensions: [{ name: 'landingPage' }, { name: 'region' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: GA.and(org, { filter: { fieldName: 'country', stringFilter: { matchType: 'EXACT', value: 'India' } } }), orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 60000 },
       daily: { dateRanges: both, dimensions: [{ name: 'date' }], metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: org, limit: 1000 },
       events: { dateRanges: [cur], dimensions: [{ name: 'landingPage' }, { name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: 60000 },
+      // lead forms submitted (GTM form tracker): form_submit_success that carries no opportunity_id, i.e. not an opportunity registration (the employer sales / demo form)
+      leadForms: { optional: true, dateRanges: both, dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'eventCount' }], dimensionFilter: GA.and(org, GA.inList('eventName', ['form_submit_success']), { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } }), limit: 20000 },
       eventsYoy: { dateRanges: [yoy], dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }], dimensionFilter: org, limit: 2000 },
       returning: { dateRanges: both, dimensions: [{ name: 'newVsReturning' }], metrics: [{ name: 'activeUsers' }, { name: 'sessions' }], dimensionFilter: org, limit: 10 },
       pricing: { dateRanges: both, dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'sessions' }, { name: 'screenPageViews' }, { name: 'activeUsers' }], dimensionFilter: GA.and(org, GA.regex('pagePath', pricing)), limit: 200 },
@@ -576,6 +578,8 @@
       if (is.productClick && is.productClick(n)) o.prodClick += c;
       if (is.scroll && is.scroll(n)) o.scroll += c;
     });
+    // lead forms submitted on the site (employer sales / demo form), counted as contact submissions
+    (R.leadForms || []).forEach(r => { if ((r.range || 'cur') === 'cur' || r.range === 'date_range_0') { lp(r.landingPage).contact += +r.eventCount || 0; lp(r.landingPage).leadForm = (lp(r.landingPage).leadForm || 0) + (+r.eventCount || 0); } });
     // people who registered (the form's Next step can fire the event more than once per registration)
     (R.oppEvents || []).forEach(r => { lp(r.landingPage).opp += r.totalUsers; });
     const pages = [...byLanding.values()].map(o => ({ ...o, typeName: typeOf.label(o.type), signups: o.stu + o.emp, cvr: o.sessions ? (o.stu + o.emp) / o.sessions * 100 : null, engRate: o.sessions ? o.engaged / o.sessions * 100 : null, dSessions: chg(o.sessions, o.ySessions), leads: o.demo + o.contact }));
