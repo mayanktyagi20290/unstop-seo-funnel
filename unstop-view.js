@@ -582,6 +582,7 @@
   // (trends, reference sheet, GA4 screens) shares ONE limiter of 4, and once the hourly quota is spent no more
   // requests are sent until it resets (each rejected retry used to burn more of the budget).
   let gaActive = 0, gaBlockedUntil = 0, gaBlockMsg = ''; const gaWaiting = [];
+  try { const b = JSON.parse(localStorage.getItem('un:ga-block') || 'null'); if (b && b.until > Date.now()) { gaBlockedUntil = b.until; gaBlockMsg = b.msg; } } catch (e) { }
   const gaAcquire = async () => { if (gaActive < 4) { gaActive++; return; } await new Promise(r => gaWaiting.push(r)); };
   const gaRelease = () => { const nx = gaWaiting.shift(); if (nx) nx(); else gaActive--; };
   async function gaFetch(url, body) {
@@ -597,7 +598,7 @@
       if (res.ok) return res.json();
       const j = await res.json().catch(() => ({}));
       const msg = (j.error && j.error.message) || res.statusText;
-      if (res.status === 429 && /quota|exhausted|tokens/i.test(msg)) { gaBlockMsg = 'GA4 is rate-limiting this property: the hourly quota is used up. GA4 numbers are unavailable until it resets (under an hour); nothing is shown as zero. ' + msg; gaBlockedUntil = Date.now() + 15 * 60e3; throw new Error(gaBlockMsg); }
+      if (res.status === 429 && /quota|exhausted|tokens/i.test(msg)) { gaBlockMsg = 'GA4 is rate-limiting this property: the hourly quota is used up. GA4 numbers are unavailable until it resets (under an hour); nothing is shown as zero. ' + msg; gaBlockedUntil = Date.now() + 30 * 60e3; try { localStorage.setItem('un:ga-block', JSON.stringify({ until: gaBlockedUntil, msg: gaBlockMsg })); } catch (e) { } throw new Error(gaBlockMsg); }
       if ((res.status === 429 || res.status >= 500) && attempt < 4) { await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt) + Math.random() * 800)); continue; }
       if (res.status === 401) { gaToken = null; try { sessionStorage.removeItem('un:ga-tok'); } catch (e) { } throw new Error('Your GA4 session expired. Connect GA4 again.'); }
       if (res.status === 403 && /has not been used|disabled/i.test(msg)) throw new Error('The Google Analytics Data API (and Admin API, for the property list) must be enabled in the Google Cloud project that owns this app’s OAuth client. ' + msg);
@@ -2966,7 +2967,7 @@
       const q = (extra) => src.gsc.query({ startDate: start, endDate: end, type: 'web', dimensions: ['date'], rowLimit: 1000, dimensionFilterGroups: [{ groupType: 'and', filters: pf.concat(extra) }] }).then(d => { const o = {}; (d.rows || []).forEach(r => { o[r.keys[0]] = { c: r.clicks, i: r.impressions, p: r.position }; }); return o; });
       jobsG.push(() => q([]).then(o => { st.gsc[sec.id].all = o; }));
       if (A.brandRx) jobsG.push(() => q([{ dimension: 'query', operator: 'excludingRegex', expression: A.brandRx }]).then(o => { st.gsc[sec.id].nb = o; }));
-      if (pid && tok) {
+      if (pid && tok && !(gaBlockedUntil > Date.now())) {
         st.ga[sec.id] = { ses: {}, stu: {}, reg: {} };
         const lp = { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(rx) } } };
         const exp = [U.GA.organicFilter, lp].concat(ex ? [{ notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(ex) } } } }] : []);
@@ -2985,10 +2986,15 @@
         if (regEv.length) jobsA.push(() => rows({ dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: { andGroup: { expressions: exp.concat([U.GA.inList('eventName', regEv), hasOppT]) } }, limit: 1000 }).then(L => { L.forEach(r => { st.ga[sec.id].reg[String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')] = r.totalUsers; }); }));
       }
     });
-    st.gaOk = !!(pid && tok);
+    st.gaOk = !!(pid && tok) && !(gaBlockedUntil > Date.now());
+    if (!st.gaOk && pid && tok) st.errors.push(gaBlockMsg);
     st.total = jobsG.length + jobsA.length;
     const pool = async (jobs, n) => { const qd = jobs.slice(); await Promise.all(Array.from({ length: n }, async () => { while (qd.length) { const j = qd.shift(); try { await j(); } catch (e) { st.errors.push(e.message); } st.done++; prog(); } })); };
+    // Search Console part is cached on its own (12h), so a reload after a GA4 problem never refetches it
+    let gscC = null; try { const c = JSON.parse(localStorage.getItem('un-tr-gsc') || 'null'); if (c && c.k === k && Date.now() - c.at < 12 * 3600e3) gscC = c.gsc; } catch (e) { }
+    if (gscC) { Object.keys(gscC).forEach(id => { st.gsc[id] = gscC[id]; }); st.total -= jobsG.length; jobsG.length = 0; }
     await Promise.all([pool(jobsG, 4), pool(jobsA, 4)]);
+    if (!gscC && !st.errors.some(e => /Search Console/i.test(e))) { try { localStorage.setItem('un-tr-gsc', JSON.stringify({ k, at: Date.now(), gsc: st.gsc })); } catch (e) { } }
     // any GA4 report that failed makes the GA4 columns incomplete: show "unavailable", never a partial sum or 0
     st.gaErr = st.errors.find(e => /GA4|Analytics|quota|rate-limit/i.test(e)) || '';
     if (st.gaErr) st.gaOk = false;
