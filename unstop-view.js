@@ -2988,7 +2988,7 @@
     st.gaOk = !!(pid && tok);
     st.total = jobsG.length + jobsA.length;
     const pool = async (jobs, n) => { const qd = jobs.slice(); await Promise.all(Array.from({ length: n }, async () => { while (qd.length) { const j = qd.shift(); try { await j(); } catch (e) { st.errors.push(e.message); } st.done++; prog(); } })); };
-    await Promise.all([pool(jobsG, 8), pool(jobsA, 4)]);
+    await Promise.all([pool(jobsG, 4), pool(jobsA, 4)]);
     // any GA4 report that failed makes the GA4 columns incomplete: show "unavailable", never a partial sum or 0
     st.gaErr = st.errors.find(e => /GA4|Analytics|quota|rate-limit/i.test(e)) || '';
     if (st.gaErr) st.gaOk = false;

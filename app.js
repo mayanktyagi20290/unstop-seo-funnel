@@ -220,7 +220,16 @@
     }
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) throw new Error('Your Google session expired. Go back and connect again.');
-    if (res.status === 403) throw new Error('This Google account cannot read that property. Ask an owner to add you in Search Console › Settings › Users.');
+    if (res.status === 403) {
+      // Search Console also answers 403 when too many requests arrive at once or a quota is used up; only a
+      // real permission error should say "ask an owner to add you".
+      const why = JSON.stringify(data.error || {});
+      if (/rateLimit|quotaExceeded|userRateLimit|dailyLimit|too many|quota/i.test(why)) {
+        if (attempt < 3) { const wait = (2 ** attempt) * 1500 + Math.round(Math.random() * 500); progress(`Search Console is limiting requests, retrying in ${Math.round(wait / 1000)} s…`); await sleep(wait); return api(path, body, attempt + 1); }
+        throw new Error('Search Console is limiting requests right now (too many at once, or a usage quota). Wait a few minutes and press Reload.');
+      }
+      throw new Error('This Google account cannot read that property. Ask an owner to add you in Search Console › Settings › Users.');
+    }
     if (res.status === 429) throw new Error('Search Console\'s usage limit was reached. Wait a few minutes and try again.');
     if (!res.ok) throw new Error((data.error && data.error.message) || 'Search Console returned an error (' + res.status + ').');
     return data;
