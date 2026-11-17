@@ -578,13 +578,26 @@
       gaClient.requestAccessToken({ prompt: '' });
     });
   }
+  // GA4 allows about 10 requests at once per property and a small hourly token budget. Every loader in the tool
+  // (trends, reference sheet, GA4 screens) shares ONE limiter of 4, and once the hourly quota is spent no more
+  // requests are sent until it resets (each rejected retry used to burn more of the budget).
+  let gaActive = 0, gaBlockedUntil = 0, gaBlockMsg = ''; const gaWaiting = [];
+  const gaAcquire = async () => { if (gaActive < 4) { gaActive++; return; } await new Promise(r => gaWaiting.push(r)); };
+  const gaRelease = () => { const nx = gaWaiting.shift(); if (nx) nx(); else gaActive--; };
   async function gaFetch(url, body) {
     const t = token(); if (!t) throw new Error('Connect GA4 first.');
+    if (gaBlockedUntil > Date.now()) throw new Error(gaBlockMsg);
+    await gaAcquire();
+    try { return await gaFetch1(url, body, t); } finally { gaRelease(); }
+  }
+  async function gaFetch1(url, body, t) {
     for (let attempt = 0; attempt < 5; attempt++) {
+      if (gaBlockedUntil > Date.now()) throw new Error(gaBlockMsg);
       const res = await fetch(url, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
       if (res.ok) return res.json();
       const j = await res.json().catch(() => ({}));
       const msg = (j.error && j.error.message) || res.statusText;
+      if (res.status === 429 && /quota|exhausted|tokens/i.test(msg)) { gaBlockMsg = 'GA4 is rate-limiting this property: the hourly quota is used up. GA4 numbers are unavailable until it resets (under an hour); nothing is shown as zero. ' + msg; gaBlockedUntil = Date.now() + 15 * 60e3; throw new Error(gaBlockMsg); }
       if ((res.status === 429 || res.status >= 500) && attempt < 4) { await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt) + Math.random() * 800)); continue; }
       if (res.status === 401) { gaToken = null; try { sessionStorage.removeItem('un:ga-tok'); } catch (e) { } throw new Error('Your GA4 session expired. Connect GA4 again.'); }
       if (res.status === 403 && /has not been used|disabled/i.test(msg)) throw new Error('The Google Analytics Data API (and Admin API, for the property list) must be enabled in the Google Cloud project that owns this app’s OAuth client. ' + msg);
@@ -2975,7 +2988,10 @@
     st.gaOk = !!(pid && tok);
     st.total = jobsG.length + jobsA.length;
     const pool = async (jobs, n) => { const qd = jobs.slice(); await Promise.all(Array.from({ length: n }, async () => { while (qd.length) { const j = qd.shift(); try { await j(); } catch (e) { st.errors.push(e.message); } st.done++; prog(); } })); };
-    await Promise.all([pool(jobsG, 8), pool(jobsA, 6)]);
+    await Promise.all([pool(jobsG, 8), pool(jobsA, 4)]);
+    // any GA4 report that failed makes the GA4 columns incomplete: show "unavailable", never a partial sum or 0
+    st.gaErr = st.errors.find(e => /GA4|Analytics|quota|rate-limit/i.test(e)) || '';
+    if (st.gaErr) st.gaOk = false;
     st.status = 'done'; st.at = Date.now();
     if (!st.errors.length) trSave(k, st);
     if (TR.get(k) === st) rerender();
@@ -3677,7 +3693,7 @@
     const shiftY = p => ({ start: gran === 'week' ? addD(p.start, -364) : (+p.start.slice(0, 4) - 1) + p.start.slice(4), end: gran === 'week' ? addD(p.end, -364) : (+p.end.slice(0, 4) - 1) + p.end.slice(4) });
     const yP = shiftY(cur), hasY = yP.start >= st.start;
     const M = ['clicks', 'nbClicks', 'impr', 'sessions', 'students', 'regs'];
-    const sumIds = (ids, p) => { const o = {}; M.forEach(m => { o[m] = ids.reduce((a, id) => a + (trSum(st, id, p, m) || 0), 0); }); o.brand = o.clicks - o.nbClicks; o.ctr = o.impr ? o.clicks / o.impr * 100 : null; o.cvr = o.sessions ? o.students / o.sessions * 100 : null; o.rr = o.sessions ? o.regs / o.sessions * 100 : null; return o; };
+    const sumIds = (ids, p) => { const o = {}; M.forEach(m => { o[m] = !st.gaOk && ['sessions', 'students', 'regs'].includes(m) ? null : ids.reduce((a, id) => a + (trSum(st, id, p, m) || 0), 0); }); o.brand = o.clicks - o.nbClicks; o.ctr = o.impr ? o.clicks / o.impr * 100 : null; o.cvr = o.sessions ? o.students / o.sessions * 100 : null; o.rr = o.sessions ? o.regs / o.sessions * 100 : null; return o; };
     const ga = st.gaOk;
     const rows = PT.map(([t, name]) => { const ids = list.filter(x => x.type === t).map(x => x.id); if (!ids.length) return null; const c = sumIds(ids, cur), p = sumIds(ids, prv), y = hasY ? sumIds(ids, yP) : null; return { t, name, ids, c, p, y }; }).filter(r => r && (r.c.clicks + r.c.sessions > 0));
     const T = { c: sumIds(list.map(x => x.id), cur), p: sumIds(list.map(x => x.id), prv), y: hasY ? sumIds(list.map(x => x.id), yP) : null };
@@ -3705,7 +3721,7 @@
     const best = [...rows].sort((a, b) => (b.c.regs - (base(b) || b.p).regs) - (a.c.regs - (base(a) || a.p).regs))[0];
     const lines = {
       head: [
-        `Organic search brought <b>${n(T.c.students)}</b> student signups and <b>${n(T.c.regs)}</b> opportunity registrations in ${esc(PL)} (${tx(pc(T.c.students, base(T).students))} and ${tx(pc(T.c.regs, base(T).regs))} vs ${cmpL}).`,
+        !ga ? `GA4 is unavailable right now${st.gaErr ? ' (' + esc(st.gaErr) + ')' : ''}, so student signups and registrations are not shown. They are not zero; reload when the GA4 quota resets.` : `Organic search brought <b>${n(T.c.students)}</b> student signups and <b>${n(T.c.regs)}</b> opportunity registrations in ${esc(PL)} (${tx(pc(T.c.students, base(T).students))} and ${tx(pc(T.c.regs, base(T).regs))} vs ${cmpL}).`,
         `Non-brand Google clicks were <b>${n(T.c.nbClicks)}</b> (${tx(pc(T.c.nbClicks, base(T).nbClicks))}); branded clicks ${n(T.c.brand)} (${tx(pc(T.c.brand, base(T).brand))}).`,
         best && best.c.regs - (base(best) || best.p).regs > 0 ? `Biggest gain by page type: <b>${esc(best.name)}</b>, ${n(best.c.regs)} registrations (+${n(best.c.regs - (base(best) || best.p).regs)} vs ${cmpL}) and ${n(best.c.students)} signups.` : ''
       ].filter(Boolean),
