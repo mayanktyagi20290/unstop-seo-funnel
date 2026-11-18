@@ -2164,7 +2164,7 @@
     if (!t) throw new Error('Sign in with Google first (Connect Search Console + GA4).');
     const get = async url => { const r = await fetch(url, { headers: { Authorization: 'Bearer ' + t } }); const j = await r.json().catch(() => ({})); if (!r.ok) { const msg = (j.error && j.error.message) || r.statusText; if (r.status === 403 && /scope|insufficient/i.test(msg)) throw new Error('This sign-in did not allow Google Sheets. Sign out, then Connect Search Console + GA4 again and keep the Google Sheets box ticked.'); if (r.status === 403 && /has not been used|disabled/i.test(msg)) throw new Error('The Google Sheets API is not enabled in the Google Cloud project yet.'); if (r.status === 403 || r.status === 404) throw new Error('This Google account cannot open the leads sheet. Ask the owner to share it (view access is enough).'); throw new Error(msg); } return j; };
     const meta = await get(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=properties.title,sheets.properties.title`);
-    const titles = (meta.sheets || []).map(s => s.properties.title);
+    const titles = (meta.sheets || []).map(s => s.properties.title).filter(t => !/^B2[EB] leads$/i.test(t)); // derived tabs would count every lead twice
     const vr = await get(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${titles.map(x => 'ranges=' + encodeURIComponent(`'${x.replace(/'/g, "''")}'`)).join('&')}`);
     const res = SL.salesModel((vr.valueRanges || []).map((v, i) => ({ name: titles[i], rows: v.values || [] })));
     if (!res.ok) throw new Error(res.error);
@@ -3123,8 +3123,28 @@
       const pend = seg.id === 'all' ? ['AI visibility (mentions and citations on the 30 core prompts)', 'Qualified leads and proposals (from sales/CRM)', 'Revenue'].map(x => `<tr><td>${esc(x)}</td><td></td><td colspan="${W.length + 5}" class="un-n">pending data source</td></tr>`).join('') : '';
       return `<section class="panel"><div class="panel-h"><h3>${esc(seg.name)}</h3></div><div style="overflow:auto"><table class="un-tbl"><thead><tr><th>Metric</th><th>Trend</th>${W.map(w => `<th class="r">${esc(w.label)}</th>`).join('')}<th class="r">vs prev</th><th>Dec target</th><th>Mar target</th><th>Status</th></tr></thead><tbody>${rows}${pend}</tbody></table></div></section>`;
     }).join('');
+    // Leads tabs (B2E, B2B) from the sales-form sheet: organic leads by email type, week by week, and by page
+    salesAuto(D);
+    const LP = fParams(), lt = LP.get('t') === 'b2b' ? 'b2b' : 'b2e', SS = SALES.get(D.site);
+    const inB2b = pth => /^\/employers\/(hire-|free-job-posting|ai-sourcing-agent\/jobs-internships-listings-jobboard)/.test(pth || '');
+    const lh = t => '#scorecard?t=' + t;
+    let leadsHtml = `<section class="panel"><div class="panel-h"><h3>Leads</h3><p>Organic sales-form leads from the leads sheet, split by email: official (company), campus, non-official (personal). The sheet is the single source for leads.</p></div><div class="un-tabs" style="margin:6px 0 10px">${[['b2e', 'B2E leads'], ['b2b', 'B2B leads']].map(([v, l]) => `<a class="${lt === v ? 'on' : ''}" href="${lh(v)}">${l}</a>`).join('')}</div>`;
+    if (!SS || !SS.res) leadsHtml += `<div class="note">${SS && SS.error ? `<span class="start-error">${esc(SS.error)}</span>` : 'Loading the leads sheet…'}</div>`;
+    else {
+      const mine = SS.res.leads.filter(l => l.organic && l.day && (lt === 'b2b' ? inB2b(l.path) : /^\/employers/.test(l.path || '') && !inB2b(l.path)));
+      const wk = w => mine.filter(l => l.day >= w.start && l.day <= w.end);
+      const cnt = (list, k) => k ? list.filter(l => l.kind === k).length : list.length;
+      const row = (lab, k) => `<tr><td>${lab}</td>${W.map((w, j) => `<td class="r${j === li ? ' b' : ''}">${cnt(wk(w), k)}</td>`).join('')}</tr>`;
+      const lastW = wk(W[li]), prevW = wk(W[li - 1]);
+      const share = (l) => l.length ? Math.round(cnt(l, 'official') / l.length * 100) + '%' : '—';
+      const pages = new Map(); mine.filter(l => l.day >= W[0].start).forEach(l => { const o = pages.get(l.path) || { n: 0, off: 0 }; o.n++; if (l.kind === 'official') o.off++; pages.set(l.path, o); });
+      const top = [...pages.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 8);
+      const tracks = lt === 'b2b' ? ['Google clicks and impressions on hire-by-role, free-job-posting and job-board pages', 'Google and AI sessions to those pages', 'Leads on official email, and how many become qualified or proposals', 'Leads by page type: hire-by-role, free-job-posting, job board'] : ['Google clicks and impressions on the employer home page and product pages', 'Google and AI sessions to those pages', 'Leads on official email, and how many become qualified or proposals', 'Leads by product page: home, contact-us, hackathons, ATS, AI interview, assessments'];
+      leadsHtml += `<div style="overflow:auto"><table class="un-tbl"><thead><tr><th></th>${W.map(w => `<th class="r">${esc(w.label)}</th>`).join('')}</tr></thead><tbody>${row('Organic leads', '')}${row('Official (company) email', 'official')}${row('Campus email', 'campus')}${row('Non-official (personal) email', 'personal')}</tbody></table></div><p class="un-n" style="margin:8px 0">Last week: ${lastW.length} leads, ${share(lastW)} official (week before: ${prevW.length}, ${share(prevW)}). Leads data runs to ${esc(SS.res.max || '')}; sheet read ${new Date(SS.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}.</p>${top.length ? `<table class="un-tbl"><thead><tr><th>Top pages, last 8 weeks</th><th class="r">Leads</th><th class="r">Official</th></tr></thead><tbody>${top.map(([pth, o]) => `<tr><td><code>${esc(pth)}</code></td><td class="r">${o.n}</td><td class="r">${o.off}</td></tr>`).join('')}</tbody></table>` : ''}<h4 style="margin:12px 0 4px">What this tab tracks</h4><ul>${tracks.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    }
+    leadsHtml += '</section>';
     const warn = st.errors.length ? `<div class="note"><span class="start-error">${esc(st.gaErr || st.errors[0])}</span></div>` : '';
-    return { html: intro + warn + sections + `<div class="note">Week label = Monday. Registrations are the sum of daily unique users, so they run higher than unique users per week. Non-brand = queries without the brand term (visible queries only). <button class="btn-quiet sm" type="button" id="un-sc-reload">Reload</button></div>`, mount: root => {
+    return { html: intro + warn + sections + leadsHtml + `<div class="note">Week label = Monday. Registrations are the sum of daily unique users, so they run higher than unique users per week. Non-brand = queries without the brand term (visible queries only). <button class="btn-quiet sm" type="button" id="un-sc-reload">Reload</button></div>`, mount: root => {
       (root || document).querySelectorAll('.un-sc-t').forEach(i => i.addEventListener('change', () => { const t = scTargets(); if (i.value === '') delete t[i.dataset.k]; else t[i.dataset.k] = i.value; try { localStorage.setItem(SC_T, JSON.stringify(t)); } catch (e) { } rerender(); }));
       const rl = (root || document).querySelector('#un-sc-reload'); if (rl) rl.addEventListener('click', () => { SCARD.delete(k); rerender(); });
     } };
