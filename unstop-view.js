@@ -3036,6 +3036,99 @@
     for (let d = p.start; d <= p.end; d = addD(d, 1)) { const x = g.all[d]; if (x) { c += x.c; i += x.i; } const y = g.nb[d]; if (y) nb += y.c; ses += a.ses[d] || 0; stu += a.stu[d] || 0; reg += ar[d] || 0; }
     return metric === 'regs' ? (st.gaOk ? reg : null) : metric === 'clicks' ? c : metric === 'nbClicks' ? nb : metric === 'impr' ? i : metric === 'sessions' ? (st.gaOk ? ses : null) : metric === 'students' ? (st.gaOk ? stu : null) : metric === 'cvr' ? (st.gaOk && ses ? stu / ses * 100 : null) : null;
   }
+  // ── Scorecard: one page that follows the chain visibility → traffic → signups → leads, for Overall, B2B, B2E and B2C ──
+  // Segments by landing page. B2B = programmatic hire-* pages, free-job-posting-* city pages and the job board.
+  // B2E = the employer home page and every other /employers/ page. B2C = everything outside /employers/.
+  const SCARD = new Map(), SC_T = 'un:sc-targets';
+  const SC_EMP = '^https?://[^/]+/employers(/|\\?|$)', SC_B2B = '^https?://[^/]+/employers/(hire-|free-job-posting|ai-sourcing-agent/jobs-internships-listings-jobboard)';
+  const SC_MET = { clicks: 'Google clicks', nb: 'Non-brand Google clicks', impr: 'Google impressions', ses: 'Organic sessions (GA4)', ai: 'AI sessions (GA4)', stu: 'Student signups (events)', reg: 'Registrations (daily users)', lead: 'Organic sales-form leads' };
+  const SC_SEGS = [
+    { id: 'all', name: 'Overall', rx: null, ex: null, m: ['clicks', 'nb', 'impr', 'ses', 'ai', 'stu', 'reg', 'lead'] },
+    { id: 'b2b', name: 'B2B: job-posting pages (hire-by-role, free job posting, job board)', rx: SC_B2B, ex: null, m: ['clicks', 'nb', 'impr', 'ses', 'ai', 'lead'] },
+    { id: 'b2e', name: 'B2E: employer home and product pages', rx: SC_EMP, ex: SC_B2B, m: ['clicks', 'nb', 'impr', 'ses', 'ai', 'lead'] },
+    { id: 'b2c', name: 'B2C: students (all pages outside /employers/)', rx: null, ex: SC_EMP, m: ['clicks', 'nb', 'impr', 'ses', 'ai', 'stu', 'reg'] }
+  ];
+  const scTargets = () => { try { return JSON.parse(localStorage.getItem(SC_T) || '{}'); } catch (e) { return {}; } };
+  function scWeeks(end) {
+    const d = new Date(end + 'T00:00:00Z'), last = d.getUTCDay() === 0 ? end : addD(monday(end), -1), out = [];
+    for (let i = 7; i >= 0; i--) { const e = addD(last, -7 * i), st = addD(e, -6); out.push({ start: st, end: e, label: new Date(st + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) }); }
+    return out;
+  }
+  async function loadScore(D, A) {
+    const k = trKey(D), src = window.CW_SOURCE, s = settings(D.site), weeks = scWeeks(D.end);
+    const start = weeks[0].start, end = weeks[weeks.length - 1].end;
+    const st = { status: 'loading', weeks, seg: {}, done: 0, total: 0, errors: [], gaOk: false, at: null };
+    SCARD.set(k, st); rerender();
+    const pid = String(s.ga4Property || CFG.ga4PropertyId || '').replace(/\D/g, ''), tok = token();
+    const blocked = gaBlockedUntil > Date.now(), useGa = !!(pid && tok) && !blocked;
+    st.gaOk = useGa; if (pid && tok && blocked) st.errors.push(gaBlockMsg);
+    const stuEv = (s.events && s.events.studentSignup) || [], regEv = (s.events && s.events.opportunityAction) || [];
+    const aiRx = (s.aiSources || []).map(x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') || 'chatgpt';
+    const noOpp = { filter: { fieldName: 'customEvent:opportunity_id', stringFilter: { matchType: 'EXACT', value: '(not set)' } } };
+    const hasOpp = { notExpression: noOpp };
+    const day = r => String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+    const jobs = [];
+    SC_SEGS.forEach(seg => {
+      const o = st.seg[seg.id] = {}; seg.m.forEach(m => { o[m] = {}; });
+      const pf = (seg.rx ? [{ dimension: 'page', operator: 'includingRegex', expression: seg.rx }] : []).concat(seg.ex ? [{ dimension: 'page', operator: 'excludingRegex', expression: seg.ex }] : []);
+      const q = extra => src.gsc.query({ startDate: start, endDate: end, type: 'web', dimensions: ['date'], rowLimit: 1000, dimensionFilterGroups: pf.length || extra.length ? [{ groupType: 'and', filters: pf.concat(extra) }] : undefined });
+      jobs.push(() => q([]).then(d => (d.rows || []).forEach(r => { o.clicks[r.keys[0]] = r.clicks; o.impr[r.keys[0]] = r.impressions; })));
+      if (A.brandRx) jobs.push(() => q([{ dimension: 'query', operator: 'excludingRegex', expression: A.brandRx }]).then(d => (d.rows || []).forEach(r => { o.nb[r.keys[0]] = r.clicks; })));
+      if (!useGa) return;
+      const lp = [seg.rx ? { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(seg.rx) } } } : null, seg.ex ? { notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(seg.ex) } } } } : null].filter(Boolean);
+      const rep = (metric, filters, into) => runReport(pid, { dateRanges: [{ startDate: start, endDate: end }], dimensions: [{ name: 'date' }], metrics: [{ name: metric }], dimensionFilter: { andGroup: { expressions: filters } }, limit: 1000 }).then(r => U.gaRows(r).forEach(x => { into[day(x)] = x[metric]; }));
+      const org = [U.GA.organicFilter].concat(lp);
+      jobs.push(() => rep('sessions', org, o.ses));
+      jobs.push(() => rep('sessions', [U.GA.regex('sessionSource', aiRx)].concat(lp), o.ai));
+      if (o.stu && stuEv.length) jobs.push(() => rep('eventCount', org.concat([U.GA.inList('eventName', stuEv)]), o.stu));
+      if (o.reg && regEv.length) jobs.push(() => rep('totalUsers', org.concat([U.GA.inList('eventName', regEv), hasOpp]), o.reg));
+      if (o.lead) jobs.push(() => rep('eventCount', org.concat([U.GA.inList('eventName', ['form_submit_success']), noOpp]), o.lead));
+    });
+    st.total = jobs.length;
+    const qd = jobs.slice();
+    await Promise.all(Array.from({ length: 4 }, async () => { while (qd.length) { const j = qd.shift(); try { await j(); } catch (e) { st.errors.push(e.message); } st.done++; const p = document.getElementById('un-sc-prog'); if (p) p.textContent = `Loading… ${st.done} of ${st.total} requests`; } }));
+    st.gaErr = st.errors.find(e => /GA4|Analytics|quota|rate-limit/i.test(e)) || '';
+    if (st.gaErr) st.gaOk = false;
+    st.status = 'done'; st.at = Date.now();
+    if (SCARD.get(k) === st) rerender();
+  }
+  function scSpark(v) {
+    const a = v.filter(x => x != null); if (a.length < 2) return '';
+    const mx = Math.max(...a), mn = Math.min(...a), w = 90, h = 24, r = mx - mn || 1;
+    const pts = v.map((x, i) => x == null ? null : [(i / (v.length - 1) * w).toFixed(1), (h - 2 - (x - mn) / r * (h - 4)).toFixed(1)]).filter(Boolean);
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.8" points="${pts.map(p => p.join(',')).join(' ')}"/><circle cx="${pts[pts.length - 1][0]}" cy="${pts[pts.length - 1][1]}" r="2.4" fill="currentColor"/></svg>`;
+  }
+  V.scorecard = (A, D) => {
+    demoFill(D);
+    const live = window.CW_SOURCE && window.CW_SOURCE.kind === 'api' && window.CW_SOURCE.gsc;
+    const intro = `<div class="panel-h"><h2>Weekly scorecard</h2><p>One page for the whole chain: Google visibility, traffic (Google and AI), signups, registrations and leads. Weeks run Monday to Sunday, definitions are fixed. Set targets in the last two columns (saved in this browser); status compares last week with the December target.</p></div>`;
+    const k = trKey(D), st = live ? SCARD.get(k) : null;
+    if (!live) return { html: intro + '<div class="note">Connect Search Console to load the scorecard.</div>' };
+    if (!st) { loadScore(D, A); return { html: intro + '<div class="note"><span id="un-sc-prog">Starting…</span></div>' }; }
+    if (st.status === 'loading') return { html: intro + `<div class="note"><span id="un-sc-prog">Loading… ${st.done} of ${st.total} requests</span></div>` };
+    const T = scTargets(), W = st.weeks, li = W.length - 1;
+    const wsum = (m, o, w) => { let t = 0, any = false; for (let d = w.start; d <= w.end; d = addD(d, 1)) { if (o[m][d] != null) { t += o[m][d]; any = true; } } return any ? t : null; };
+    const isGa = m => ['ses', 'ai', 'stu', 'reg', 'lead'].includes(m);
+    const fmt = v => v == null ? '<span class="un-n">—</span>' : fmtN(Math.round(v));
+    const sections = SC_SEGS.map(seg => {
+      const o = st.seg[seg.id];
+      const rows = seg.m.map(m => {
+        const vals = W.map(w => isGa(m) && !st.gaOk ? null : wsum(m, o, w));
+        const cur = vals[li], prev = vals[li - 1], ch = cur != null && prev ? (cur - prev) / prev * 100 : null;
+        const cls = ch == null || Math.abs(ch) < 2 ? '' : ch > 0 ? 'up' : 'down';
+        const key = seg.id + '|' + m, dec = T[key + '|dec'], mar = T[key + '|mar'];
+        const status = dec == null || dec === '' || cur == null ? '—' : cur >= +dec ? '<span class="up">on track</span>' : '<span class="down">below</span>';
+        return `<tr><td>${esc(SC_MET[m])}</td><td class="un-n">${scSpark(vals)}</td>${vals.map((v, j) => `<td class="r${j === li ? ' b' : ''}">${fmt(v)}</td>`).join('')}<td class="r"><span class="un-trc ${cls}">${ch == null ? '—' : (ch > 0 ? '+' : '') + ch.toFixed(1) + '%'}</span></td><td><input class="un-sc-t" data-k="${esc(key)}|dec" type="number" value="${dec == null ? '' : esc(dec)}" style="width:80px"></td><td><input class="un-sc-t" data-k="${esc(key)}|mar" type="number" value="${mar == null ? '' : esc(mar)}" style="width:80px"></td><td>${status}</td></tr>`;
+      }).join('');
+      const pend = seg.id === 'all' ? ['AI visibility (mentions and citations on the 30 core prompts)', 'Qualified leads and proposals (from sales/CRM)', 'Revenue'].map(x => `<tr><td>${esc(x)}</td><td></td><td colspan="${W.length + 5}" class="un-n">pending data source</td></tr>`).join('') : '';
+      return `<section class="panel"><div class="panel-h"><h3>${esc(seg.name)}</h3></div><div style="overflow:auto"><table class="un-tbl"><thead><tr><th>Metric</th><th>Trend</th>${W.map(w => `<th class="r">${esc(w.label)}</th>`).join('')}<th class="r">vs prev</th><th>Dec target</th><th>Mar target</th><th>Status</th></tr></thead><tbody>${rows}${pend}</tbody></table></div></section>`;
+    }).join('');
+    const warn = st.errors.length ? `<div class="note"><span class="start-error">${esc(st.gaErr || st.errors[0])}</span></div>` : '';
+    return { html: intro + warn + sections + `<div class="note">Week label = Monday. Registrations are the sum of daily unique users, so they run higher than unique users per week. Non-brand = queries without the brand term (visible queries only). <button class="btn-quiet sm" type="button" id="un-sc-reload">Reload</button></div>`, mount: root => {
+      (root || document).querySelectorAll('.un-sc-t').forEach(i => i.addEventListener('change', () => { const t = scTargets(); if (i.value === '') delete t[i.dataset.k]; else t[i.dataset.k] = i.value; try { localStorage.setItem(SC_T, JSON.stringify(t)); } catch (e) { } rerender(); }));
+      const rl = (root || document).querySelector('#un-sc-reload'); if (rl) rl.addEventListener('click', () => { SCARD.delete(k); rerender(); });
+    } };
+  };
   V.trends = (A, D) => {
     demoFill(D);
     delete TABLES['t-un-trp'];
