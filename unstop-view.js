@@ -3084,6 +3084,19 @@
       if (o.reg && regEv.length) jobs.push(() => rep('totalUsers', org.concat([U.GA.inList('eventName', regEv), hasOpp]), o.reg));
       if (o.lead) jobs.push(() => rep('eventCount', org.concat([U.GA.inList('eventName', ['form_submit_success']), noOpp]), o.lead));
     });
+    // URL-wise split for B2E and B2B: last full week against the week before
+    st.url = { b2e: new Map(), b2b: new Map() };
+    const wl = weeks[weeks.length - 1], wp = weeks[weeks.length - 2];
+    const urow = (id, path) => { const k = String(path || '').split('?')[0].toLowerCase().replace(/\/+$/, '') || '/'; let o = st.url[id].get(k); if (!o) { o = { clicks: 0, prev: 0, ses: 0, ai: 0 }; st.url[id].set(k, o); } return o; };
+    SC_SEGS.filter(x => x.id === 'b2e' || x.id === 'b2b').forEach(seg => {
+      const pf = [{ dimension: 'page', operator: 'includingRegex', expression: seg.rx }].concat(seg.ex ? [{ dimension: 'page', operator: 'excludingRegex', expression: seg.ex }] : []);
+      const gq = (w, key) => src.gsc.query({ startDate: w.start, endDate: w.end, type: 'web', dimensions: ['page'], rowLimit: 500, dimensionFilterGroups: [{ groupType: 'and', filters: pf }] }).then(d => (d.rows || []).forEach(r => { urow(seg.id, U.pathOnly(r.keys[0]))[key] += r.clicks; }));
+      jobs.push(() => gq(wl, 'clicks')); jobs.push(() => gq(wp, 'prev'));
+      if (!useGa) return;
+      const lp = [{ filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(seg.rx) } } }, seg.ex ? { notExpression: { filter: { fieldName: 'landingPage', stringFilter: { matchType: 'PARTIAL_REGEXP', value: gaPathRx(seg.ex) } } } } : null].filter(Boolean);
+      const gl = (key, filters) => runReport(pid, { dateRanges: [{ startDate: wl.start, endDate: wl.end }], dimensions: [{ name: 'landingPage' }], metrics: [{ name: 'sessions' }], dimensionFilter: { andGroup: { expressions: filters } }, limit: 500 }).then(r => U.gaRows(r).forEach(x => { urow(seg.id, x.landingPage)[key] += x.sessions; }));
+      jobs.push(() => gl('ses', [U.GA.organicFilter].concat(lp))); jobs.push(() => gl('ai', [U.GA.regex('sessionSource', aiRx)].concat(lp)));
+    });
     st.total = jobs.length;
     const qd = jobs.slice();
     await Promise.all(Array.from({ length: 4 }, async () => { while (qd.length) { const j = qd.shift(); try { await j(); } catch (e) { st.errors.push(e.message); } st.done++; const p = document.getElementById('un-sc-prog'); if (p) p.textContent = `Loading… ${st.done} of ${st.total} requests`; } }));
@@ -3097,6 +3110,19 @@
     const mx = Math.max(...a), mn = Math.min(...a), w = 90, h = 24, r = mx - mn || 1;
     const pts = v.map((x, i) => x == null ? null : [(i / (v.length - 1) * w).toFixed(1), (h - 2 - (x - mn) / r * (h - 4)).toFixed(1)]).filter(Boolean);
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.8" points="${pts.map(p => p.join(',')).join(' ')}"/><circle cx="${pts[pts.length - 1][0]}" cy="${pts[pts.length - 1][1]}" r="2.4" fill="currentColor"/></svg>`;
+  }
+  // week-by-week column chart (stacked when several series), plain SVG
+  function scBars(title, labels, series, names, colors) {
+    const n = labels.length, bw = 52, gap = 14, h = 120, top = 20, w = n * (bw + gap) + gap;
+    const tot = labels.map((_, i) => series.reduce((a, x) => a + (x[i] || 0), 0)), mx = Math.max(1, ...tot);
+    let g = '';
+    labels.forEach((lab, i) => {
+      let y = top + h; const x = gap + i * (bw + gap);
+      series.forEach((sr, k) => { const v = sr[i] || 0, hh = v / mx * h; y -= hh; if (hh > 0) g += `<rect x="${x}" y="${y.toFixed(1)}" width="${bw}" height="${hh.toFixed(1)}" fill="${colors[k]}" rx="2"><title>${esc(names[k])}: ${fmtN(Math.round(v))}</title></rect>`; });
+      g += `<text x="${x + bw / 2}" y="${(y - 5).toFixed(1)}" text-anchor="middle" font-size="11" fill="currentColor">${fmtN(Math.round(tot[i]))}</text><text x="${x + bw / 2}" y="${top + h + 15}" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">${esc(lab)}</text>`;
+    });
+    const leg = series.length > 1 ? `<div class="un-n" style="font-size:12px">${names.map((x, k) => `<span style="margin-right:12px"><span style="display:inline-block;width:10px;height:10px;background:${colors[k]};border-radius:2px"></span> ${esc(x)}</span>`).join('')}</div>` : '';
+    return `<div style="flex:1 1 380px;min-width:340px"><h4 style="margin:6px 0">${esc(title)}</h4>${leg}<svg viewBox="0 0 ${w} ${top + h + 22}" width="100%" role="img" aria-label="${esc(title)}">${g}</svg></div>`;
   }
   V.scorecard = (A, D) => {
     demoFill(D);
@@ -3125,7 +3151,7 @@
     }).join('');
     // Leads tabs (B2E, B2B) from the sales-form sheet: organic leads by email type, week by week, and by page
     salesAuto(D);
-    const LP = fParams(), lt = ['b2b', 'other'].includes(LP.get('t')) ? LP.get('t') : 'b2e', SS = SALES.get(D.site);
+    const LP = fParams(), sv = ['b2e', 'b2b'].includes(LP.get('s')) ? LP.get('s') : '', lt = ['b2b', 'other'].includes(LP.get('t')) ? LP.get('t') : (sv || 'b2e'), SS = SALES.get(D.site);
     const inB2b = pth => /^\/employers\/(hire-|free-job-posting|ai-sourcing-agent\/jobs-internships-listings-jobboard)/.test(pth || '');
     const lh = t => '#scorecard?t=' + t;
     let leadsHtml = `<section class="panel"><div class="panel-h"><h3>Leads</h3><p>Organic sales-form leads from the leads sheet, split by email: official (company), campus, non-official (personal). The sheet is the single source for leads.</p></div><div class="un-tabs" style="margin:6px 0 10px">${[['b2e', 'B2E'], ['b2b', 'B2B'], ['other', 'Other pages']].map(([v, l]) => `<a class="${lt === v ? 'on' : ''}" href="${lh(v)}">${l}</a>`).join('')}</div>`;
@@ -3145,8 +3171,21 @@
       leadsHtml += `<div style="overflow:auto"><table class="un-tbl"><thead><tr><th></th>${W.map(w => `<th class="r">${esc(w.label)}</th>`).join('')}</tr></thead><tbody>${trafficRows}${row('Organic leads', '')}${row('Official (company) email', 'official')}${row('Campus email', 'campus')}${row('Non-official (personal) email', 'personal')}</tbody></table></div><p class="un-n" style="margin:8px 0">Last week: ${lastW.length} leads, ${share(lastW)} official (week before: ${prevW.length}, ${share(prevW)}). Leads data runs to ${esc(SS.res.max || '')}; sheet read ${new Date(SS.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}.</p>${top.length ? `<table class="un-tbl"><thead><tr><th>URL split, last 8 weeks</th><th class="r">Leads</th><th class="r">Official</th><th class="r">Campus</th><th class="r">Personal</th></tr></thead><tbody>${top.map(([pth, o]) => `<tr><td><code>${esc(pth || "(no page)")}</code></td><td class="r">${o.n}</td><td class="r">${o.off}</td><td class="r">${o.cam}</td><td class="r">${o.per}</td></tr>`).join('')}</tbody></table>` : ''}<h4 style="margin:12px 0 4px">What this tab tracks</h4><ul>${tracks.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
     }
     leadsHtml += '</section>';
+    const segTabs = `<div class="un-tabs" style="margin:6px 0 12px">${[['', 'Overview'], ['b2e', 'B2E'], ['b2b', 'B2B']].map(([v, l]) => `<a class="${sv === v ? 'on' : ''}" href="#scorecard${v ? '?s=' + v : ''}">${l}</a>`).join('')}</div>`;
+    let segHtml = '';
+    if (sv) {
+      const sg = st.seg[sv], wl = W.map(w => w.label), ws = (m) => W.map(w => isGa(m) && !st.gaOk ? 0 : (wsum(m, sg, w) || 0));
+      const ml = SS && SS.res ? SS.res.leads.filter(l => l.organic && l.day && (sv === 'b2b' ? inB2b(l.path) : /^\/employers/.test(l.path || '') && !inB2b(l.path))) : [];
+      const lk = k => W.map(w => ml.filter(l => l.day >= w.start && l.day <= w.end && l.kind === k).length);
+      const nm = sv === 'b2b' ? 'B2B job-posting pages' : 'B2E employer pages';
+      const U2 = st.url && st.url[sv] ? [...st.url[sv].entries()].sort((a, b) => b[1].clicks - a[1].clicks).slice(0, 30) : [];
+      const lc = new Map(); ml.filter(l => l.day >= W[li].start && l.day <= W[li].end).forEach(l => { lc.set(l.path, (lc.get(l.path) || 0) + 1); });
+      const chg = (a, b) => b ? ((a - b) / b * 100) : null, chs = c => c == null ? '—' : `<span class="un-trc ${Math.abs(c) < 2 ? '' : c > 0 ? 'up' : 'down'}">${c > 0 ? '+' : ''}${c.toFixed(1)}%</span>`;
+      segHtml = `<section class="panel"><div class="panel-h"><h3>${esc(nm)}: week by week</h3><p>Weeks run Monday to Sunday. Bars show the total, hover for the split.</p></div><div style="display:flex;flex-wrap:wrap;gap:18px">${scBars('Google clicks', wl, [ws('clicks')], ['Google clicks'], ['#2563eb'])}${scBars('Organic sessions (GA4)', wl, [ws('ses')], ['Organic sessions'], ['#0d9488'])}${scBars('AI traffic: sessions from ChatGPT, Gemini, Claude, Perplexity (GA4)', wl, [ws('ai')], ['AI sessions'], ['#7c3aed'])}${scBars('Leads by email type (organic)', wl, [lk('official'), lk('campus'), lk('personal')], ['Official (company)', 'Campus', 'Non-official (personal)'], ['#16a34a', '#f59e0b', '#9ca3af'])}</div></section>`
+        + `<section class="panel"><div class="panel-h"><h3>URL-wise, last week (${esc(W[li].label)}) against the week before</h3></div><div style="overflow:auto"><table class="un-tbl"><thead><tr><th>Page</th><th class="r">Google clicks</th><th class="r">Before</th><th class="r">Change</th><th class="r">Organic sessions</th><th class="r">AI sessions</th><th class="r">Leads</th></tr></thead><tbody>${U2.map(([pth, o]) => `<tr><td><code>${esc(pth)}</code></td><td class="r">${fmtN(o.clicks)}</td><td class="r">${fmtN(o.prev)}</td><td class="r">${chs(chg(o.clicks, o.prev))}</td><td class="r">${st.gaOk ? fmtN(o.ses) : '—'}</td><td class="r">${st.gaOk ? fmtN(o.ai) : '—'}</td><td class="r">${lc.get(pth) || 0}</td></tr>`).join('') || '<tr><td colspan="7" class="un-n">No page data yet.</td></tr>'}</tbody></table></div></section>`;
+    }
     const warn = st.errors.length ? `<div class="note"><span class="start-error">${esc(st.gaErr || st.errors[0])}</span></div>` : '';
-    return { html: intro + warn + sections + leadsHtml + `<div class="note">Week label = Monday. Registrations are the sum of daily unique users, so they run higher than unique users per week. Non-brand = queries without the brand term (visible queries only). <button class="btn-quiet sm" type="button" id="un-sc-reload">Reload</button></div>`, mount: root => {
+    return { html: intro + segTabs + warn + (sv ? segHtml + leadsHtml : sections + leadsHtml) + `<div class="note">Week label = Monday. Registrations are the sum of daily unique users, so they run higher than unique users per week. Non-brand = queries without the brand term (visible queries only). <button class="btn-quiet sm" type="button" id="un-sc-reload">Reload</button></div>`, mount: root => {
       (root || document).querySelectorAll('.un-sc-t').forEach(i => i.addEventListener('change', () => { const t = scTargets(); if (i.value === '') delete t[i.dataset.k]; else t[i.dataset.k] = i.value; try { localStorage.setItem(SC_T, JSON.stringify(t)); } catch (e) { } rerender(); }));
       const rl = (root || document).querySelector('#un-sc-reload'); if (rl) rl.addEventListener('click', () => { SCARD.delete(k); rerender(); });
     } };
