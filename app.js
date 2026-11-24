@@ -694,7 +694,7 @@
     $('top-scope').title = canSwitch ? 'Analyse another folder or page' : 'Set by the Page filter in the export';
     counts();
     show('app');
-    if (!knownRoute(location.hash.slice(1))) history.replaceState(null, '', '#scorecard');
+    if (!knownRoute(location.hash.slice(1))) history.replaceState(null, '', '#weekly');
     route();
   }
   function fmtDate(s) { const d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); }
@@ -736,7 +736,7 @@
   }
   function route() {
     if (!A) return;
-    let raw = location.hash.slice(1) || 'scorecard';
+    let raw = location.hash.slice(1) || 'weekly';
     // the old regex tool was replaced by Smart filters; keep old links working
     if (raw.split('?')[0] === 'regex') { history.replaceState(null, '', '#filters'); raw = 'filters'; }
     const base = raw.split('?')[0];
