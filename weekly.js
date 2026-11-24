@@ -46,25 +46,44 @@
   const pct1 = v => v == null || !isFinite(v) ? '—' : v.toFixed(1) + '%';
 
   let P = null;
-  const mv = (a, b) => { const m = new Map(); a.forEach(r => m.set(r.keys[0], { k: r.keys[0], c1: r.clicks, i1: r.impressions, c0: 0 })); b.forEach(r => { const o = m.get(r.keys[0]) || { k: r.keys[0], c1: 0, i1: 0 }; o.c0 = r.clicks; m.set(r.keys[0], o); }); return [...m.values()].map(o => ({ ...o, d: o.c1 - (o.c0 || 0) })); };
-  const tbl = (t, list, lab) => `<h3 style="margin:12px 0 4px">${t}</h3><table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left">${lab}</th><th style="text-align:right">Latest</th><th style="text-align:right">Previous</th><th style="text-align:right">Change</th></tr></thead><tbody>${list.map(o => `<tr><td style="word-break:break-all">${esc(o.k)}</td><td style="text-align:right">${n0(o.c1)}</td><td style="text-align:right">${n0(o.c0)}</td><td style="text-align:right">${o.d > 0 ? '+' : ''}${n0(o.d)}</td></tr>`).join('') || '<tr><td colspan="4">No data</td></tr>'}</tbody></table>`;
-  const movers = (all, dimLabel, unit) => { const s = all.slice().sort((x, y) => x.d - y.d); return tbl(`Biggest drops (${unit})`, s.filter(o => o.d < 0).slice(0, 15), dimLabel) + tbl(`Biggest gains (${unit})`, s.filter(o => o.d > 0).reverse().slice(0, 15), dimLabel); };
+  const mv = (a, b) => { const m = new Map(); a.forEach(r => m.set(r.keys[0], { k: r.keys[0], c1: r.clicks, i1: r.impressions, p1: r.position, c0: 0, i0: 0 })); b.forEach(r => { const o = m.get(r.keys[0]) || { k: r.keys[0], c1: 0, i1: 0, p1: null }; o.c0 = r.clicks; o.i0 = r.impressions; o.p0 = r.position; m.set(r.keys[0], o); }); return [...m.values()].map(o => ({ ...o, c0: o.c0 || 0, d: o.c1 - (o.c0 || 0), di: o.i1 - (o.i0 || 0) })); };
+  const folder = u => { try { const p = new URL(u, 'https://unstop.com').pathname.split('/').filter(Boolean); return p.length ? '/' + p.slice(0, p[0] === 'employers' && p[1] ? 2 : 1).join('/') + '/' : '/'; } catch (e) { return u; } };
+  const rollUp = list => { const m = new Map(); list.forEach(o => { const k = folder(o.k), x = m.get(k) || { k, c1: 0, c0: 0, i1: 0, i0: 0 }; ['c1', 'c0', 'i1', 'i0'].forEach(f => { x[f] += o[f] || 0; }); m.set(k, x); }); return [...m.values()].map(o => ({ ...o, d: o.c1 - o.c0, di: o.i1 - o.i0 })); };
+  let DR = null;
+  function renderDrill() {
+    const body = document.getElementById('wk-db'), t = DR.tabs[DR.tab], gsc_ = DR.gsc, q = DR.q.toLowerCase();
+    let list = t.list.filter(o => !q || o.k.toLowerCase().includes(q));
+    const sorters = { d: (x, y) => x.d - y.d, g: (x, y) => y.d - x.d, c: (x, y) => y.c1 - x.c1, i: (x, y) => y.i1 - x.i1 };
+    list = list.slice().sort(sorters[DR.sort] || sorters.d);
+    const st = o => !o.c0 && o.c1 ? '<b style="color:#0a7d3b">new</b>' : o.c0 && !o.c1 ? '<b style="color:#c0392b">lost</b>' : '';
+    const lost = t.list.filter(o => o.d < 0).reduce((a, o) => a + o.d, 0), gain = t.list.filter(o => o.d > 0).reduce((a, o) => a + o.d, 0);
+    body.innerHTML = `<div class="un-tabs" style="margin-bottom:8px">${Object.keys(DR.tabs).map(k => `<a data-t="${k}" class="${k === DR.tab ? 'on' : ''}" href="#weekly">${DR.tabs[k].label}</a>`).join('')}</div>
+      <p class="hint">${DR.unit}: gains <b style="color:#0a7d3b">+${n0(gain)}</b> · drops <b style="color:#c0392b">${n0(lost)}</b> · net <b>${n0(gain + lost)}</b></p>
+      <div style="display:flex;gap:8px;margin:6px 0"><input id="wk-q" placeholder="Search ${t.label.toLowerCase()}" value="${esc(DR.q)}" style="flex:1"><select id="wk-s"><option value="d"${DR.sort === 'd' ? ' selected' : ''}>Biggest drops</option><option value="g"${DR.sort === 'g' ? ' selected' : ''}>Biggest gains</option><option value="c"${DR.sort === 'c' ? ' selected' : ''}>Most ${DR.unit} now</option>${gsc_ ? `<option value="i"${DR.sort === 'i' ? ' selected' : ''}>Most impressions</option>` : ''}</select><button class="btn" id="wk-dc" type="button">Copy list</button></div>
+      <table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left">${t.label.replace(/s$/, '')}</th><th style="text-align:right">Latest</th><th style="text-align:right">Previous</th><th style="text-align:right">Change</th><th style="text-align:right">%</th>${gsc_ ? '<th style="text-align:right">Impr. chg</th><th style="text-align:right">Position</th>' : ''}<th></th></tr></thead><tbody>${list.slice(0, DR.n).map(o => `<tr><td style="word-break:break-all">${esc(o.k)}</td><td style="text-align:right">${n0(o.c1)}</td><td style="text-align:right">${n0(o.c0)}</td><td style="text-align:right">${o.d > 0 ? '+' : ''}${n0(o.d)}</td><td style="text-align:right">${chip(pc(o.c1, o.c0))}</td>${gsc_ ? `<td style="text-align:right">${o.di > 0 ? '+' : ''}${n0(o.di)}</td><td style="text-align:right">${o.p1 != null ? o.p1.toFixed(1) : '—'}${o.p0 != null && o.p1 != null ? ` <small style="color:#888">(${o.p0.toFixed(1)})</small>` : ''}</td>` : ''}<td>${st(o)}</td></tr>`).join('') || '<tr><td colspan="8">No data</td></tr>'}</tbody></table>
+      ${list.length > DR.n ? `<p><button class="btn" id="wk-more" type="button">Show more (${list.length - DR.n} left)</button></p>` : ''}`;
+    body.querySelectorAll('[data-t]').forEach(a => { a.onclick = e => { e.preventDefault(); DR.tab = a.dataset.t; DR.n = 25; renderDrill(); }; });
+    const qi = document.getElementById('wk-q'); qi.oninput = () => { DR.q = qi.value; DR.n = 25; const p = qi.selectionStart; renderDrill(); const n = document.getElementById('wk-q'); n.focus(); n.setSelectionRange(p, p); };
+    document.getElementById('wk-s').onchange = e => { DR.sort = e.target.value; renderDrill(); };
+    const mo = document.getElementById('wk-more'); if (mo) mo.onclick = () => { DR.n += 50; renderDrill(); };
+    document.getElementById('wk-dc').onclick = async () => { const tsv = [[t.label, 'Latest', 'Previous', 'Change'].join('\t')].concat(list.map(o => [o.k, o.c1, o.c0, o.d].join('\t'))).join('\n'); try { await navigator.clipboard.writeText(tsv); document.getElementById('wk-dc').textContent = 'Copied'; } catch (e) { } };
+  }
   async function gaDim(s, e, dim, filt) { const j = await call(`https://analyticsdata.googleapis.com/v1beta/properties/${GA}:runReport`, { dateRanges: [{ startDate: s, endDate: e }], dimensions: [{ name: dim }], metrics: [{ name: 'sessions' }], dimensionFilter: andG(filt), limit: 1000, orderBys: [{ metric: { metricName: 'sessions' }, desc: true }] }); return (j.rows || []).map(r => ({ keys: [r.dimensionValues[0].value], clicks: +r.metricValues[0].value, impressions: 0 })); }
   async function drill(key, label) {
-    const box = document.getElementById('wk-detail'), body = document.getElementById('wk-db'); box.hidden = false; document.getElementById('wk-dt').textContent = label + ': what moved'; body.textContent = 'Loading…'; box.scrollIntoView({ behavior: 'smooth' });
+    const box = document.getElementById('wk-detail'), body = document.getElementById('wk-db'); box.hidden = false; document.getElementById('wk-dt').textContent = label + ': what moved (latest vs previous)'; body.textContent = 'Loading…'; box.scrollIntoView({ behavior: 'smooth' });
     try {
-      let h = '';
       if (key.startsWith('ga:')) {
         const fl = key === 'ga:org' ? [ORG] : key === 'ga:ai' ? [['sessionSource', 'PARTIAL_REGEXP', AIRE]] : [['sessionSource', 'PARTIAL_REGEXP', AIRE], ['landingPagePlusQueryString', 'CONTAINS', '/employers']];
         const [p1, p0, s1, s0] = await Promise.all([gaDim(P.mon, P.ce, 'landingPagePlusQueryString', fl), gaDim(P.ps, P.pe, 'landingPagePlusQueryString', fl), gaDim(P.mon, P.ce, 'sessionSource', fl), gaDim(P.ps, P.pe, 'sessionSource', fl)]);
-        h = movers(mv(p1, p0), 'Landing page', 'sessions') + movers(mv(s1, s0), 'Source', 'sessions');
+        const pages = mv(p1, p0);
+        DR = { gsc: false, unit: 'sessions', tab: 'pages', sort: 'd', q: '', n: 25, tabs: { pages: { label: 'Landing pages', list: pages }, folders: { label: 'Sections', list: rollUp(pages) }, sources: { label: 'Sources', list: mv(s1, s0) } } };
       } else {
-        const fl = SEG[key], q = (s, e, d) => gsc(s, e, fl, [d]).then(r => r.rows || []);
-        const big = (s, e, d) => call(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(SITE)}/searchAnalytics/query`, { startDate: s, endDate: e, dimensions: [d], rowLimit: 5000, dimensionFilterGroups: fl.length ? [{ groupType: 'and', filters: fl }] : [] }).then(r => r.rows || []);
-        const [a1, a0, b1, b0] = await Promise.all([big(P.mon, P.ce, 'page'), big(P.ps, P.pe, 'page'), big(P.mon, P.ce, 'query'), big(P.ps, P.pe, 'query')]);
-        h = movers(mv(a1, a0), 'Page', 'clicks') + movers(mv(b1, b0), 'Query', 'clicks');
+        const fl = SEG[key], big = (s, e, d) => call(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(SITE)}/searchAnalytics/query`, { startDate: s, endDate: e, dimensions: [d], rowLimit: 25000, dimensionFilterGroups: fl.length ? [{ groupType: 'and', filters: fl }] : [] }).then(r => r.rows || []);
+        const [a1, a0, b1, b0, d1, d0] = await Promise.all([big(P.mon, P.ce, 'page'), big(P.ps, P.pe, 'page'), big(P.mon, P.ce, 'query'), big(P.ps, P.pe, 'query'), big(P.mon, P.ce, 'device'), big(P.ps, P.pe, 'device')]);
+        const pages = mv(a1, a0);
+        DR = { gsc: true, unit: 'clicks', tab: 'pages', sort: 'd', q: '', n: 25, tabs: { pages: { label: 'Landing pages', list: pages }, queries: { label: 'Queries', list: mv(b1, b0) }, folders: { label: 'Sections', list: rollUp(pages) }, devices: { label: 'Devices', list: mv(d1, d0) } } };
       }
-      body.innerHTML = h;
+      renderDrill();
     } catch (e) { body.textContent = e.message; }
   }
   function copyTable() {
